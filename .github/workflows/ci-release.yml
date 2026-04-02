@@ -140,3 +140,60 @@ jobs:
           if-no-files-found: error
           name: plugins-${{ matrix.target }}
           path: dist/${{ matrix.target }}/ios-control-plugins-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+  publish-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-release-matrix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          mkdir -p upload
+          find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/
+      - name: Delete previous rolling release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete rolling-main --yes --cleanup-tag || true
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rolling-main
+          name: rolling-main
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          files: upload/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+
+  publish-tag:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [build-release-matrix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+      - name: Flatten artifacts
+        shell: bash
+        run: |
+          mkdir -p upload
+          find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/
+      - name: Publish versioned release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: upload/*
+          fail_on_unmatched_files: true
+          overwrite_files: true

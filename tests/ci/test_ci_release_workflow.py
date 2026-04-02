@@ -82,6 +82,10 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--timestamp ${{ steps.build-metadata.outputs.timestamp }}", workflow_text)
         self.assertIn("if-no-files-found: error", workflow_text)
 
+    def test_full_workflow_contains_publish_jobs(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        assert_ci_release.assert_full_workflow(workflow_text)
+
     def test_release_build_structure_requires_cross_container_config(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):
