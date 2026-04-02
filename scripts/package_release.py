@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import io
+import stat
 import shutil
 import tarfile
 import zipfile
@@ -58,6 +59,10 @@ def _copy_binary(*, bin_dir: Path, staged_path: Path, binary_name: str, target: 
     shutil.copy2(source, staged_path)
 
 
+def _archive_mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
 def _write_archive(*, source_dir: Path, archive_path: Path, target: str) -> None:
     if archive_path.exists():
         archive_path.unlink()
@@ -69,7 +74,8 @@ def _write_archive(*, source_dir: Path, archive_path: Path, target: str) -> None
                     archive_name = path.relative_to(source_dir.parent).as_posix()
                     info = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
                     info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = 0o644 << 16
+                    info.create_system = 3
+                    info.external_attr = _archive_mode(path) << 16
                     archive.writestr(info, path.read_bytes())
         return
 
@@ -83,7 +89,7 @@ def _write_archive(*, source_dir: Path, archive_path: Path, target: str) -> None
                     data = path.read_bytes()
                     info = tarfile.TarInfo(name=archive_name)
                     info.size = len(data)
-                    info.mode = 0o644
+                    info.mode = _archive_mode(path)
                     info.mtime = 0
                     info.uid = 0
                     info.gid = 0
@@ -157,8 +163,12 @@ def build_release_bundle(
             run_number=run_number,
             timestamp=timestamp,
         )
-        (bundle_root / "manifest.txt").write_text(manifest, encoding="utf-8")
-        (plugin_root / "manifest.txt").write_text(manifest, encoding="utf-8")
+        bundle_manifest = bundle_root / "manifest.txt"
+        plugin_manifest = plugin_root / "manifest.txt"
+        bundle_manifest.write_text(manifest, encoding="utf-8")
+        plugin_manifest.write_text(manifest, encoding="utf-8")
+        bundle_manifest.chmod(0o644)
+        plugin_manifest.chmod(0o644)
 
         _write_archive(source_dir=bundle_root, archive_path=bundle_temp_archive, target=target)
         _write_archive(source_dir=plugin_root, archive_path=plugin_temp_archive, target=target)

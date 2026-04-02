@@ -1,5 +1,6 @@
 import importlib.util
 import hashlib
+import stat
 import subprocess
 import sys
 import tarfile
@@ -30,10 +31,14 @@ EXPECTED_PLUGIN_BINARIES = [
 class PackageReleaseTests(unittest.TestCase):
     def _write_fake_binaries(self, bin_dir: Path, target: str) -> None:
         host_name = package_release.executable_name(EXPECTED_HOST_BINARY, target)
-        (bin_dir / host_name).write_text("host", encoding="utf-8")
+        host_path = bin_dir / host_name
+        host_path.write_text("host", encoding="utf-8")
+        host_path.chmod(0o755)
         for plugin in EXPECTED_PLUGIN_BINARIES:
             plugin_name = package_release.executable_name(plugin, target)
-            (bin_dir / plugin_name).write_text(plugin, encoding="utf-8")
+            plugin_path = bin_dir / plugin_name
+            plugin_path.write_text(plugin, encoding="utf-8")
+            plugin_path.chmod(0o755)
 
     def test_linux_bundle_and_plugin_archive(self) -> None:
         target = "x86_64-unknown-linux-gnu"
@@ -66,11 +71,15 @@ class PackageReleaseTests(unittest.TestCase):
                     f"{bundle_root}/bin/{EXPECTED_HOST_BINARY}",
                     bundle_names,
                 )
+                host_member = bundle_tar.getmember(f"{bundle_root}/bin/{EXPECTED_HOST_BINARY}")
+                self.assertEqual(stat.S_IMODE(host_member.mode), 0o755)
                 for plugin in EXPECTED_PLUGIN_BINARIES:
                     self.assertIn(
                         f"{bundle_root}/plugins/{plugin}",
                         bundle_names,
                     )
+                    plugin_member = bundle_tar.getmember(f"{bundle_root}/plugins/{plugin}")
+                    self.assertEqual(stat.S_IMODE(plugin_member.mode), 0o755)
                 manifest = bundle_tar.extractfile(f"{bundle_root}/manifest.txt")
                 self.assertIsNotNone(manifest)
                 manifest_text = manifest.read().decode("utf-8")
@@ -125,9 +134,17 @@ class PackageReleaseTests(unittest.TestCase):
             with zipfile.ZipFile(result["bundle_archive"]) as bundle_zip:
                 bundle_names = bundle_zip.namelist()
                 self.assertIn(f"{bundle_root}/bin/{host_exe}", bundle_names)
+                self.assertEqual(
+                    (bundle_zip.getinfo(f"{bundle_root}/bin/{host_exe}").external_attr >> 16) & 0o777,
+                    0o755,
+                )
                 for plugin in EXPECTED_PLUGIN_BINARIES:
                     plugin_exe = package_release.executable_name(plugin, target)
                     self.assertIn(f"{bundle_root}/plugins/{plugin_exe}", bundle_names)
+                    self.assertEqual(
+                        (bundle_zip.getinfo(f"{bundle_root}/plugins/{plugin_exe}").external_attr >> 16) & 0o777,
+                        0o755,
+                    )
                 self.assertIn(f"{bundle_root}/manifest.txt", bundle_names)
 
             with zipfile.ZipFile(result["plugin_archive"]) as plugin_zip:
