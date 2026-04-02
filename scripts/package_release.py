@@ -87,6 +87,13 @@ def build_release_bundle(
 
     bundle_root = out_dir / f"ios-control-{target}"
     plugin_root = out_dir / f"ios-control-plugins-{target}"
+    extension = archive_extension(target)
+    bundle_archive = out_dir / f"{bundle_root.name}{extension}"
+    plugin_archive = out_dir / f"{plugin_root.name}{extension}"
+
+    for archive in (bundle_archive, plugin_archive):
+        if archive.exists():
+            archive.unlink()
 
     for root in (bundle_root, plugin_root):
         if root.exists():
@@ -123,10 +130,6 @@ def build_release_bundle(
     )
     (bundle_root / "manifest.txt").write_text(manifest, encoding="utf-8")
     (plugin_root / "manifest.txt").write_text(manifest, encoding="utf-8")
-
-    extension = archive_extension(target)
-    bundle_archive = out_dir / f"{bundle_root.name}{extension}"
-    plugin_archive = out_dir / f"{plugin_root.name}{extension}"
 
     _write_archive(source_dir=bundle_root, archive_path=bundle_archive, target=target)
     _write_archive(source_dir=plugin_root, archive_path=plugin_archive, target=target)
