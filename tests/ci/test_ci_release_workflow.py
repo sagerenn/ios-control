@@ -172,6 +172,22 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
+    def test_full_workflow_rejects_wrong_publish_main_release_name(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("          name: rolling-main\n", "          name: rolling\n", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_wrong_publish_tag_release_name(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "          name: ${{ github.ref_name }}\n",
+            "          name: ${{ github.sha }}\n",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
     def test_release_build_structure_requires_cross_container_config(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):

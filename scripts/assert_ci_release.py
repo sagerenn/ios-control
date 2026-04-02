@@ -168,6 +168,11 @@ def _extract_job_block(text: str, job_name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _assert_line(text: str, line: str, label: str) -> None:
+    if not any(candidate.strip() == line for candidate in text.splitlines()):
+        raise AssertionError(f"Missing {label} line: {line}")
+
+
 def assert_release_matrix_rows(text: str) -> None:
     expected = [
         ("ubuntu-latest", "x86_64-unknown-linux-gnu", "tar.gz", "cargo"),
@@ -223,7 +228,6 @@ def assert_full_workflow(text: str) -> None:
             "gh release delete rolling-main --yes --cleanup-tag --repo \"$GH_REPO\"",
             "softprops/action-gh-release@v2",
             "tag_name: rolling-main",
-            "name: rolling-main",
             "files: upload/*",
             "fail_on_unmatched_files: true",
             "overwrite_files: true",
@@ -254,10 +258,11 @@ def assert_full_workflow(text: str) -> None:
             "overwrite_files: true",
             "generate_release_notes: true",
             "tag_name: ${{ github.ref_name }}",
-            "name: ${{ github.ref_name }}",
         ],
         "publish-tag",
     )
+    _assert_line(publish_main, "name: rolling-main", "publish-main")
+    _assert_line(publish_tag, "name: ${{ github.ref_name }}", "publish-tag")
     _assert_snippets(text, PUBLISH_SNIPPETS, "publish")
 
 
