@@ -98,6 +98,38 @@ def _assert_snippets(text: str, snippets: Sequence[str], label: str) -> None:
 
 def assert_validation_structure(text: str) -> None:
     _assert_snippets(text, VALIDATION_SNIPPETS, "validation")
+    linux_job = _extract_job_block(text, "test-native-linux")
+    windows_job = _extract_job_block(text, "test-native-windows")
+    _assert_snippets(
+        linux_job,
+        [
+            "runs-on: ubuntu-latest",
+            "name: Install Linux UI dependencies",
+            "sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev",
+            "uses: actions-rust-lang/setup-rust-toolchain@v1",
+            "cache: false",
+            "rustflags: \"\"",
+            "uses: Swatinem/rust-cache@v2",
+            "shared-key: native-linux",
+            "key: cargo-test",
+            "cargo test --workspace",
+        ],
+        "validation linux",
+    )
+    _assert_snippets(
+        windows_job,
+        [
+            "runs-on: windows-latest",
+            "uses: actions-rust-lang/setup-rust-toolchain@v1",
+            "cache: false",
+            "rustflags: \"\"",
+            "uses: Swatinem/rust-cache@v2",
+            "shared-key: native-windows",
+            "key: cargo-test",
+            "cargo test --workspace",
+        ],
+        "validation windows",
+    )
 
 
 def _extract_prebuild_commands(text: str, target: str) -> list[str]:
@@ -255,7 +287,7 @@ def assert_full_workflow(text: str) -> None:
             "softprops/action-gh-release@v2",
             "files: upload/*",
             "fail_on_unmatched_files: true",
-            "overwrite_files: true",
+            "overwrite_files: false",
             "generate_release_notes: true",
             "tag_name: ${{ github.ref_name }}",
         ],

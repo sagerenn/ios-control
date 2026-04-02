@@ -188,6 +188,26 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
+    def test_full_workflow_rejects_publish_tag_overwrite(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("overwrite_files: false\n", "overwrite_files: true\n", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_validation_rejects_missing_windows_cargo_test(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        before, sep, after = workflow_text.partition("test-native-windows:")
+        mutated = before + sep + after.replace("cargo test --workspace\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_validation_structure(mutated)
+
+    def test_validation_rejects_missing_linux_cargo_test(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        before, sep, after = workflow_text.partition("test-native-linux:")
+        mutated = before + sep + after.replace("cargo test --workspace\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_validation_structure(mutated)
+
     def test_release_build_structure_requires_cross_container_config(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):
