@@ -9,6 +9,7 @@ from scripts.assert_ci_release import assert_validation_structure
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-release.yml"
+CROSS_TOML_PATH = REPO_ROOT / "Cross.toml"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
@@ -80,6 +81,35 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--run-number ${{ github.run_number }}", workflow_text)
         self.assertIn("--timestamp ${{ steps.build-metadata.outputs.timestamp }}", workflow_text)
         self.assertIn("if-no-files-found: error", workflow_text)
+
+    def test_release_build_structure_requires_cross_container_config(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):
+            with self.assertRaises(AssertionError):
+                assert_ci_release.assert_release_build_structure(workflow_text)
+
+    def test_release_build_structure_requires_validation_structure(self) -> None:
+        with mock.patch.object(assert_ci_release, "RELEASE_BUILD_SNIPPETS", []):
+            with mock.patch.object(
+                assert_ci_release, "assert_validation_structure", side_effect=AssertionError("validation")
+            ):
+                with self.assertRaises(AssertionError) as exc:
+                    assert_ci_release.assert_release_build_structure("workflow")
+                self.assertIn("validation", str(exc.exception))
+
+    def test_cross_toml_configures_aarch64_linux_dependencies(self) -> None:
+        self.assertTrue(CROSS_TOML_PATH.exists(), "Cross.toml must exist for cross container dependencies")
+        cross_text = CROSS_TOML_PATH.read_text(encoding="utf-8")
+        self.assertIn("[target.aarch64-unknown-linux-gnu]", cross_text)
+        self.assertIn("dpkg --add-architecture ${CROSS_DEB_ARCH}", cross_text)
+        for package in (
+            "libxcb-render0-dev",
+            "libxcb-shape0-dev",
+            "libxcb-xfixes0-dev",
+            "libxkbcommon-dev",
+            "libssl-dev",
+        ):
+            self.assertIn(f"{package}:${{CROSS_DEB_ARCH}}", cross_text)
 
     def test_main_uses_first_arg_for_phase_and_defaults_to_full(self) -> None:
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value="workflow"):

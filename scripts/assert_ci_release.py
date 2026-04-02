@@ -43,6 +43,16 @@ RELEASE_BUILD_SNIPPETS = [
     "plugins-${{ matrix.target }}",
 ]
 
+CROSS_CONFIG_SNIPPETS = [
+    "[target.aarch64-unknown-linux-gnu]",
+    "dpkg --add-architecture ${CROSS_DEB_ARCH}",
+    "libxcb-render0-dev:${CROSS_DEB_ARCH}",
+    "libxcb-shape0-dev:${CROSS_DEB_ARCH}",
+    "libxcb-xfixes0-dev:${CROSS_DEB_ARCH}",
+    "libxkbcommon-dev:${CROSS_DEB_ARCH}",
+    "libssl-dev:${CROSS_DEB_ARCH}",
+]
+
 PUBLISH_SNIPPETS = [
     "publish-main:",
     "publish-tag:",
@@ -65,9 +75,16 @@ def assert_validation_structure(text: str) -> None:
     _assert_snippets(text, VALIDATION_SNIPPETS, "validation")
 
 
+def assert_cross_container_config(text: str) -> None:
+    _assert_snippets(text, CROSS_CONFIG_SNIPPETS, "cross container config")
+
+
 def assert_release_build_structure(text: str) -> None:
     assert_validation_structure(text)
     _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
+    cross_toml_path = Path(__file__).resolve().parents[1] / "Cross.toml"
+    cross_toml_text = cross_toml_path.read_text(encoding="utf-8")
+    assert_cross_container_config(cross_toml_text)
 
 
 def assert_full_workflow(text: str) -> None:
