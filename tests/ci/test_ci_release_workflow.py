@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,6 +12,18 @@ WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-release.yml"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
+    def _extract_release_matrix_rows(self, workflow_text: str) -> list[tuple[str, str, str, str]]:
+        pattern = re.compile(
+            r"- runner: (?P<runner>[^\n]+)\n"
+            r"\s+target: (?P<target>[^\n]+)\n"
+            r"\s+archive_ext: (?P<archive_ext>[^\n]+)\n"
+            r"\s+builder: (?P<builder>[^\n]+)"
+        )
+        return [
+            (match["runner"], match["target"], match["archive_ext"], match["builder"])
+            for match in pattern.finditer(workflow_text)
+        ]
+
     def test_validation_structure_contains_expected_triggers_jobs_and_cache(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_validation_structure(workflow_text)
@@ -18,6 +31,15 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_release_build_structure_contains_expected_matrix_and_artifacts(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_ci_release.assert_release_build_structure(workflow_text)
+        self.assertEqual(
+            self._extract_release_matrix_rows(workflow_text),
+            [
+                ("ubuntu-latest", "x86_64-unknown-linux-gnu", "tar.gz", "cargo"),
+                ("ubuntu-latest", "aarch64-unknown-linux-gnu", "tar.gz", "cross"),
+                ("windows-latest", "x86_64-pc-windows-msvc", "zip", "cargo"),
+                ("windows-latest", "aarch64-pc-windows-msvc", "zip", "cargo"),
+            ],
+        )
         self.assertIn("if: github.event_name == 'push'", workflow_text)
         self.assertIn("needs: [test-native-linux, test-native-windows]", workflow_text)
         self.assertIn("runs-on: ${{ matrix.runner }}", workflow_text)
@@ -35,6 +57,10 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("target: ${{ matrix.target }}", workflow_text)
         self.assertIn("shared-key: release-${{ matrix.target }}", workflow_text)
         self.assertIn("key: release-build", workflow_text)
+        self.assertIn(
+            "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4",
+            workflow_text,
+        )
         self.assertIn("id: build-metadata", workflow_text)
         self.assertIn("timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')", workflow_text)
         self.assertIn('echo "timestamp=$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')" >> "$GITHUB_OUTPUT"', workflow_text)
@@ -67,6 +93,12 @@ class CiReleaseWorkflowTests(unittest.TestCase):
                 exit_code = assert_ci_release.main([])
                 self.assertEqual(exit_code, 0)
                 full.assert_called_once_with("workflow")
+
+        with mock.patch.object(assert_ci_release.Path, "read_text", return_value="workflow"):
+            with mock.patch.object(assert_ci_release, "assert_release_build_structure") as build:
+                exit_code = assert_ci_release.main(["build"])
+                self.assertEqual(exit_code, 0)
+                build.assert_called_once_with("workflow")
 
 
 if __name__ == "__main__":
