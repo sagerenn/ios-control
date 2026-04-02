@@ -2421,6 +2421,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "plugin-capture-direct"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ios-control-contracts",
+ "tokio",
+]
+
+[[package]]
 name = "plugin-capture-window"
 version = "0.1.0"
 dependencies = [
