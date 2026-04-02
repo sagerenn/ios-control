@@ -1,0 +1,9 @@
+[package]
+name = "host-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.31"
+egui = "0.31"
+ios-control-contracts = { path = "../../crates/contracts" }
