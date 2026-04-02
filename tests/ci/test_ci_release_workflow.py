@@ -133,7 +133,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_full_workflow_rejects_missing_orphan_tag_delete_call(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/rolling-main\n",
+            "gh api -X DELETE repos/$GH_REPO/git/refs/tags/rolling-main\n",
             "",
             1,
         )
@@ -145,6 +145,28 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         mutated = workflow_text.replace(
             "tag_name: ${{ github.ref_name }}\n",
             "tag_name: ${{ github.sha }}\n",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_missing_publish_repo_scope(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("GH_REPO: ${{ github.repository }}\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_missing_publish_release_identity(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("tag_name: rolling-main\n", "tag_name: rolling\n", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_missing_publish_release_delete(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "gh release delete rolling-main --yes --cleanup-tag --repo \"$GH_REPO\"\n",
+            "",
             1,
         )
         with self.assertRaises(AssertionError):
