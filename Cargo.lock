@@ -2448,6 +2448,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-grounding-core"
+version = "0.1.0"
+dependencies = [
+ "ios-control-contracts",
+]
+
+[[package]]
 name = "plugin-mock-device"
 version = "0.1.0"
 dependencies = [
