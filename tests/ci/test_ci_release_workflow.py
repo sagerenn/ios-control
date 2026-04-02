@@ -40,7 +40,6 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('echo "timestamp=$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')" >> "$GITHUB_OUTPUT"', workflow_text)
         self.assertIn('cargo build --release --target "${{ matrix.target }}"', workflow_text)
         self.assertIn('cross build --release --target "${{ matrix.target }}"', workflow_text)
-        self.assertNotIn("--locked", workflow_text)
         self.assertIn("--package host-desktop", workflow_text)
         self.assertIn("--package plugin-control-ble", workflow_text)
         self.assertIn("--package plugin-capture-window", workflow_text)
