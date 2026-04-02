@@ -47,3 +47,91 @@ jobs:
           key: cargo-test
       - name: Run workspace tests
         run: cargo test --workspace
+
+  build-release-matrix:
+    if: github.event_name == 'push'
+    needs: [test-native-linux, test-native-windows]
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            builder: cargo
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            builder: cross
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            builder: cargo
+          - runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            archive_ext: zip
+            builder: cargo
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux UI dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+          target: ${{ matrix.target }}
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+          key: release-build
+      - name: Install cross
+        if: matrix.builder == 'cross'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Capture timestamp
+        id: timestamp
+        shell: bash
+        run: echo "value=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+      - name: Build release binaries with cargo
+        if: matrix.builder == 'cargo'
+        run: >
+          cargo build --release --locked --target ${{ matrix.target }}
+          --package host-desktop
+          --package plugin-control-ble
+          --package plugin-capture-window
+          --package plugin-capture-direct
+          --package plugin-grounding-core
+          --package plugin-mock-device
+      - name: Build release binaries with cross
+        if: matrix.builder == 'cross'
+        run: >
+          cross build --release --locked --target ${{ matrix.target }}
+          --package host-desktop
+          --package plugin-control-ble
+          --package plugin-capture-window
+          --package plugin-capture-direct
+          --package plugin-grounding-core
+          --package plugin-mock-device
+      - name: Package release archives
+        shell: bash
+        run: >
+          python scripts/package_release.py
+          --target ${{ matrix.target }}
+          --bin-dir target/${{ matrix.target }}/release
+          --out-dir dist/${{ matrix.target }}
+          --sha ${{ github.sha }}
+          --ref-name ${{ github.ref_name }}
+          --run-number ${{ github.run_number }}
+          --timestamp ${{ steps.timestamp.outputs.value }}
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/ios-control-${{ matrix.target }}.${{ matrix.archive_ext }}
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/ios-control-plugins-${{ matrix.target }}.${{ matrix.archive_ext }}
