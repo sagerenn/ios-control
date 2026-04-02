@@ -88,6 +88,24 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 assert_ci_release.assert_release_build_structure(workflow_text)
 
+    def test_release_build_structure_rejects_unpinned_cross_install(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        unpinned = workflow_text.replace(
+            "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4",
+            "cargo install cross --git https://github.com/cross-rs/cross",
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(unpinned)
+
+    def test_release_build_structure_rejects_matrix_tuple_drift(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "target: aarch64-unknown-linux-gnu\n            archive_ext: tar.gz\n            builder: cross",
+            "target: aarch64-unknown-linux-gnu\n            archive_ext: zip\n            builder: cross",
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
+
     def test_release_build_structure_requires_validation_structure(self) -> None:
         with mock.patch.object(assert_ci_release, "RELEASE_BUILD_SNIPPETS", []):
             with mock.patch.object(

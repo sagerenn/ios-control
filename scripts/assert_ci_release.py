@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Sequence
+import re
 import sys
 
 
@@ -36,7 +37,7 @@ RELEASE_BUILD_SNIPPETS = [
     "aarch64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
-    "cargo install cross --git https://github.com/cross-rs/cross",
+    "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4",
     "python scripts/package_release.py",
     "actions/upload-artifact@v4",
     "bundle-${{ matrix.target }}",
@@ -79,9 +80,35 @@ def assert_cross_container_config(text: str) -> None:
     _assert_snippets(text, CROSS_CONFIG_SNIPPETS, "cross container config")
 
 
+def _extract_release_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:
+    pattern = (
+        r"- runner: (?P<runner>[^\n]+)\n"
+        r"\s+target: (?P<target>[^\n]+)\n"
+        r"\s+archive_ext: (?P<archive_ext>[^\n]+)\n"
+        r"\s+builder: (?P<builder>[^\n]+)"
+    )
+    return [
+        (match["runner"], match["target"], match["archive_ext"], match["builder"])
+        for match in re.finditer(pattern, text)
+    ]
+
+
+def assert_release_matrix_rows(text: str) -> None:
+    expected = [
+        ("ubuntu-latest", "x86_64-unknown-linux-gnu", "tar.gz", "cargo"),
+        ("ubuntu-latest", "aarch64-unknown-linux-gnu", "tar.gz", "cross"),
+        ("windows-latest", "x86_64-pc-windows-msvc", "zip", "cargo"),
+        ("windows-latest", "aarch64-pc-windows-msvc", "zip", "cargo"),
+    ]
+    actual = _extract_release_matrix_rows(text)
+    if actual != expected:
+        raise AssertionError(f"Release matrix rows must match exactly.\nExpected: {expected}\nActual: {actual}")
+
+
 def assert_release_build_structure(text: str) -> None:
     assert_validation_structure(text)
     _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
+    assert_release_matrix_rows(text)
     cross_toml_path = Path(__file__).resolve().parents[1] / "Cross.toml"
     cross_toml_text = cross_toml_path.read_text(encoding="utf-8")
     assert_cross_container_config(cross_toml_text)
