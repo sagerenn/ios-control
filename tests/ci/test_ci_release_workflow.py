@@ -86,6 +86,34 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_ci_release.assert_full_workflow(workflow_text)
 
+    def test_full_workflow_rejects_missing_publish_invariants(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        without_prerelease = workflow_text.replace("prerelease: true\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(without_prerelease)
+
+        without_needs = workflow_text.replace("needs: [build-release-matrix]\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(without_needs)
+
+        without_flatten = workflow_text.replace("mkdir -p upload\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(without_flatten)
+
+        without_release_notes = workflow_text.replace("generate_release_notes: true\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(without_release_notes)
+
+    def test_full_workflow_rejects_cleanup_with_blanket_or_true(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "gh release delete rolling-main --yes --cleanup-tag",
+            "gh release delete rolling-main --yes --cleanup-tag || true",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
     def test_release_build_structure_requires_cross_container_config(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):

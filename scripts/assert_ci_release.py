@@ -150,6 +150,24 @@ def _extract_release_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:
     ]
 
 
+def _extract_job_block(text: str, job_name: str) -> str:
+    header = f"  {job_name}:"
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line == header:
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"Missing job: {job_name}")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", lines[index]):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
 def assert_release_matrix_rows(text: str) -> None:
     expected = [
         ("ubuntu-latest", "x86_64-unknown-linux-gnu", "tar.gz", "cargo"),
@@ -183,6 +201,51 @@ def assert_release_build_structure(text: str) -> None:
 def assert_full_workflow(text: str) -> None:
     assert_validation_structure(text)
     assert_release_build_structure(text)
+    publish_main = _extract_job_block(text, "publish-main")
+    publish_tag = _extract_job_block(text, "publish-tag")
+
+    _assert_snippets(
+        publish_main,
+        [
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "needs: [build-release-matrix]",
+            "runs-on: ubuntu-latest",
+            "permissions:",
+            "contents: write",
+            "actions/download-artifact@v5",
+            "mkdir -p upload",
+            "upload/",
+            "softprops/action-gh-release@v2",
+            "files: upload/*",
+            "fail_on_unmatched_files: true",
+            "overwrite_files: true",
+            "prerelease: true",
+            "target_commitish: ${{ github.sha }}",
+        ],
+        "publish-main",
+    )
+    if "|| true" in publish_main:
+        raise AssertionError("publish-main cleanup must not use '|| true'")
+
+    _assert_snippets(
+        publish_tag,
+        [
+            "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')",
+            "needs: [build-release-matrix]",
+            "runs-on: ubuntu-latest",
+            "permissions:",
+            "contents: write",
+            "actions/download-artifact@v5",
+            "mkdir -p upload",
+            "upload/",
+            "softprops/action-gh-release@v2",
+            "files: upload/*",
+            "fail_on_unmatched_files: true",
+            "overwrite_files: true",
+            "generate_release_notes: true",
+        ],
+        "publish-tag",
+    )
     _assert_snippets(text, PUBLISH_SNIPPETS, "publish")
 
 
