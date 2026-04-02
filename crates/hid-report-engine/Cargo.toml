@@ -1,0 +1,7 @@
+[package]
+name = "ios-control-hid-report-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ios-control-contracts = { path = "../contracts" }

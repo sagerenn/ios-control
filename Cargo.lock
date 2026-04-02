@@ -1594,6 +1594,13 @@ name = "ios-control-device-registry"
 version = "0.1.0"
 
 [[package]]
+name = "ios-control-hid-report-engine"
+version = "0.1.0"
+dependencies = [
+ "ios-control-contracts",
+]
+
+[[package]]
 name = "ios-control-plugin-protocol"
 version = "0.1.0"
 dependencies = [

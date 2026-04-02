@@ -7,6 +7,7 @@ members = [
   "crates/device-registry",
   "crates/session-orchestrator",
   "crates/telemetry-store",
+  "crates/hid-report-engine",
   "apps/host-desktop",
   "plugins/mock-device",
 ]
