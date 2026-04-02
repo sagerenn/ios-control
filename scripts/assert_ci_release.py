@@ -31,11 +31,26 @@ VALIDATION_SNIPPETS = [
 ]
 
 RELEASE_BUILD_SNIPPETS = [
-    "build-release",
+    "build-release-matrix:",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "cargo install cross --git https://github.com/cross-rs/cross",
+    "python scripts/package_release.py",
+    "actions/upload-artifact@v4",
+    "bundle-${{ matrix.target }}",
+    "plugins-${{ matrix.target }}",
 ]
 
 PUBLISH_SNIPPETS = [
-    "publish-release",
+    "publish-main:",
+    "publish-tag:",
+    "actions/download-artifact@v5",
+    "softprops/action-gh-release@v2",
+    "rolling-main",
+    "startsWith(github.ref, 'refs/tags/v')",
+    "contents: write",
 ]
 
 
