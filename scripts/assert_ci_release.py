@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+from typing import Sequence
+import sys
+
+
+VALIDATION_SNIPPETS = [
+    "name: ci-release",
+    "pull_request:",
+    "push:",
+    "branches:",
+    "  - main",
+    "tags:",
+    "  - v*",
+    "permissions:",
+    "  contents: read",
+    "test-native-linux:",
+    "runs-on: ubuntu-latest",
+    "sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev",
+    "uses: actions-rust-lang/setup-rust-toolchain@v1",
+    "cache: false",
+    "rustflags: \"\"",
+    "uses: Swatinem/rust-cache@v2",
+    "shared-key: native-linux",
+    "key: cargo-test",
+    "cargo test --workspace",
+    "test-native-windows:",
+    "runs-on: windows-latest",
+    "shared-key: native-windows",
+]
+
+RELEASE_BUILD_SNIPPETS = [
+    "build-release",
+]
+
+PUBLISH_SNIPPETS = [
+    "publish-release",
+]
+
+
+def _assert_snippets(text: str, snippets: Sequence[str], label: str) -> None:
+    missing = [snippet for snippet in snippets if snippet not in text]
+    if missing:
+        missing_text = "\n".join(f"- {snippet}" for snippet in missing)
+        raise AssertionError(f"Missing {label} snippet(s):\n{missing_text}")
+
+
+def assert_validation_structure(text: str) -> None:
+    _assert_snippets(text, VALIDATION_SNIPPETS, "validation")
+
+
+def assert_release_build_structure(text: str) -> None:
+    _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
+
+
+def assert_full_workflow(text: str) -> None:
+    assert_validation_structure(text)
+    assert_release_build_structure(text)
+    _assert_snippets(text, PUBLISH_SNIPPETS, "publish")
+
+
+def main(argv: Sequence[str]) -> int:
+    if len(argv) != 2 or argv[1] not in {"validation", "build", "full"}:
+        print("Usage: python3 scripts/assert_ci_release.py [validation|build|full]", file=sys.stderr)
+        return 2
+
+    workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci-release.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    phase = argv[1]
+
+    if phase == "validation":
+        assert_validation_structure(workflow_text)
+    elif phase == "build":
+        assert_release_build_structure(workflow_text)
+    else:
+        assert_full_workflow(workflow_text)
+
+    print(f"ci-release workflow {phase} assertions passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
