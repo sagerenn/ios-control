@@ -41,6 +41,8 @@ RELEASE_BUILD_SNIPPETS = [
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
     "runs-on: ${{ matrix.runner }}",
+    "if: matrix.builder == 'cargo'",
+    "if: matrix.builder == 'cross'",
     "target: ${{ matrix.target }}",
     "shared-key: release-${{ matrix.target }}",
     "key: release-build",
@@ -63,6 +65,8 @@ RELEASE_BUILD_SNIPPETS = [
     "actions/upload-artifact@v4",
     "bundle-${{ matrix.target }}",
     "plugins-${{ matrix.target }}",
+    "path: dist/${{ matrix.target }}/ios-control-${{ matrix.target }}.${{ matrix.archive_ext }}",
+    "path: dist/${{ matrix.target }}/ios-control-plugins-${{ matrix.target }}.${{ matrix.archive_ext }}",
     "if-no-files-found: error",
 ]
 
@@ -100,6 +104,10 @@ def assert_validation_structure(text: str) -> None:
 
 def assert_cross_container_config(text: str) -> None:
     _assert_snippets(text, CROSS_CONFIG_SNIPPETS, "cross container config")
+    if "apt-get update" not in text:
+        raise AssertionError("Missing cross container config snippet(s):\n- apt-get update")
+    if "apt-get install -y" not in text:
+        raise AssertionError("Missing cross container config snippet(s):\n- apt-get install -y")
 
 
 def _extract_release_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:

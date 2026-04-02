@@ -103,6 +103,22 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_release_build_structure(mutated)
 
+    def test_release_build_structure_rejects_missing_builder_guards(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("if: matrix.builder == 'cross'\n", "")
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
+
+    def test_release_build_structure_rejects_hardcoded_archive_extension(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            ".${{ matrix.archive_ext }}",
+            ".tar.gz",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
+
     def test_release_build_structure_rejects_matrix_tuple_drift(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
@@ -126,6 +142,8 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         cross_text = CROSS_TOML_PATH.read_text(encoding="utf-8")
         self.assertIn("[target.aarch64-unknown-linux-gnu]", cross_text)
         self.assertIn("dpkg --add-architecture ${CROSS_DEB_ARCH}", cross_text)
+        self.assertIn("apt-get update", cross_text)
+        self.assertIn("apt-get install -y", cross_text)
         for package in (
             "libxcb-render0-dev",
             "libxcb-shape0-dev",
@@ -134,6 +152,14 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             "libssl-dev",
         ):
             self.assertIn(f"{package}:${{CROSS_DEB_ARCH}}", cross_text)
+
+    def test_release_build_structure_rejects_missing_cross_apt_update(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        cross_text = CROSS_TOML_PATH.read_text(encoding="utf-8")
+        mutated_cross = cross_text.replace("apt-get update", "")
+        with mock.patch.object(assert_ci_release.Path, "read_text", side_effect=[workflow_text, mutated_cross]):
+            with self.assertRaises(AssertionError):
+                assert_ci_release.assert_release_build_structure(workflow_text)
 
     def test_main_uses_first_arg_for_phase_and_defaults_to_full(self) -> None:
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value="workflow"):
