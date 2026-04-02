@@ -1,5 +1,8 @@
 [workspace]
 members = [
   "crates/contracts",
+  "crates/plugin-protocol",
+  "crates/plugin-runtime",
+  "plugins/mock-device",
 ]
 resolver = "2"
