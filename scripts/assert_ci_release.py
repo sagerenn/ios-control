@@ -165,6 +165,15 @@ def assert_release_matrix_rows(text: str) -> None:
 def assert_release_build_structure(text: str) -> None:
     assert_validation_structure(text)
     _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
+    _assert_snippets(
+        text,
+        [
+            "name: Install Linux UI dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev",
+            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n        shell: bash\n        run: >\n          cargo build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device",
+            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n        shell: bash\n        run: >\n          cross build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device",
+        ],
+        "release build step pairing",
+    )
     assert_release_matrix_rows(text)
     cross_toml_path = Path(__file__).resolve().parents[1] / "Cross.toml"
     cross_toml_text = cross_toml_path.read_text(encoding="utf-8")

@@ -119,6 +119,24 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_release_build_structure(mutated)
 
+    def test_release_build_structure_rejects_missing_build_linux_deps(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("if: runner.os == 'Linux'\n", "")
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
+
+    def test_release_build_structure_rejects_swapped_builder_guards(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n",
+            "name: Build release binaries with cargo\n        if: matrix.builder == 'cross'\n",
+        ).replace(
+            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n",
+            "name: Build release binaries with cross\n        if: matrix.builder == 'cargo'\n",
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
+
     def test_release_build_structure_rejects_matrix_tuple_drift(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
