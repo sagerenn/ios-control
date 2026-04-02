@@ -144,6 +144,9 @@ jobs:
   publish-main:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build-release-matrix]
+    concurrency:
+      group: rolling-main
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: write

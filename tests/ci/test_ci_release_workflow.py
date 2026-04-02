@@ -114,6 +114,42 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
+    def test_full_workflow_rejects_missing_publish_concurrency(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("concurrency:\n      group: rolling-main\n      cancel-in-progress: true\n", "", 1)
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_missing_publish_flatten_command(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            'find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/\n',
+            "",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_missing_orphan_tag_delete_call(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "gh api -X DELETE repos/${{ github.repository }}/git/refs/tags/rolling-main\n",
+            "",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
+    def test_full_workflow_rejects_wrong_tag_release_identity(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace(
+            "tag_name: ${{ github.ref_name }}\n",
+            "tag_name: ${{ github.sha }}\n",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_full_workflow(mutated)
+
     def test_release_build_structure_requires_cross_container_config(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         with mock.patch.object(assert_ci_release.Path, "read_text", return_value=""):
