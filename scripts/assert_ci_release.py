@@ -51,6 +51,7 @@ def assert_validation_structure(text: str) -> None:
 
 
 def assert_release_build_structure(text: str) -> None:
+    assert_validation_structure(text)
     _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
 
 
@@ -61,13 +62,13 @@ def assert_full_workflow(text: str) -> None:
 
 
 def main(argv: Sequence[str]) -> int:
-    if len(argv) != 2 or argv[1] not in {"validation", "build", "full"}:
+    phase = argv[0] if argv else "full"
+    if phase not in {"validation", "build", "full"}:
         print("Usage: python3 scripts/assert_ci_release.py [validation|build|full]", file=sys.stderr)
         return 2
 
     workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci-release.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
-    phase = argv[1]
 
     if phase == "validation":
         assert_validation_structure(workflow_text)
@@ -81,4 +82,4 @@ def main(argv: Sequence[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    raise SystemExit(main(sys.argv[1:]))
