@@ -52,6 +52,7 @@ jobs:
     if: github.event_name == 'push'
     needs: [test-native-linux, test-native-windows]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
@@ -90,14 +91,15 @@ jobs:
       - name: Install cross
         if: matrix.builder == 'cross'
         run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Capture timestamp
-        id: timestamp
+      - name: Capture build metadata
+        id: build-metadata
         shell: bash
-        run: echo "value=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+        run: echo "timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
       - name: Build release binaries with cargo
         if: matrix.builder == 'cargo'
+        shell: bash
         run: >
-          cargo build --release --locked --target ${{ matrix.target }}
+          cargo build --release --target "${{ matrix.target }}"
           --package host-desktop
           --package plugin-control-ble
           --package plugin-capture-window
@@ -106,8 +108,9 @@ jobs:
           --package plugin-mock-device
       - name: Build release binaries with cross
         if: matrix.builder == 'cross'
+        shell: bash
         run: >
-          cross build --release --locked --target ${{ matrix.target }}
+          cross build --release --target "${{ matrix.target }}"
           --package host-desktop
           --package plugin-control-ble
           --package plugin-capture-window
@@ -124,14 +127,16 @@ jobs:
           --sha ${{ github.sha }}
           --ref-name ${{ github.ref_name }}
           --run-number ${{ github.run_number }}
-          --timestamp ${{ steps.timestamp.outputs.value }}
+          --timestamp ${{ steps.build-metadata.outputs.timestamp }}
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: error
           name: bundle-${{ matrix.target }}
           path: dist/${{ matrix.target }}/ios-control-${{ matrix.target }}.${{ matrix.archive_ext }}
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: error
           name: plugins-${{ matrix.target }}
           path: dist/${{ matrix.target }}/ios-control-plugins-${{ matrix.target }}.${{ matrix.archive_ext }}
