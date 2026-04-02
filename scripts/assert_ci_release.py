@@ -12,7 +12,7 @@ VALIDATION_SNIPPETS = [
     "branches:",
     "  - main",
     "tags:",
-    "  - v*",
+    '  - "v*"',
     "permissions:",
     "  contents: read",
     "test-native-linux:",
@@ -92,7 +92,6 @@ def main(argv: Sequence[str]) -> int:
     else:
         assert_full_workflow(workflow_text)
 
-    print(f"ci-release workflow {phase} assertions passed.")
     return 0
 
 

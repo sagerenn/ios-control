@@ -6,7 +6,7 @@ on:
     branches:
       - main
     tags:
-      - v*
+      - "v*"
 
 permissions:
   contents: read
@@ -15,7 +15,7 @@ jobs:
   test-native-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Linux UI dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       - name: Setup Rust toolchain
@@ -34,7 +34,7 @@ jobs:
   test-native-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
