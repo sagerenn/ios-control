@@ -59,7 +59,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("shared-key: release-${{ matrix.target }}", workflow_text)
         self.assertIn("key: release-build", workflow_text)
         self.assertIn(
-            "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4",
+            "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4 --locked",
             workflow_text,
         )
         self.assertIn("id: build-metadata", workflow_text)
@@ -91,11 +91,17 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_release_build_structure_rejects_unpinned_cross_install(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         unpinned = workflow_text.replace(
+            "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4 --locked",
             "cargo install cross --git https://github.com/cross-rs/cross --rev f86fd03bb70b4c6802847c18087e21391498b0b4",
-            "cargo install cross --git https://github.com/cross-rs/cross",
         )
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_release_build_structure(unpinned)
+
+    def test_release_build_structure_rejects_missing_fail_fast(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        mutated = workflow_text.replace("fail-fast: false\n", "")
+        with self.assertRaises(AssertionError):
+            assert_ci_release.assert_release_build_structure(mutated)
 
     def test_release_build_structure_rejects_matrix_tuple_drift(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
