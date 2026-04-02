@@ -9,6 +9,10 @@ pub struct RequestedPlugins {
     pub grounding: Option<String>,
 }
 
+pub struct CaptureRouting {
+    pub selected_source: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct SessionOrchestrator;
 
