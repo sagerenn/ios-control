@@ -70,14 +70,12 @@ RELEASE_BUILD_SNIPPETS = [
     "if-no-files-found: error",
 ]
 
-CROSS_CONFIG_SNIPPETS = [
-    "[target.aarch64-unknown-linux-gnu]",
+CROSS_TARGET = "aarch64-unknown-linux-gnu"
+EXPECTED_PREBUILD = [
     "dpkg --add-architecture ${CROSS_DEB_ARCH}",
-    "libxcb-render0-dev:${CROSS_DEB_ARCH}",
-    "libxcb-shape0-dev:${CROSS_DEB_ARCH}",
-    "libxcb-xfixes0-dev:${CROSS_DEB_ARCH}",
-    "libxkbcommon-dev:${CROSS_DEB_ARCH}",
-    "libssl-dev:${CROSS_DEB_ARCH}",
+    "apt-get update",
+    "apt-get install -y libxcb-render0-dev:${CROSS_DEB_ARCH} libxcb-shape0-dev:${CROSS_DEB_ARCH} "
+    "libxcb-xfixes0-dev:${CROSS_DEB_ARCH} libxkbcommon-dev:${CROSS_DEB_ARCH} libssl-dev:${CROSS_DEB_ARCH}",
 ]
 
 PUBLISH_SNIPPETS = [
@@ -102,12 +100,41 @@ def assert_validation_structure(text: str) -> None:
     _assert_snippets(text, VALIDATION_SNIPPETS, "validation")
 
 
+def _extract_prebuild_commands(text: str, target: str) -> list[str]:
+    header = f"[target.{target}]"
+    lines = text.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.strip() == header:
+            start = index + 1
+            break
+    if start is None:
+        raise AssertionError(f"Missing cross container config section: {header}")
+
+    end = len(lines)
+    for index in range(start, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = index
+            break
+    section = "\n".join(lines[start:end])
+    match = re.search(r"^\s*pre-build\s*=\s*\[(?P<body>.*?)\]", section, re.DOTALL | re.MULTILINE)
+    if not match:
+        raise AssertionError(f"Missing cross container config pre-build list in {header}")
+    commands = re.findall(r'"([^"]*)"', match.group("body"))
+    if not commands:
+        raise AssertionError(f"Empty cross container config pre-build list in {header}")
+    return commands
+
+
 def assert_cross_container_config(text: str) -> None:
-    _assert_snippets(text, CROSS_CONFIG_SNIPPETS, "cross container config")
-    if "apt-get update" not in text:
-        raise AssertionError("Missing cross container config snippet(s):\n- apt-get update")
-    if "apt-get install -y" not in text:
-        raise AssertionError("Missing cross container config snippet(s):\n- apt-get install -y")
+    commands = _extract_prebuild_commands(text, CROSS_TARGET)
+    if commands != EXPECTED_PREBUILD:
+        raise AssertionError(
+            "Cross container pre-build commands must match exactly.\n"
+            f"Expected: {EXPECTED_PREBUILD}\n"
+            f"Actual: {commands}"
+        )
 
 
 def _extract_release_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:

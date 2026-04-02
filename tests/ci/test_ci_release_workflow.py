@@ -157,7 +157,19 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         cross_text = CROSS_TOML_PATH.read_text(encoding="utf-8")
         mutated_cross = cross_text.replace("apt-get update", "")
-        with mock.patch.object(assert_ci_release.Path, "read_text", side_effect=[workflow_text, mutated_cross]):
+        with mock.patch.object(assert_ci_release.Path, "read_text", return_value=mutated_cross):
+            with self.assertRaises(AssertionError):
+                assert_ci_release.assert_release_build_structure(workflow_text)
+
+    def test_release_build_structure_rejects_cross_prebuild_order_drift(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        cross_text = CROSS_TOML_PATH.read_text(encoding="utf-8")
+        lines = cross_text.splitlines()
+        dpkg_index = next(i for i, line in enumerate(lines) if "dpkg --add-architecture ${CROSS_DEB_ARCH}" in line)
+        update_index = next(i for i, line in enumerate(lines) if "apt-get update" in line)
+        lines[dpkg_index], lines[update_index] = lines[update_index], lines[dpkg_index]
+        mutated_cross = "\n".join(lines) + ("\n" if cross_text.endswith("\n") else "")
+        with mock.patch.object(assert_ci_release.Path, "read_text", return_value=mutated_cross):
             with self.assertRaises(AssertionError):
                 assert_ci_release.assert_release_build_structure(workflow_text)
 
