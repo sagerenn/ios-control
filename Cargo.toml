@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/contracts",
+  "crates/frame-transport",
   "crates/plugin-protocol",
   "crates/plugin-runtime",
   "crates/capability-registry",
