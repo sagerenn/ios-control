@@ -11,6 +11,7 @@ members = [
   "crates/hid-report-engine",
   "apps/host-desktop",
   "plugins/control-ble",
+  "plugins/capture-window",
   "plugins/mock-device",
 ]
 resolver = "2"
