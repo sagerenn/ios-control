@@ -1587,11 +1587,20 @@ name = "ios-control-contracts"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "ios-control-device-registry"
 version = "0.1.0"
+
+[[package]]
+name = "ios-control-frame-transport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "memmap2",
+]
 
 [[package]]
 name = "ios-control-hid-report-engine"
