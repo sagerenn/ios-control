@@ -9,6 +9,7 @@ members = [
   "crates/telemetry-store",
   "crates/hid-report-engine",
   "apps/host-desktop",
+  "plugins/control-ble",
   "plugins/mock-device",
 ]
 resolver = "2"

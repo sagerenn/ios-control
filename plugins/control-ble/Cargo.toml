@@ -1,0 +1,7 @@
+[package]
+name = "plugin-control-ble"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ios-control-contracts = { path = "../../crates/contracts" }
