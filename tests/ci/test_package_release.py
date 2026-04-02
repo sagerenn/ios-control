@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import subprocess
 import sys
 import tarfile
@@ -162,6 +163,10 @@ class PackageReleaseTests(unittest.TestCase):
                     run_number="99",
                     timestamp="2026-04-02T03:00:00Z",
                 )
+            self.assertFalse((out_dir / f"ios-control-{target}").exists())
+            self.assertFalse((out_dir / f"ios-control-plugins-{target}").exists())
+            self.assertFalse((out_dir / f"ios-control-{target}.tar.gz").exists())
+            self.assertFalse((out_dir / f"ios-control-plugins-{target}.tar.gz").exists())
 
     def test_failed_rebuild_removes_stale_archives(self) -> None:
         target = "x86_64-unknown-linux-gnu"
@@ -283,6 +288,45 @@ class PackageReleaseTests(unittest.TestCase):
 
             self.assertFalse(bundle_archive.exists())
             self.assertFalse(plugin_archive.exists())
+
+    def test_identical_inputs_produce_identical_archive_hashes(self) -> None:
+        target = "x86_64-unknown-linux-gnu"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            out_dir = root / "out"
+            bin_dir.mkdir()
+            out_dir.mkdir()
+            self._write_fake_binaries(bin_dir, target)
+
+            first = package_release.build_release_bundle(
+                target=target,
+                bin_dir=bin_dir,
+                out_dir=out_dir,
+                sha="abc123",
+                ref_name="refs/heads/main",
+                run_number="1000",
+                timestamp="2026-04-02T07:00:00Z",
+            )
+
+            first_bundle_hash = hashlib.sha256(first["bundle_archive"].read_bytes()).hexdigest()
+            first_plugin_hash = hashlib.sha256(first["plugin_archive"].read_bytes()).hexdigest()
+
+            second = package_release.build_release_bundle(
+                target=target,
+                bin_dir=bin_dir,
+                out_dir=out_dir,
+                sha="abc123",
+                ref_name="refs/heads/main",
+                run_number="1000",
+                timestamp="2026-04-02T07:00:00Z",
+            )
+
+            second_bundle_hash = hashlib.sha256(second["bundle_archive"].read_bytes()).hexdigest()
+            second_plugin_hash = hashlib.sha256(second["plugin_archive"].read_bytes()).hexdigest()
+
+            self.assertEqual(first_bundle_hash, second_bundle_hash)
+            self.assertEqual(first_plugin_hash, second_plugin_hash)
 
 
 if __name__ == "__main__":

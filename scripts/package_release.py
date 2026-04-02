@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import shutil
 import tarfile
 import zipfile
@@ -64,11 +66,30 @@ def _write_archive(*, source_dir: Path, archive_path: Path, target: str) -> None
         with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(source_dir.rglob("*")):
                 if path.is_file():
-                    archive.write(path, arcname=path.relative_to(source_dir.parent))
+                    archive_name = path.relative_to(source_dir.parent).as_posix()
+                    info = zipfile.ZipInfo(archive_name, date_time=(1980, 1, 1, 0, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o644 << 16
+                    archive.writestr(info, path.read_bytes())
         return
 
-    with tarfile.open(archive_path, "w:gz") as archive:
-        archive.add(source_dir, arcname=source_dir.name)
+    with archive_path.open("wb") as raw_file:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw_file, mtime=0) as gzip_file:
+            with tarfile.open(fileobj=gzip_file, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+                for path in sorted(source_dir.rglob("*")):
+                    if not path.is_file():
+                        continue
+                    archive_name = path.relative_to(source_dir.parent).as_posix()
+                    data = path.read_bytes()
+                    info = tarfile.TarInfo(name=archive_name)
+                    info.size = len(data)
+                    info.mode = 0o644
+                    info.mtime = 0
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    archive.addfile(info, io.BytesIO(data))
 
 
 def build_release_bundle(
@@ -102,48 +123,51 @@ def build_release_bundle(
         if archive.exists():
             archive.unlink()
 
-    for root in (bundle_root, plugin_root):
-        if root.exists():
-            shutil.rmtree(root)
-
-    _copy_binary(
-        bin_dir=bin_dir,
-        staged_path=bundle_root / "bin" / executable_name(HOST_BINARY, target),
-        binary_name=HOST_BINARY,
-        target=target,
-    )
-
-    for plugin in PLUGIN_BINARIES:
-        plugin_filename = executable_name(plugin, target)
-        _copy_binary(
-            bin_dir=bin_dir,
-            staged_path=bundle_root / "plugins" / plugin_filename,
-            binary_name=plugin,
-            target=target,
-        )
-        _copy_binary(
-            bin_dir=bin_dir,
-            staged_path=plugin_root / "plugins" / plugin_filename,
-            binary_name=plugin,
-            target=target,
-        )
-
-    manifest = manifest_text(
-        sha=sha,
-        ref_name=ref_name,
-        target=target,
-        run_number=run_number,
-        timestamp=timestamp,
-    )
-    (bundle_root / "manifest.txt").write_text(manifest, encoding="utf-8")
-    (plugin_root / "manifest.txt").write_text(manifest, encoding="utf-8")
-
     try:
+        for root in (bundle_root, plugin_root):
+            if root.exists():
+                shutil.rmtree(root)
+
+        _copy_binary(
+            bin_dir=bin_dir,
+            staged_path=bundle_root / "bin" / executable_name(HOST_BINARY, target),
+            binary_name=HOST_BINARY,
+            target=target,
+        )
+
+        for plugin in PLUGIN_BINARIES:
+            plugin_filename = executable_name(plugin, target)
+            _copy_binary(
+                bin_dir=bin_dir,
+                staged_path=bundle_root / "plugins" / plugin_filename,
+                binary_name=plugin,
+                target=target,
+            )
+            _copy_binary(
+                bin_dir=bin_dir,
+                staged_path=plugin_root / "plugins" / plugin_filename,
+                binary_name=plugin,
+                target=target,
+            )
+
+        manifest = manifest_text(
+            sha=sha,
+            ref_name=ref_name,
+            target=target,
+            run_number=run_number,
+            timestamp=timestamp,
+        )
+        (bundle_root / "manifest.txt").write_text(manifest, encoding="utf-8")
+        (plugin_root / "manifest.txt").write_text(manifest, encoding="utf-8")
+
         _write_archive(source_dir=bundle_root, archive_path=bundle_temp_archive, target=target)
         _write_archive(source_dir=plugin_root, archive_path=plugin_temp_archive, target=target)
         bundle_temp_archive.replace(bundle_archive)
         plugin_temp_archive.replace(plugin_archive)
     except Exception:
+        for root in (bundle_root, plugin_root):
+            if root.exists():
+                shutil.rmtree(root)
         for archive in (
             bundle_archive,
             plugin_archive,
