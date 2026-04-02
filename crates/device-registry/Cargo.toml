@@ -1,0 +1,4 @@
+[package]
+name = "ios-control-device-registry"
+version = "0.1.0"
+edition = "2021"

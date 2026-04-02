@@ -3,6 +3,10 @@ members = [
   "crates/contracts",
   "crates/plugin-protocol",
   "crates/plugin-runtime",
+  "crates/capability-registry",
+  "crates/device-registry",
+  "crates/session-orchestrator",
+  "crates/telemetry-store",
   "plugins/mock-device",
 ]
 resolver = "2"
