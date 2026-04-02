@@ -90,8 +90,15 @@ def build_release_bundle(
     extension = archive_extension(target)
     bundle_archive = out_dir / f"{bundle_root.name}{extension}"
     plugin_archive = out_dir / f"{plugin_root.name}{extension}"
+    bundle_temp_archive = out_dir / f"{bundle_root.name}{extension}.tmp"
+    plugin_temp_archive = out_dir / f"{plugin_root.name}{extension}.tmp"
 
-    for archive in (bundle_archive, plugin_archive):
+    for archive in (
+        bundle_archive,
+        plugin_archive,
+        bundle_temp_archive,
+        plugin_temp_archive,
+    ):
         if archive.exists():
             archive.unlink()
 
@@ -131,8 +138,21 @@ def build_release_bundle(
     (bundle_root / "manifest.txt").write_text(manifest, encoding="utf-8")
     (plugin_root / "manifest.txt").write_text(manifest, encoding="utf-8")
 
-    _write_archive(source_dir=bundle_root, archive_path=bundle_archive, target=target)
-    _write_archive(source_dir=plugin_root, archive_path=plugin_archive, target=target)
+    try:
+        _write_archive(source_dir=bundle_root, archive_path=bundle_temp_archive, target=target)
+        _write_archive(source_dir=plugin_root, archive_path=plugin_temp_archive, target=target)
+        bundle_temp_archive.replace(bundle_archive)
+        plugin_temp_archive.replace(plugin_archive)
+    except Exception:
+        for archive in (
+            bundle_archive,
+            plugin_archive,
+            bundle_temp_archive,
+            plugin_temp_archive,
+        ):
+            if archive.exists():
+                archive.unlink()
+        raise
 
     return {
         "bundle_root": bundle_root,
