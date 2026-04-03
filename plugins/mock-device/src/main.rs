@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
             let reply = PluginToHost::HandshakeAck {
                 descriptor: PluginDescriptor {
                     plugin_id: "mock.device".into(),
-                    protocol_version: 1,
+                    protocol_version: 2,
                     kind: PluginKind::Control,
                     display_name: "Mock Device".into(),
                 },

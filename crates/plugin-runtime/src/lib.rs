@@ -6,6 +6,8 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginToHost};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
+const PROTOCOL_VERSION: u32 = 2;
+
 pub struct PluginRuntime;
 
 impl PluginRuntime {
@@ -23,7 +25,9 @@ impl PluginRuntime {
             .stdin
             .as_mut()
             .ok_or_else(|| anyhow!("missing stdin"))?;
-        let message = serde_json::to_string(&HostToPlugin::Handshake { protocol_version: 1 })?;
+        let message = serde_json::to_string(&HostToPlugin::Handshake {
+            protocol_version: PROTOCOL_VERSION,
+        })?;
         stdin.write_all(message.as_bytes()).await?;
         stdin.write_all(b"\n").await?;
 
@@ -38,7 +42,15 @@ impl PluginRuntime {
             .ok_or_else(|| anyhow!("missing reply"))?;
 
         match serde_json::from_str::<PluginToHost>(&line)? {
-            PluginToHost::HandshakeAck { descriptor } => Ok(descriptor),
+            PluginToHost::HandshakeAck { descriptor } => {
+                if descriptor.protocol_version != PROTOCOL_VERSION {
+                    return Err(anyhow!(
+                        "protocol version mismatch: expected {PROTOCOL_VERSION}, got {}",
+                        descriptor.protocol_version
+                    ));
+                }
+                Ok(descriptor)
+            }
             other => Err(anyhow!("unexpected handshake response: {other:?}")),
         }
     }

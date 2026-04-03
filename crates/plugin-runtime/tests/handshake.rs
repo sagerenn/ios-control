@@ -54,7 +54,7 @@ async fn handshake_returns_mock_plugin_descriptor() {
     let descriptor = runtime.handshake(&plugin_path).await.unwrap();
 
     assert_eq!(descriptor.plugin_id, "mock.device");
-    assert_eq!(descriptor.protocol_version, 1);
+    assert_eq!(descriptor.protocol_version, 2);
     assert_eq!(descriptor.kind, ios_control_plugin_protocol::PluginKind::Control);
     assert_eq!(descriptor.display_name, "Mock Device");
 }
