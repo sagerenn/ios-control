@@ -2437,7 +2437,9 @@ dependencies = [
  "ios-control-contracts",
  "ios-control-frame-transport",
  "ios-control-plugin-protocol",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -2450,6 +2452,7 @@ dependencies = [
  "ios-control-contracts",
  "ios-control-frame-transport",
  "ios-control-plugin-protocol",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
