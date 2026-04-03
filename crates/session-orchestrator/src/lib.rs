@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
@@ -8,13 +9,15 @@ use ios_control_contracts::control::{
 };
 use ios_control_contracts::grounding::{GroundingFailure, GroundingPlan, GroundingRequest, TargetInput};
 use ios_control_contracts::plugin::{PluginDescriptor, PluginHealth};
-use ios_control_contracts::session::{DeviceSessionSummary, SessionPhase};
+use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary, SessionPhase};
 use ios_control_device_registry::{DeviceRecord, DeviceRegistry};
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use ios_control_plugin_runtime::RunningPlugin;
 use ios_control_telemetry_store::{TelemetryEvent, TelemetryStore};
 use plugin_grounding_core::execution_monitor::{ExecutionDecision, ExecutionMonitor};
 use plugin_grounding_core::recovery_controller::RecoveryController;
+
+mod session_actor;
 
 #[derive(Debug, Clone)]
 pub struct RequestedPlugins {
@@ -26,7 +29,8 @@ pub struct RequestedPlugins {
 #[derive(Debug, Clone)]
 pub struct PluginPaths {
     pub capture: PathBuf,
-    pub control: PathBuf,
+    pub control_ble: PathBuf,
+    pub control_fallback: PathBuf,
     pub grounding: Option<PathBuf>,
 }
 
@@ -89,6 +93,11 @@ pub struct SessionOrchestrator {
     pub telemetry: TelemetryStore,
 }
 
+#[derive(Debug, Default)]
+pub struct SessionSupervisor {
+    sessions: BTreeMap<String, DeviceSessionStatus>,
+}
+
 impl SessionOrchestrator {
     /// Compatibility shim for callers that only need a requested-plugin summary.
     /// This does not spawn plugin processes, perform handshakes, or create a live session.
@@ -138,7 +147,7 @@ impl SessionOrchestrator {
             message: format!("capture source selected: {selected_source_id}"),
         });
 
-        let mut control = RunningPlugin::spawn(&request.plugin_paths.control).await?;
+        let mut control = RunningPlugin::spawn(&request.plugin_paths.control_ble).await?;
         let control_descriptor = control.handshake().await?;
         let control_capability = request_control_capability(&mut control).await?;
         staged_capabilities.push((
@@ -257,6 +266,22 @@ impl SessionOrchestrator {
             control_plugin: Some(control),
             grounding_plugin,
         })
+    }
+}
+
+impl SessionSupervisor {
+    pub async fn start_or_replace_session(
+        &mut self,
+        request: StartSessionRequest,
+    ) -> Result<DeviceSessionStatus> {
+        let status = session_actor::start_session_actor(request).await?;
+        self.sessions
+            .insert(status.summary().device_id.clone(), status.clone());
+        Ok(status)
+    }
+
+    pub fn session_statuses(&self) -> &BTreeMap<String, DeviceSessionStatus> {
+        &self.sessions
     }
 }
 

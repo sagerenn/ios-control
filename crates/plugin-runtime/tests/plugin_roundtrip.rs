@@ -126,10 +126,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     control.stop().await.unwrap();
 
     let window_path = plugin_path(&workspace_root, "plugin-capture-window");
-    let _window_env = EnvVarGuards::new(vec![
-        EnvVarGuard::set("DISPLAY", ":99"),
-        EnvVarGuard::set("SESSIONNAME", "Console"),
-    ]);
+    let _window_env = EnvVarGuards::new(vec![EnvVarGuard::set(
+        "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+        &window_path,
+    )]);
     let mut window = RunningPlugin::spawn(&window_path).await.unwrap();
     window
         .send(&HostToPlugin::ListCaptureSources)
@@ -151,7 +151,7 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         PluginToHost::CaptureCapability { capability } => {
             assert!(capability.available);
             assert_eq!(capability.reason, None);
-            assert_eq!(capability.backend_id, "capture.window");
+            assert_eq!(capability.backend_id, "capture.window.helper");
             assert!(capability.supports_input_bridge);
         }
         other => panic!("unexpected capture-window capability response: {other:?}"),
@@ -167,13 +167,14 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         }
         other => panic!("unexpected capture-window sources response: {other:?}"),
     };
+    assert_eq!(source_id, "window-helper-1");
     window
         .send(&HostToPlugin::GetCaptureFrame { source_id })
         .await
         .unwrap();
     match window.read().await.unwrap() {
         PluginToHost::CaptureFrame { frame } => {
-            assert_eq!(frame.source_id, "window-1");
+            assert_eq!(frame.source_id, "window-helper-1");
         }
         other => panic!("unexpected capture-window frame response: {other:?}"),
     }
@@ -202,7 +203,7 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         PluginToHost::CaptureCapability { capability } => {
             assert!(capability.available);
             assert_eq!(capability.reason, None);
-            assert_eq!(capability.backend_id, "capture.direct");
+            assert_eq!(capability.backend_id, "capture.direct.helper");
             assert!(!capability.supports_input_bridge);
         }
         other => panic!("unexpected capture-direct capability response: {other:?}"),

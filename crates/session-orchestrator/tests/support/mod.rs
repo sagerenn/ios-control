@@ -75,6 +75,8 @@ pub fn build_plugins(workspace_root: &Path) {
             "-p",
             "plugin-control-ble",
             "-p",
+            "plugin-control-window-bridge",
+            "-p",
             "plugin-grounding-core",
         ])
         .current_dir(workspace_root)
@@ -89,9 +91,15 @@ pub fn build_plugins(workspace_root: &Path) {
     );
 }
 
-pub fn prepare_window_runtime_env() -> EnvVarGuards {
+pub fn prepare_window_runtime_env(workspace_root: &Path) -> EnvVarGuards {
     EnvVarGuards::new(vec![
-        EnvVarGuard::set("DISPLAY", ":99"),
-        EnvVarGuard::set("SESSIONNAME", "Console"),
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+            plugin_path(workspace_root, "plugin-capture-window"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_INPUT_HELPER",
+            plugin_path(workspace_root, "plugin-control-window-bridge"),
+        ),
     ])
 }
