@@ -1,15 +1,21 @@
 use eframe::egui;
 
 use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
-use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
 use crate::panels::session_view::SessionAction;
+use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
+use crate::runtime::HostRuntimeBridge;
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
+use crate::view_models::fleet::FleetViewModel;
 use crate::view_models::session::SessionViewModel;
 use crate::view_models::settings::SettingsViewModel;
 
 pub struct HostDesktopApp {
+    pub available_device_ids: Vec<String>,
+    pub selected_device_id: Option<String>,
+    pub fleet: FleetViewModel,
+    pub runtime: HostRuntimeBridge,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -21,6 +27,10 @@ pub struct HostDesktopApp {
 impl HostDesktopApp {
     pub fn new() -> Self {
         Self {
+            available_device_ids: Vec::new(),
+            selected_device_id: None,
+            fleet: FleetViewModel { rows: Vec::new() },
+            runtime: HostRuntimeBridge::default(),
             dashboard: DashboardViewModel {
                 total_devices: 1,
                 degraded_devices: 0,

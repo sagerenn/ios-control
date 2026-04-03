@@ -1,4 +1,5 @@
 pub mod app;
+pub mod runtime;
 pub mod panels {
     pub mod dashboard;
     pub mod device_detail;
@@ -10,6 +11,7 @@ pub mod view_models {
     pub mod dashboard;
     pub mod device_detail;
     pub mod diagnostics;
+    pub mod fleet;
     pub mod session;
     pub mod settings;
 }

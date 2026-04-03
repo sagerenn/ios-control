@@ -80,3 +80,13 @@ fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
     assert!(app.diagnostics.control_summary.contains("blocked"));
     assert!(app.diagnostics.grounding_summary.contains("blocked"));
 }
+
+#[test]
+fn app_tracks_selected_workspace_separately_from_fleet_rows() {
+    let mut app = HostDesktopApp::new();
+    app.selected_device_id = Some("device-2".into());
+    app.available_device_ids = vec!["device-1".into(), "device-2".into()];
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-2"));
+    assert_eq!(app.available_device_ids.len(), 2);
+}
