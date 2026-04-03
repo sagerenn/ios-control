@@ -97,6 +97,8 @@ impl HostDesktopApp {
 
 impl eframe::App for HostDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut pending_action = SessionAction::None;
+
         egui::CentralPanel::default().show(ctx, |ui| {
             dashboard::render(ui, &self.dashboard);
             ui.separator();
@@ -107,16 +109,7 @@ impl eframe::App for HostDesktopApp {
                 &self.device_detail.control_checklist,
             );
             ui.separator();
-            match session_view::render(ui, &self.session) {
-                SessionAction::None => {}
-                SessionAction::Start => {
-                    self.request_start_session();
-                    ctx.request_repaint();
-                }
-                SessionAction::Stop => {
-                    self.stop_session();
-                }
-            }
+            pending_action = session_view::render(ui, &self.session);
             ui.separator();
             let diagnostic_message = match &self.diagnostics.host_error {
                 Some(error) => format!("{} | {}", self.diagnostics.grounding_summary, error),
@@ -127,6 +120,18 @@ impl eframe::App for HostDesktopApp {
             ui.separator();
             settings::render_rows(ui, &self.settings.plugin_rows);
         });
+
+        match pending_action {
+            SessionAction::None => {}
+            SessionAction::Start => {
+                self.request_start_session();
+                ctx.request_repaint();
+            }
+            SessionAction::Stop => {
+                self.stop_session();
+                ctx.request_repaint();
+            }
+        }
 
         match self.pending_session_start {
             Some(0) => {
