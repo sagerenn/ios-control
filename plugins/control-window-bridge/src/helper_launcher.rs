@@ -1,5 +1,6 @@
 use std::env;
 use std::io;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -56,4 +57,64 @@ pub fn launch_helper(helper: PathBuf, args: &[String]) -> std::io::Result<ExitSt
         .stderr(Stdio::null())
         .spawn()?;
     wait_for_completion(&mut child, helper_timeout())
+}
+
+pub fn should_run_embedded_helper_mode(args: &[String]) -> bool {
+    !args.is_empty() && args.iter().any(|arg| arg == "--source")
+}
+
+pub fn run_embedded_helper_mode(args: &[String]) -> io::Result<()> {
+    let mut source = None::<String>;
+    let mut action = None::<&'static str>;
+    let mut index = 0usize;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--source" => {
+                let value = args.get(index + 1).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "missing value for --source")
+                })?;
+                source = Some(value.clone());
+                index += 2;
+            }
+            "--pointer-plan" => {
+                action = Some("pointer");
+                index += 1;
+            }
+            "--keyboard-plan" => {
+                action = Some("keyboard");
+                index += 1;
+            }
+            "--hybrid-plan" => {
+                action = Some("hybrid");
+                index += 1;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+
+    let source = source.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "embedded helper mode requires --source <id>",
+        )
+    })?;
+    let action = action.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "embedded helper mode requires one plan action flag",
+        )
+    })?;
+
+    if let Some(path) = env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG") {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(file, "source={source} action={action}")?;
+    }
+
+    Ok(())
 }

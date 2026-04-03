@@ -4,7 +4,10 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
-use plugin_control_window_bridge::helper_launcher::{find_helper, helper_available, launch_helper};
+use plugin_control_window_bridge::helper_launcher::{
+    find_helper, helper_available, launch_helper, run_embedded_helper_mode,
+    should_run_embedded_helper_mode,
+};
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
@@ -35,6 +38,12 @@ fn control_capability() -> ControlCapability {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if should_run_embedded_helper_mode(&args) {
+        run_embedded_helper_mode(&args)?;
+        return Ok(());
+    }
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();

@@ -47,6 +47,40 @@ fn write_test_helper_script(name: &str, body: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
+fn resolve_plugin_binary() -> PathBuf {
+    if let Some(path) = env::var_os("CARGO_BIN_EXE_plugin-control-window-bridge") {
+        return PathBuf::from(path);
+    }
+
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("workspace root should be discoverable from plugin manifest")
+        .to_path_buf();
+
+    let mut target_dir = match env::var_os("CARGO_TARGET_DIR") {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            }
+        }
+        None => workspace_root.join("target"),
+    };
+
+    if let Some(target) = env::var_os("CARGO_BUILD_TARGET") {
+        target_dir.push(target);
+    }
+
+    target_dir.join(format!(
+        "debug/plugin-control-window-bridge{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
+
+#[cfg(unix)]
 #[test]
 fn window_bridge_launch_times_out_for_hung_helper() {
     let _guard = ENV_LOCK.lock().unwrap();
@@ -61,5 +95,41 @@ fn window_bridge_launch_times_out_for_hung_helper() {
     match old_timeout {
         Some(value) => env::set_var("IOS_CONTROL_WINDOW_INPUT_HELPER_TIMEOUT_MS", value),
         None => env::remove_var("IOS_CONTROL_WINDOW_INPUT_HELPER_TIMEOUT_MS"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_bridge_binary_helper_mode_runs_action_path() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = resolve_plugin_binary();
+    assert!(helper.is_file(), "expected plugin binary at {}", helper.display());
+    let log_path = env::temp_dir().join(format!(
+        "ios-control-window-helper-action-{}-{}.log",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let old_log = env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG");
+    env::set_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG", &log_path);
+
+    let plan = GroundingPlan {
+        kind: PlanKind::Pointer,
+        failure: None,
+        summary: "selected pointer plan".into(),
+    };
+    let command = command_for_plan("window-helper-1", &plan).unwrap();
+    let status = launch_helper(helper, &command.args).unwrap();
+    assert!(status.success());
+
+    let log = fs::read_to_string(&log_path).unwrap();
+    assert!(log.contains("source=window-helper-1 action=pointer"));
+
+    let _ = fs::remove_file(log_path);
+    match old_log {
+        Some(value) => env::set_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG", value),
+        None => env::remove_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG"),
     }
 }
