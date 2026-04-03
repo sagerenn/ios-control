@@ -14,6 +14,16 @@ impl EnvVarGuard {
     }
 }
 
+pub struct EnvVarGuards {
+    _guards: Vec<EnvVarGuard>,
+}
+
+impl EnvVarGuards {
+    pub fn new(guards: Vec<EnvVarGuard>) -> Self {
+        Self { _guards: guards }
+    }
+}
+
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         if let Some(value) = self.original.take() {
@@ -79,6 +89,9 @@ pub fn build_plugins(workspace_root: &Path) {
     );
 }
 
-pub fn prepare_window_runtime_env() -> EnvVarGuard {
-    EnvVarGuard::set("DISPLAY", ":99")
+pub fn prepare_window_runtime_env() -> EnvVarGuards {
+    EnvVarGuards::new(vec![
+        EnvVarGuard::set("DISPLAY", ":99"),
+        EnvVarGuard::set("SESSIONNAME", "Console"),
+    ])
 }

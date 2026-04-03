@@ -69,6 +69,16 @@ impl Drop for EnvVarGuard {
     }
 }
 
+struct EnvVarGuards {
+    _guards: Vec<EnvVarGuard>,
+}
+
+impl EnvVarGuards {
+    fn new(guards: Vec<EnvVarGuard>) -> Self {
+        Self { _guards: guards }
+    }
+}
+
 #[tokio::test]
 async fn plugin_runtime_roundtrips_with_real_plugins() {
     let workspace_root = workspace_root();
@@ -114,7 +124,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     control.stop().await.unwrap();
 
     let window_path = plugin_path(&workspace_root, "plugin-capture-window");
-    let _display_guard = EnvVarGuard::set("DISPLAY", ":99");
+    let _window_env = EnvVarGuards::new(vec![
+        EnvVarGuard::set("DISPLAY", ":99"),
+        EnvVarGuard::set("SESSIONNAME", "Console"),
+    ]);
     let mut window = RunningPlugin::spawn(&window_path).await.unwrap();
     window
         .send(&HostToPlugin::ListCaptureSources)
