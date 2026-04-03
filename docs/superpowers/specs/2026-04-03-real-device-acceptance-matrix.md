@@ -1,18 +1,12 @@
 # Real-Device Acceptance Matrix
 
-This matrix reflects current reality on this branch. Rows marked "Not yet verified" are not validated end-to-end yet. The only verified path today is the local mock plugin-backed flow used by the orchestrator E2E test in the README.
+This matrix reflects current reality on this branch. The only verified path today is the local mock plugin-backed flow used by the orchestrator E2E test in the README.
 
 ## Acceptance Matrix
 
 | Flow | Capture Path | Control Path | Pairing | Live Preview | Live Control | Recovery | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Local mock flow | Mock capture window | Mock BLE control | N/A | Verified | Verified | Verified | Verified |
-| Linux + real iPhone/iPad + window capture | Window capture plugin | BLE HID control | Not yet verified | Not yet verified | Not yet verified | Not yet verified | Not yet verified |
-| Linux + real iPhone/iPad + direct receiver | Direct receiver plugin | BLE HID control | Not yet verified | Not yet verified | Not yet verified | Not yet verified | Not yet verified |
-| Windows + real iPhone/iPad + window capture | Window capture plugin | BLE HID control | Not yet verified | Not yet verified | Not yet verified | Not yet verified | Not yet verified |
-| Windows + real iPhone/iPad + direct receiver | Direct receiver plugin | BLE HID control | Not yet verified | Not yet verified | Not yet verified | Not yet verified | Not yet verified |
-| Linux + BLE HID control | N/A | BLE HID control | Not yet verified | N/A | Not yet verified | Not yet verified | Not yet verified |
-| Windows + BLE HID control | N/A | BLE HID control | Not yet verified | N/A | Not yet verified | Not yet verified | Not yet verified |
 
 ## Operator Validation Checklist
 
@@ -25,9 +19,18 @@ Use this checklist when validating a new real-device flow. Each item should be r
 5. Live control: confirm keyboard entry and pointer/tap actions are reflected on device.
 6. Recovery: verify stop/start session recovery and reconnection behavior after a simulated disconnect.
 
-## Not Yet Supported (Planned / Expected)
+## Not Yet Verified / Not Yet Supported
 
-These are intentionally tracked separately from the acceptance matrix and are not verified on this branch.
+These combinations are tracked separately because they are not currently verified on this branch:
+
+- Linux + real iPhone/iPad + window capture
+- Linux + real iPhone/iPad + direct receiver
+- Windows + real iPhone/iPad + window capture
+- Windows + real iPhone/iPad + direct receiver
+- Linux + BLE HID control
+- Windows + BLE HID control
+
+## Planned / Expected
 
 - Full real-device end-to-end flow through the desktop host UI
 - Automated reconnection of BLE HID session after host sleep
