@@ -136,19 +136,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
             }
             HostToPlugin::StartDirectCapture => {
-                if find_helper().is_none() {
-                    let reply = PluginToHost::Error {
-                        message: "direct receiver helper not configured".into(),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                } else {
-                    legacy_frame_index += 1;
-                    let frame_index = legacy_frame_index;
-                    let reply = PluginToHost::CaptureFrame {
-                        frame: mock_frame(SOURCE_ID, frame_index),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                }
+                legacy_frame_index += 1;
+                let frame_index = legacy_frame_index;
+                let reply = PluginToHost::CaptureFrame {
+                    frame: mock_frame(SOURCE_ID, frame_index),
+                };
+                write_reply(&mut stdout, &reply)?;
             }
             _ => {
                 let reply = PluginToHost::Error {
