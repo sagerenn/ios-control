@@ -60,10 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let reply = PluginToHost::ControlSession {
                     phase: ControlSessionPhase::ReadyToAdvertise,
                     checklist: ControlSetupChecklist {
-                        items: vec![
-                            "Enable Bluetooth".into(),
-                            "Pair the device".into(),
-                        ],
+                        items: vec!["Enable Bluetooth".into(), "Pair the device".into()],
                     },
                 };
                 write_reply(&mut stdout, &reply)?;

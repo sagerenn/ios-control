@@ -98,7 +98,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     assert_eq!(descriptor.protocol_version, 2);
     assert_eq!(descriptor.kind, PluginKind::Capture);
     assert_eq!(descriptor.display_name, "Window Capture");
-    window.send(&HostToPlugin::ListCaptureSources).await.unwrap();
+    window
+        .send(&HostToPlugin::ListCaptureSources)
+        .await
+        .unwrap();
     let source_id = match window.read().await.unwrap() {
         PluginToHost::CaptureSources { sources } => {
             assert_eq!(sources.len(), 1);
@@ -135,7 +138,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     assert_eq!(descriptor.protocol_version, 2);
     assert_eq!(descriptor.kind, PluginKind::Capture);
     assert_eq!(descriptor.display_name, "Direct Receiver");
-    direct.send(&HostToPlugin::StartDirectCapture).await.unwrap();
+    direct
+        .send(&HostToPlugin::StartDirectCapture)
+        .await
+        .unwrap();
     match direct.read().await.unwrap() {
         PluginToHost::CaptureFrame { frame } => {
             assert_eq!(frame.source_id, "direct-1");
@@ -192,10 +198,7 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         }
     }))
     .unwrap();
-    grounding
-        .send(&message)
-        .await
-        .unwrap();
+    grounding.send(&message).await.unwrap();
     match grounding.read().await.unwrap() {
         PluginToHost::GroundingPlan { plan } => {
             assert_eq!(plan.kind.as_str(), "keyboard");

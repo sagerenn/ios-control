@@ -1,6 +1,4 @@
-use ios_control_contracts::capture::{
-    FrameHealth, SourceKind, VideoFrameDescriptor, VideoSource,
-};
+use ios_control_contracts::capture::{FrameHealth, SourceKind, VideoFrameDescriptor, VideoSource};
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
 use std::io::{self, BufRead, Write};

@@ -1633,7 +1633,12 @@ name = "ios-control-session-orchestrator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ios-control-capability-registry",
  "ios-control-contracts",
+ "ios-control-device-registry",
+ "ios-control-plugin-protocol",
+ "ios-control-plugin-runtime",
+ "ios-control-telemetry-store",
  "tokio",
 ]
 

@@ -17,7 +17,9 @@ async fn main() -> anyhow::Result<()> {
                     display_name: "Mock Device".into(),
                 },
             };
-            stdout.write_all(serde_json::to_string(&reply)?.as_bytes()).await?;
+            stdout
+                .write_all(serde_json::to_string(&reply)?.as_bytes())
+                .await?;
             stdout.write_all(b"\n").await?;
         }
     }

@@ -24,10 +24,7 @@ impl RunningPlugin {
             .kill_on_drop(true)
             .spawn()?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("missing stdin"))?;
+        let stdin = child.stdin.take().ok_or_else(|| anyhow!("missing stdin"))?;
         let stdout = child
             .stdout
             .take()
