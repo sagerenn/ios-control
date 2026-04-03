@@ -7,4 +7,3 @@ edition = "2021"
 eframe = "0.31"
 egui = "0.31"
 ios-control-contracts = { path = "../../crates/contracts" }
-ios-control-session-orchestrator = { path = "../../crates/session-orchestrator" }
