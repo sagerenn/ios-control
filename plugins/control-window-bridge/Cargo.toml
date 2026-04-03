@@ -1,0 +1,10 @@
+[package]
+name = "plugin-control-window-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+ios-control-contracts = { path = "../../crates/contracts" }
+ios-control-plugin-protocol = { path = "../../crates/plugin-protocol" }
+serde_json = "1"

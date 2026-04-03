@@ -4,6 +4,7 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
+use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
 use plugin_control_ble::windows_backend::probe_windows_backend;
 use std::error::Error;
@@ -20,16 +21,25 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn probe_control_capability() -> ControlCapability {
+    let helper_capability = probe_ble_helper(find_ble_helper());
+    if helper_capability.supported {
+        return helper_capability;
+    }
     if cfg!(target_os = "linux") {
-        return probe_linux_backend().as_capability();
+        let backend_capability = probe_linux_backend().as_capability();
+        if backend_capability.supported {
+            return backend_capability;
+        }
+        return helper_capability;
     }
     if cfg!(target_os = "windows") {
-        return probe_windows_backend().as_capability();
+        let backend_capability = probe_windows_backend().as_capability();
+        if backend_capability.supported {
+            return backend_capability;
+        }
+        return helper_capability;
     }
-    ControlCapability {
-        supported: false,
-        reason: Some("unsupported host os for ble control".into()),
-    }
+    helper_capability
 }
 
 fn to_contract_capability(capability: &ControlCapability) -> ContractControlCapability {

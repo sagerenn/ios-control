@@ -11,6 +11,7 @@ members = [
   "crates/hid-report-engine",
   "apps/host-desktop",
   "plugins/control-ble",
+  "plugins/control-window-bridge",
   "plugins/capture-window",
   "plugins/capture-direct",
   "plugins/grounding-core",
