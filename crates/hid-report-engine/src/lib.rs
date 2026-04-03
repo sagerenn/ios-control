@@ -28,7 +28,12 @@ pub fn text_entry_reports(input: &str) -> Vec<[u8; 8]> {
 }
 
 pub fn key_presses_to_reports(keys: &[KeyPress]) -> Vec<[u8; 8]> {
-    keys.iter().copied().map(key_press_to_report).collect()
+    let mut reports = Vec::with_capacity(keys.len() * 2);
+    for key in keys.iter().copied() {
+        reports.push(key_press_to_report(key));
+        reports.push([0u8; 8]);
+    }
+    reports
 }
 
 pub fn key_press_to_report(key: KeyPress) -> [u8; 8] {

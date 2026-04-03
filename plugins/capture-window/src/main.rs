@@ -63,13 +63,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ListCaptureSources => {
-                let reply = PluginToHost::CaptureSources {
-                    sources: vec![VideoSource {
+                let sources = if probe_linux_capture() || probe_windows_capture() {
+                    vec![VideoSource {
                         source_id: SOURCE_ID.into(),
                         display_name: "Mock Window".into(),
                         kind: SourceKind::Window,
-                    }],
+                    }]
+                } else {
+                    Vec::new()
                 };
+                let reply = PluginToHost::CaptureSources { sources };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::OpenCaptureStream { source_id } => {
@@ -107,6 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     height: 720,
                     rotation_degrees: 0,
                     slot_bytes: SLOT_BYTES,
+                    slot_path: slot.path().display().to_string(),
                 };
                 stream = Some(StreamState {
                     source_id,

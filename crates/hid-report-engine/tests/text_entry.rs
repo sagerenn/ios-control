@@ -15,7 +15,8 @@ fn text_entry_expands_to_key_press_sequence() {
 fn text_entry_builds_keyboard_reports() {
     let reports = ios_control_hid_report_engine::text_entry_reports("A");
 
-    assert_eq!(reports.len(), 1);
+    assert_eq!(reports.len(), 2);
     assert_eq!(reports[0][0], 0x02);
     assert_eq!(reports[0][2], 0x04);
+    assert_eq!(reports[1], [0u8; 8]);
 }

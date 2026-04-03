@@ -2,12 +2,13 @@ use ios_control_contracts::session::SessionPhase;
 use ios_control_session_orchestrator::{PluginPaths, SessionOrchestrator, StartSessionRequest};
 
 mod support;
-use support::{build_plugins, plugin_path, workspace_root};
+use support::{build_plugins, plugin_path, prepare_window_runtime_env, workspace_root};
 
 #[tokio::test]
 async fn local_mock_e2e_builds_streaming_session() {
     let root = workspace_root();
     build_plugins(&root);
+    let _display_guard = prepare_window_runtime_env();
 
     let mut orchestrator = SessionOrchestrator::default();
     let state = orchestrator

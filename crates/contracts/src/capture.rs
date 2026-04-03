@@ -38,6 +38,7 @@ pub struct CaptureStreamDescriptor {
     pub height: u32,
     pub rotation_degrees: u16,
     pub slot_bytes: u32,
+    pub slot_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

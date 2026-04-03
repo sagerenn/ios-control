@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut handshaken = false;
     let mut stream: Option<StreamState> = None;
     let mut legacy_frame_index: u64 = 0;
+    let mut stream_frame_index: u64 = 0;
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -96,10 +97,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     height: DIRECT_HEIGHT,
                     rotation_degrees: 0,
                     slot_bytes: SLOT_BYTES,
+                    slot_path: slot.path().display().to_string(),
                 };
                 stream = Some(StreamState {
                     source_id,
-                    frame_index: 0,
+                    frame_index: stream_frame_index,
                     slot,
                 });
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
@@ -118,6 +120,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
 
                 state.frame_index += 1;
+                stream_frame_index = state.frame_index;
                 let bytes = mock_frame_bytes();
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {

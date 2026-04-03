@@ -98,13 +98,23 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     control.send(&HostToPlugin::ProbeControl).await.unwrap();
     match control.read().await.unwrap() {
         PluginToHost::ControlCapability { capability } => {
-            assert!(capability.supported);
+            if !capability.supported {
+                assert!(capability.reason.is_some());
+            }
         }
         other => panic!("unexpected control response: {other:?}"),
+    };
+    control.send(&HostToPlugin::PrepareControl).await.unwrap();
+    match control.read().await.unwrap() {
+        PluginToHost::ControlSession { checklist, .. } => {
+            assert!(!checklist.items.is_empty());
+        }
+        other => panic!("unexpected control prepare response: {other:?}"),
     }
     control.stop().await.unwrap();
 
     let window_path = plugin_path(&workspace_root, "plugin-capture-window");
+    let _display_guard = EnvVarGuard::set("DISPLAY", ":99");
     let mut window = RunningPlugin::spawn(&window_path).await.unwrap();
     window
         .send(&HostToPlugin::ListCaptureSources)

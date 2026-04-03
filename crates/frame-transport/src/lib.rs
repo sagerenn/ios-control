@@ -1,17 +1,48 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use memmap2::MmapMut;
+use std::fs::{remove_file, File, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct FrameSlot {
+    file: File,
+    path: PathBuf,
     mmap: MmapMut,
     byte_len: usize,
 }
 
 impl FrameSlot {
     pub fn new(byte_len: usize) -> Result<Self> {
+        let mut path = std::env::temp_dir();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock before unix epoch")?
+            .as_nanos();
+        path.push(format!("ios-control-frame-slot-{}-{}.bin", std::process::id(), nonce));
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| format!("failed to create frame slot at {}", path.display()))?;
+        file.set_len(byte_len as u64)
+            .with_context(|| format!("failed to size frame slot at {}", path.display()))?;
+        let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
-            mmap: MmapMut::map_anon(byte_len)?,
+            file,
+            path,
+            mmap,
             byte_len,
         })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.byte_len
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> Result<()> {
@@ -24,6 +55,14 @@ impl FrameSlot {
         }
         self.mmap[..bytes.len()].copy_from_slice(bytes);
         Ok(())
+    }
+}
+
+impl Drop for FrameSlot {
+    fn drop(&mut self) {
+        let _ = self.mmap.flush();
+        let _ = self.file.sync_all();
+        let _ = remove_file(&self.path);
     }
 }
 

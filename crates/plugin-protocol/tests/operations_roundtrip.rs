@@ -54,6 +54,7 @@ fn capture_stream_messages_roundtrip() {
             height: 720,
             rotation_degrees: 0,
             slot_bytes: 1280 * 720 * 4,
+            slot_path: "/tmp/mock-frame-slot".into(),
         },
     };
     let response_json = serde_json::to_string(&response).unwrap();

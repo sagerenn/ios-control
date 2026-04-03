@@ -4,6 +4,8 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
+use plugin_control_ble::linux_backend::probe_linux_backend;
+use plugin_control_ble::windows_backend::probe_windows_backend;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
@@ -18,9 +20,15 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn probe_control_capability() -> ControlCapability {
+    if cfg!(target_os = "linux") {
+        return probe_linux_backend().as_capability();
+    }
+    if cfg!(target_os = "windows") {
+        return probe_windows_backend().as_capability();
+    }
     ControlCapability {
-        supported: true,
-        reason: None,
+        supported: false,
+        reason: Some("unsupported host os for ble control".into()),
     }
 }
 
@@ -57,10 +65,12 @@ fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, Contro
         ControlSessionState::Connected => ControlSessionPhase::Connected,
         ControlSessionState::Error(_) => ControlSessionPhase::Error,
     };
+    let mut items = session.checklist.clone();
+    items.extend(session.notes.clone());
     (
         phase,
         ControlSetupChecklist {
-            items: session.checklist.clone(),
+            items,
         },
     )
 }
