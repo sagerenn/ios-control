@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use ios_control_capability_registry::CapabilityRegistry;
 use ios_control_contracts::capture::{SourceKind, VideoFrameDescriptor, VideoSource};
 use ios_control_contracts::control::{
-    ControlCapability, ControlSessionPhase, ControlSetupChecklist,
+    ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
 };
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, TargetInput};
 use ios_control_contracts::plugin::{PluginDescriptor, PluginHealth};
@@ -42,6 +42,12 @@ pub struct SessionDiagnostics {
     pub grounding_summary: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionResult {
+    pub applied: bool,
+    pub summary: String,
+}
+
 pub struct ActiveSessionState {
     pub summary: DeviceSessionSummary,
     pub selected_source_id: Option<String>,
@@ -49,6 +55,7 @@ pub struct ActiveSessionState {
     pub latest_frame: Option<VideoFrameDescriptor>,
     pub control_checklist: ControlSetupChecklist,
     pub diagnostics: SessionDiagnostics,
+    pub execution_result: Option<ExecutionResult>,
     capture_plugin: Option<RunningPlugin>,
     control_plugin: Option<RunningPlugin>,
     grounding_plugin: Option<RunningPlugin>,
@@ -63,6 +70,7 @@ impl std::fmt::Debug for ActiveSessionState {
             .field("latest_frame", &self.latest_frame)
             .field("control_checklist", &self.control_checklist)
             .field("diagnostics", &self.diagnostics)
+            .field("execution_result", &self.execution_result)
             .finish_non_exhaustive()
     }
 }
@@ -137,23 +145,38 @@ impl SessionOrchestrator {
             message: format!("control prepared: {control_phase:?}"),
         });
 
-        let (grounding_plugin_id, grounding_summary, grounding_plugin) =
+        let (grounding_plugin_id, grounding_summary, grounding_plugin, execution_result, latest_frame) =
             if let Some(path) = request.plugin_paths.grounding.as_ref() {
                 let mut grounding = RunningPlugin::spawn(path).await?;
                 let grounding_descriptor = grounding.handshake().await?;
                 let plan = request_grounding_plan(&mut grounding).await?;
+                let (execution_result, latest_frame) = execute_grounding_plan(
+                    &mut capture,
+                    &capture_descriptor,
+                    &mut control,
+                    &plan,
+                    &selected_source_id,
+                    &latest_frame,
+                )
+                .await?;
                 staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
                 staged_telemetry.push(TelemetryEvent {
                     session_id: session_id.clone(),
                     message: format!("grounding planned: {}", plan.summary),
                 });
+                staged_telemetry.push(TelemetryEvent {
+                    session_id: session_id.clone(),
+                    message: format!("execution result: {}", execution_result.summary),
+                });
                 (
                     Some(grounding_descriptor.plugin_id),
                     Some(plan.summary),
                     Some(grounding),
+                    Some(execution_result),
+                    Some(latest_frame),
                 )
             } else {
-                (None, None, None)
+                (None, None, None, None, Some(latest_frame))
             };
 
         let plugin_health = if control_capability.supported {
@@ -207,12 +230,13 @@ impl SessionOrchestrator {
             summary,
             selected_source_id: Some(selected_source_id),
             capture_sources,
-            latest_frame: Some(latest_frame),
+            latest_frame,
             control_checklist,
             diagnostics: SessionDiagnostics {
                 control_summary,
                 grounding_summary,
             },
+            execution_result,
             capture_plugin: Some(capture),
             control_plugin: Some(control),
             grounding_plugin,
@@ -375,6 +399,66 @@ async fn request_grounding_plan(grounding: &mut RunningPlugin) -> Result<Groundi
     {
         PluginToHost::GroundingPlan { plan } => Ok(plan),
         other => Err(anyhow!("unexpected grounding response: {other:?}")),
+    }
+}
+
+async fn execute_grounding_plan(
+    capture: &mut RunningPlugin,
+    capture_descriptor: &PluginDescriptor,
+    control: &mut RunningPlugin,
+    plan: &GroundingPlan,
+    selected_source_id: &str,
+    latest_frame: &VideoFrameDescriptor,
+) -> Result<(ExecutionResult, VideoFrameDescriptor)> {
+    let mut attempts = 0u8;
+    let mut previous_frame_index = latest_frame.frame_index;
+    let mut summary = request_plan_execution(control, plan).await?;
+    let mut frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
+    let mut screen_changed = frame.frame_index != previous_frame_index;
+
+    while summary.phase == ExecutionPhase::Succeeded && !screen_changed && attempts < 1 {
+        attempts += 1;
+        previous_frame_index = frame.frame_index;
+        summary = request_plan_execution(control, plan).await?;
+        frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
+        screen_changed = frame.frame_index != previous_frame_index;
+    }
+
+    let applied = summary.phase == ExecutionPhase::Succeeded && screen_changed;
+    let summary_text = format_execution_summary(&summary, screen_changed, attempts);
+
+    Ok((
+        ExecutionResult {
+            applied,
+            summary: summary_text,
+        },
+        frame,
+    ))
+}
+
+fn format_execution_summary(
+    summary: &ExecutionSummary,
+    screen_changed: bool,
+    attempts: u8,
+) -> String {
+    let mut text = summary.summary.clone();
+    if let Some(reason) = summary.failure_reason.as_deref() {
+        text.push_str(&format!("; failure: {reason}"));
+    }
+    text.push_str(&format!(
+        "; screen_changed={screen_changed}; attempts={}",
+        attempts + 1
+    ));
+    text
+}
+
+async fn request_plan_execution(
+    control: &mut RunningPlugin,
+    plan: &GroundingPlan,
+) -> Result<ExecutionSummary> {
+    match request_plugin(control, &HostToPlugin::ExecutePlan { plan: plan.clone() }).await? {
+        PluginToHost::ExecutionSummary { summary } => Ok(summary),
+        other => Err(anyhow!("unexpected execution response: {other:?}")),
     }
 }
 

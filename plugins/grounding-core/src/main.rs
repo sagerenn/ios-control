@@ -3,6 +3,9 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, Pl
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
+use plugin_grounding_core::action_selector::ActionSelector;
+use plugin_grounding_core::focus_tracker::FocusTracker;
+
 const PROTOCOL_VERSION: u32 = 2;
 
 fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<dyn Error>> {
@@ -46,16 +49,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::PlanGrounding { request } => {
-                let kind = if request.keyboard_preferred {
-                    PlanKind::Keyboard
-                } else {
-                    PlanKind::Pointer
+                let selector = ActionSelector::default();
+                let focus = FocusTracker {
+                    focus_confidence: request.focus_confidence,
+                    keyboard_friendly: request.keyboard_preferred,
+                };
+                let pointer_possible = request.target.visual_region.is_some();
+                let selection =
+                    selector.choose_plan(pointer_possible, &focus, request.uncertainty_radius);
+                let (kind, failure) = match selection {
+                    Ok(plan) => (plan.kind, None),
+                    Err(err) => (PlanKind::Hybrid, Some(err)),
+                };
+                let summary = match failure {
+                    Some(reason) => format!("grounding failed: {}", reason.as_str()),
+                    None => format!("selected {} plan", kind.as_str()),
                 };
                 let reply = PluginToHost::GroundingPlan {
                     plan: GroundingPlan {
                         kind,
-                        failure: None,
-                        summary: format!("selected {} plan", kind.as_str()),
+                        failure,
+                        summary,
                     },
                 };
                 write_reply(&mut stdout, &reply)?;

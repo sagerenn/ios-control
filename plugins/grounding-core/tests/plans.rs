@@ -1,6 +1,6 @@
 use ios_control_contracts::grounding::{GroundingFailure, PlanKind};
 use plugin_grounding_core::action_selector::ActionSelector;
-use plugin_grounding_core::execution_monitor::ExecutionMonitor;
+use plugin_grounding_core::execution_monitor::{ExecutionDecision, ExecutionMonitor};
 use plugin_grounding_core::focus_tracker::FocusTracker;
 use plugin_grounding_core::recovery_controller::RecoveryController;
 
@@ -13,6 +13,19 @@ fn keyboard_plan_wins_when_focus_confidence_is_high() {
     };
 
     let plan = selector.choose_plan(true, &focus, 120.0).unwrap();
+
+    assert_eq!(plan.kind, PlanKind::Keyboard);
+}
+
+#[test]
+fn keyboard_plan_wins_when_keyboard_preferred() {
+    let selector = ActionSelector::default();
+    let focus = FocusTracker {
+        focus_confidence: 0.9,
+        keyboard_friendly: true,
+    };
+
+    let plan = selector.choose_plan(false, &focus, 999.0).unwrap();
 
     assert_eq!(plan.kind, PlanKind::Keyboard);
 }
@@ -47,6 +60,20 @@ fn choose_plan_fails_when_keyboard_not_preferred_and_pointer_not_viable() {
 fn screen_changed_reports_difference() {
     assert!(!ExecutionMonitor::screen_changed(1234, 1234));
     assert!(ExecutionMonitor::screen_changed(1234, 5678));
+}
+
+#[test]
+fn execution_monitor_requests_retry_then_fails_when_screen_never_changes() {
+    let mut recovery = RecoveryController::default();
+
+    let first = ExecutionMonitor::evaluate(42, 42, &mut recovery);
+    assert_eq!(first, ExecutionDecision::Retry);
+
+    let second = ExecutionMonitor::evaluate(42, 42, &mut recovery);
+    assert_eq!(
+        second,
+        ExecutionDecision::Failed(GroundingFailure::RecoveryExhausted)
+    );
 }
 
 #[test]
