@@ -20,6 +20,16 @@ struct StreamState {
     slot: FrameSlot,
 }
 
+fn resolve_available_helper() -> Result<std::path::PathBuf, String> {
+    let helper_path =
+        find_helper().ok_or_else(|| "direct receiver helper not configured".to_string())?;
+    match run_probe(&helper_path) {
+        Ok(probe) if probe.available => Ok(helper_path),
+        Ok(_) => Err("direct receiver helper unavailable".into()),
+        Err(err) => Err(format!("incompatible direct helper probe: {}", err)),
+    }
+}
+
 fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<dyn Error>> {
     let payload = serde_json::to_string(reply)?;
     stdout.write_all(payload.as_bytes())?;
@@ -80,33 +90,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let helper_path = match find_helper() {
-                    Some(path) => path,
-                    None => {
-                        let reply = PluginToHost::Error {
-                            message: "direct receiver helper not configured".into(),
-                        };
+                let helper_path = match resolve_available_helper() {
+                    Ok(path) => path,
+                    Err(message) => {
+                        let reply = PluginToHost::Error { message };
                         write_reply(&mut stdout, &reply)?;
                         continue;
                     }
                 };
-                match run_probe(&helper_path) {
-                    Ok(probe) if probe.available => {}
-                    Ok(_) => {
-                        let reply = PluginToHost::Error {
-                            message: "direct receiver helper unavailable".into(),
-                        };
-                        write_reply(&mut stdout, &reply)?;
-                        continue;
-                    }
-                    Err(err) => {
-                        let reply = PluginToHost::Error {
-                            message: format!("incompatible direct helper probe: {}", err),
-                        };
-                        write_reply(&mut stdout, &reply)?;
-                        continue;
-                    }
-                }
 
                 let slot = match allocate_mock_slot() {
                     Ok(slot) => slot,
@@ -196,11 +187,46 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
             }
             HostToPlugin::StartDirectCapture => {
-                legacy_frame_index += 1;
-                let frame_index = legacy_frame_index;
-                let reply = PluginToHost::CaptureFrame {
-                    frame: mock_frame(SOURCE_ID, frame_index),
+                let helper_path = match resolve_available_helper() {
+                    Ok(path) => path,
+                    Err(message) => {
+                        let reply = PluginToHost::Error { message };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
                 };
+
+                let event = match read_next_frame_event(&helper_path, SOURCE_ID) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("failed to read helper frame event: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+                if event.width != DIRECT_WIDTH || event.height != DIRECT_HEIGHT {
+                    let reply = PluginToHost::Error {
+                        message: format!(
+                            "helper frame geometry mismatch: expected {}x{}, got {}x{}",
+                            DIRECT_WIDTH, DIRECT_HEIGHT, event.width, event.height
+                        ),
+                    };
+                    write_reply(&mut stdout, &reply)?;
+                    continue;
+                }
+
+                let frame_index = if event.frame_index > legacy_frame_index {
+                    event.frame_index
+                } else {
+                    legacy_frame_index.saturating_add(1)
+                };
+                legacy_frame_index = frame_index;
+                let mut frame = mock_frame(SOURCE_ID, frame_index);
+                frame.width = event.width;
+                frame.height = event.height;
+                let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
             }
             _ => {

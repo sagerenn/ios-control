@@ -313,3 +313,63 @@ exit 2
         started.elapsed()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn start_direct_capture_requires_configured_helper() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let old_helper = env::var_os("IOS_CONTROL_DIRECT_RECEIVER_HELPER");
+    env::remove_var("IOS_CONTROL_DIRECT_RECEIVER_HELPER");
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::StartDirectCapture);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert_eq!(message, "direct receiver helper not configured");
+        }
+        other => panic!("unexpected start capture reply: {other:?}"),
+    }
+
+    match old_helper {
+        Some(value) => env::set_var("IOS_CONTROL_DIRECT_RECEIVER_HELPER", value),
+        None => env::remove_var("IOS_CONTROL_DIRECT_RECEIVER_HELPER"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn start_direct_capture_rejects_incompatible_helper() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo 'not-json'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::StartDirectCapture);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("incompatible direct helper probe"),
+                "unexpected message: {message}"
+            );
+        }
+        other => panic!("unexpected start capture reply: {other:?}"),
+    }
+}
