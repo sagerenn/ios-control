@@ -1,5 +1,7 @@
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
-use plugin_capture_window::helper_bridge::{HelperFrameEvent, HelperProbe};
+use plugin_capture_window::helper_bridge::{
+    read_next_frame_event, run_probe, HelperFrameEvent, HelperProbe,
+};
 use plugin_capture_window::helper_config::WindowHelperConfig;
 use plugin_capture_window::helper_config::WINDOW_HELPER_SOURCE_ID;
 use plugin_capture_window::linux_backend::probe_linux_capture;
@@ -11,6 +13,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -291,4 +294,56 @@ exit 2
         }
         other => panic!("unexpected read reply: {other:?}"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_helper_probe_times_out_when_helper_hangs() {
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  sleep 5
+  exit 0
+fi
+exit 2
+"#,
+    );
+
+    let started = Instant::now();
+    let err = run_probe(&helper.path).unwrap_err();
+    assert!(
+        err.to_string().contains("timed out"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "timeout path took too long: {:?}",
+        started.elapsed()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn window_helper_stream_read_times_out_when_helper_hangs() {
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "stream" ]; then
+  sleep 5
+  exit 0
+fi
+exit 2
+"#,
+    );
+
+    let started = Instant::now();
+    let err = read_next_frame_event(&helper.path, WINDOW_HELPER_SOURCE_ID).unwrap_err();
+    assert!(
+        err.to_string().contains("timed out"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "timeout path took too long: {:?}",
+        started.elapsed()
+    );
 }
