@@ -13,11 +13,43 @@ use plugin_capture_window::helper_config::WINDOW_HELPER_SOURCE_ID;
 
 const PROTOCOL_VERSION: u32 = 3;
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
+const STREAM_WIDTH: u32 = 1280;
+const STREAM_HEIGHT: u32 = 720;
 
 struct StreamState {
     source_id: String,
     helper_path: std::path::PathBuf,
     slot: FrameSlot,
+}
+
+enum WindowHelperStatus {
+    Unconfigured,
+    ProbeFailed,
+    Unavailable {
+        supports_input_bridge: bool,
+    },
+    Available {
+        config: WindowHelperConfig,
+        probe: helper_bridge::HelperProbe,
+    },
+}
+
+fn window_helper_status() -> WindowHelperStatus {
+    let Some(config) = WindowHelperConfig::from_env() else {
+        return WindowHelperStatus::Unconfigured;
+    };
+    match helper_bridge::run_probe(&config.helper_path) {
+        Ok(probe) => {
+            if probe.available {
+                WindowHelperStatus::Available { config, probe }
+            } else {
+                WindowHelperStatus::Unavailable {
+                    supports_input_bridge: probe.supports_input_bridge,
+                }
+            }
+        }
+        Err(_) => WindowHelperStatus::ProbeFailed,
+    }
 }
 
 fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<dyn Error>> {
@@ -67,20 +99,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ProbeCapture => {
-                let probe = WindowHelperConfig::from_env().and_then(|config| {
-                    helper_bridge::run_probe(&config.helper_path)
-                        .ok()
-                        .map(|probe| (config, probe))
-                });
-
-                let capability = match probe.as_ref() {
-                    Some((_config, probe)) => CaptureCapability {
-                        available: probe.available,
+                let capability = match window_helper_status() {
+                    WindowHelperStatus::Available { probe, .. } => CaptureCapability {
+                        available: true,
                         reason: None,
                         backend_id: "capture.window.helper".into(),
                         supports_input_bridge: probe.supports_input_bridge,
                     },
-                    None => CaptureCapability {
+                    WindowHelperStatus::Unavailable {
+                        supports_input_bridge,
+                    } => CaptureCapability {
+                        available: false,
+                        reason: Some("window capture helper unavailable".into()),
+                        backend_id: "capture.window.helper".into(),
+                        supports_input_bridge,
+                    },
+                    WindowHelperStatus::ProbeFailed => CaptureCapability {
+                        available: false,
+                        reason: Some("window helper probe failed".into()),
+                        backend_id: "capture.window.helper".into(),
+                        supports_input_bridge: false,
+                    },
+                    WindowHelperStatus::Unconfigured => CaptureCapability {
                         available: false,
                         reason: Some("IOS_CONTROL_WINDOW_CAPTURE_HELPER not configured".into()),
                         backend_id: "capture.window.helper".into(),
@@ -91,13 +131,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ListCaptureSources => {
-                let sources = WindowHelperConfig::from_env()
-                    .and_then(|config| {
-                        helper_bridge::run_probe(&config.helper_path)
-                            .ok()
-                            .map(|probe| config.list_sources_with_name(&probe.display_name))
-                    })
-                    .unwrap_or_default();
+                let sources = match window_helper_status() {
+                    WindowHelperStatus::Available { config, probe } => {
+                        config.list_sources_with_name(&probe.display_name)
+                    }
+                    _ => Vec::new(),
+                };
                 let reply = PluginToHost::CaptureSources { sources };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -110,33 +149,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let config = match WindowHelperConfig::from_env() {
-                    Some(config) => config,
-                    None => {
+                let config = match window_helper_status() {
+                    WindowHelperStatus::Available { config, .. } => config,
+                    WindowHelperStatus::Unconfigured => {
                         let reply = PluginToHost::Error {
                             message: "window capture helper not configured".into(),
                         };
                         write_reply(&mut stdout, &reply)?;
                         continue;
                     }
-                };
-                let probe = match helper_bridge::run_probe(&config.helper_path) {
-                    Ok(probe) => probe,
-                    Err(err) => {
+                    WindowHelperStatus::ProbeFailed => {
                         let reply = PluginToHost::Error {
-                            message: format!("window helper probe failed: {}", err),
+                            message: "window helper probe failed".into(),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                    WindowHelperStatus::Unavailable { .. } => {
+                        let reply = PluginToHost::Error {
+                            message: "window capture helper unavailable".into(),
                         };
                         write_reply(&mut stdout, &reply)?;
                         continue;
                     }
                 };
-                if !probe.available {
-                    let reply = PluginToHost::Error {
-                        message: "window capture helper unavailable".into(),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                    continue;
-                }
 
                 let slot = match allocate_mock_slot() {
                     Ok(slot) => slot,
@@ -152,8 +188,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let descriptor = CaptureStreamDescriptor {
                     source_id: source_id.clone(),
                     source_kind: SourceKind::Window,
-                    width: 1280,
-                    height: 720,
+                    width: STREAM_WIDTH,
+                    height: STREAM_HEIGHT,
                     rotation_degrees: 0,
                     slot_bytes: SLOT_BYTES,
                     slot_path: slot.path().display().to_string(),
@@ -191,6 +227,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                 };
+                if event.width != STREAM_WIDTH || event.height != STREAM_HEIGHT {
+                    let reply = PluginToHost::Error {
+                        message: format!(
+                            "helper frame geometry mismatch: expected {}x{}, got {}x{}",
+                            STREAM_WIDTH, STREAM_HEIGHT, event.width, event.height
+                        ),
+                    };
+                    write_reply(&mut stdout, &reply)?;
+                    continue;
+                }
                 let bytes = vec![event.fill_byte; state.slot.byte_len()];
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {

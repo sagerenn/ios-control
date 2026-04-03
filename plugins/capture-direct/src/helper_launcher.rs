@@ -1,4 +1,4 @@
-use crate::helper_bridge::HelperFrameEvent;
+use crate::helper_bridge::{HelperFrameEvent, HelperProbe};
 use anyhow::{anyhow, Result};
 use ios_control_contracts::capture::CaptureCapability;
 use std::io::{BufRead, BufReader};
@@ -14,11 +14,19 @@ pub fn find_helper() -> Option<PathBuf> {
 
 pub fn capture_capability(helper: Option<PathBuf>) -> CaptureCapability {
     match helper {
-        Some(_) => CaptureCapability {
-            available: true,
-            reason: None,
-            backend_id: "capture.direct.helper".into(),
-            supports_input_bridge: false,
+        Some(path) => match run_probe(&path) {
+            Ok(probe) => CaptureCapability {
+                available: probe.available,
+                reason: (!probe.available).then_some("direct receiver helper unavailable".into()),
+                backend_id: "capture.direct.helper".into(),
+                supports_input_bridge: probe.supports_input_bridge,
+            },
+            Err(err) => CaptureCapability {
+                available: false,
+                reason: Some(format!("incompatible helper probe: {}", err)),
+                backend_id: "capture.direct.helper".into(),
+                supports_input_bridge: false,
+            },
         },
         None => CaptureCapability {
             available: false,
@@ -27,6 +35,14 @@ pub fn capture_capability(helper: Option<PathBuf>) -> CaptureCapability {
             supports_input_bridge: false,
         },
     }
+}
+
+pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
+    let output = Command::new(helper).arg("probe").output()?;
+    if !output.status.success() {
+        return Err(anyhow!("direct helper probe failed"));
+    }
+    serde_json::from_slice(&output.stdout).map_err(Into::into)
 }
 
 pub fn read_next_frame_event(helper: &Path, source_id: &str) -> Result<HelperFrameEvent> {

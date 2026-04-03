@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 
 use plugin_capture_direct::backend::{allocate_mock_slot, mock_frame, DIRECT_HEIGHT, DIRECT_WIDTH};
 use plugin_capture_direct::helper_launcher::{
-    capture_capability, find_helper, read_next_frame_event,
+    capture_capability, find_helper, read_next_frame_event, run_probe,
 };
 
 const PROTOCOL_VERSION: u32 = 3;
@@ -89,6 +89,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                 };
+                match run_probe(&helper_path) {
+                    Ok(probe) if probe.available => {}
+                    Ok(_) => {
+                        let reply = PluginToHost::Error {
+                            message: "direct receiver helper unavailable".into(),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("incompatible direct helper probe: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                }
 
                 let slot = match allocate_mock_slot() {
                     Ok(slot) => slot,
@@ -140,6 +157,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                 };
+                if event.width != DIRECT_WIDTH || event.height != DIRECT_HEIGHT {
+                    let reply = PluginToHost::Error {
+                        message: format!(
+                            "helper frame geometry mismatch: expected {}x{}, got {}x{}",
+                            DIRECT_WIDTH, DIRECT_HEIGHT, event.width, event.height
+                        ),
+                    };
+                    write_reply(&mut stdout, &reply)?;
+                    continue;
+                }
 
                 let bytes = vec![event.fill_byte; state.slot.byte_len()];
                 if let Err(err) = state.slot.write(&bytes) {

@@ -1,12 +1,102 @@
+use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use plugin_capture_window::helper_bridge::{HelperFrameEvent, HelperProbe};
 use plugin_capture_window::helper_config::WindowHelperConfig;
+use plugin_capture_window::helper_config::WINDOW_HELPER_SOURCE_ID;
 use plugin_capture_window::linux_backend::probe_linux_capture;
 use plugin_capture_window::mock_backend::MockWindowBackend;
 use plugin_capture_window::windows_backend::probe_windows_capture;
 use std::env;
+use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &std::path::Path) -> Self {
+        let original = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.take() {
+            env::set_var(self.key, value);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
+}
+
+struct PluginProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<std::process::ChildStdout>,
+}
+
+impl PluginProcess {
+    #[cfg(unix)]
+    fn spawn() -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_plugin-capture-window"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn plugin-capture-window");
+        let stdin = child.stdin.take().expect("plugin stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("plugin stdout"));
+        Self {
+            child,
+            stdin,
+            stdout,
+        }
+    }
+
+    fn send(&mut self, request: HostToPlugin) {
+        let payload = serde_json::to_string(&request).unwrap();
+        self.stdin.write_all(payload.as_bytes()).unwrap();
+        self.stdin.write_all(b"\n").unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    fn recv(&mut self) -> PluginToHost {
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        serde_json::from_str(line.trim()).unwrap()
+    }
+}
+
+impl Drop for PluginProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(unix)]
+struct HelperFixture {
+    _dir: tempfile::TempDir,
+    path: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+fn write_helper_script(contents: &str) -> HelperFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("window-helper.sh");
+    std::fs::write(&path, contents).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    HelperFixture { _dir: dir, path }
+}
 
 #[tokio::test]
 async fn window_capture_lists_mock_source_then_streams_one_frame() {
@@ -105,5 +195,100 @@ fn windows_capture_probe_requires_helper_configuration() {
     match old_helper {
         Some(value) => env::set_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER", value),
         None => env::remove_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_helper_unavailable_hides_sources_and_rejects_stream_open() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":false,"display_name":"Mirror Offline","supports_input_bridge":true}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":1,"width":1280,"height":720,"fill_byte":5}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_WINDOW_CAPTURE_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::ProbeCapture);
+    match plugin.recv() {
+        PluginToHost::CaptureCapability { capability } => {
+            assert!(!capability.available);
+        }
+        other => panic!("unexpected probe reply: {other:?}"),
+    }
+
+    plugin.send(HostToPlugin::ListCaptureSources);
+    match plugin.recv() {
+        PluginToHost::CaptureSources { sources } => assert!(sources.is_empty()),
+        other => panic!("unexpected sources reply: {other:?}"),
+    }
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: WINDOW_HELPER_SOURCE_ID.into(),
+    });
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert_eq!(message, "window capture helper unavailable");
+        }
+        other => panic!("unexpected open reply: {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_read_frame_rejects_helper_geometry_mismatch() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"display_name":"Operator Mirror","supports_input_bridge":true}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":9,"width":640,"height":480,"fill_byte":7}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_WINDOW_CAPTURE_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: WINDOW_HELPER_SOURCE_ID.into(),
+    });
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureStreamOpened { .. }
+    ));
+
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("helper frame geometry mismatch"),
+                "actual message: {message}"
+            );
+        }
+        other => panic!("unexpected read reply: {other:?}"),
     }
 }
