@@ -115,7 +115,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     (None, Ok(_)) => ExecutionSummary {
                         summary: "window bridge execution failed".into(),
                         phase: ExecutionPhase::Failed,
-                        failure_reason: Some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into()),
+                        failure_reason: if std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER")
+                            .is_some()
+                        {
+                            Some("IOS_CONTROL_WINDOW_INPUT_HELPER does not point to a file".into())
+                        } else {
+                            Some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into())
+                        },
                     },
                 };
                 write_reply(&mut stdout, &PluginToHost::ExecutionSummary { summary })?;

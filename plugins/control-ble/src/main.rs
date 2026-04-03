@@ -27,21 +27,34 @@ fn probe_control_capability() -> ControlCapability {
     if helper_capability.supported {
         return helper_capability;
     }
-    if cfg!(target_os = "linux") {
-        let backend_capability = probe_linux_backend().as_capability();
-        if backend_capability.supported {
-            return backend_capability;
-        }
-        return helper_capability;
+
+    let native_hint = if cfg!(target_os = "linux") {
+        probe_linux_backend()
+            .as_capability()
+            .supported
+            .then_some("native BLE transport detected; helper-backed execution is still required")
+    } else if cfg!(target_os = "windows") {
+        probe_windows_backend()
+            .as_capability()
+            .supported
+            .then_some("native BLE transport detected; helper-backed execution is still required")
+    } else {
+        None
+    };
+
+    let reason = match (helper_capability.reason, native_hint) {
+        (Some(helper_reason), Some(hint)) => Some(format!("{helper_reason}; {hint}")),
+        (Some(helper_reason), None) => Some(helper_reason),
+        (None, Some(hint)) => Some(hint.into()),
+        (None, None) => Some(
+            "configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support".into(),
+        ),
+    };
+
+    ControlCapability {
+        supported: false,
+        reason,
     }
-    if cfg!(target_os = "windows") {
-        let backend_capability = probe_windows_backend().as_capability();
-        if backend_capability.supported {
-            return backend_capability;
-        }
-        return helper_capability;
-    }
-    helper_capability
 }
 
 fn to_contract_capability(capability: &ControlCapability) -> ContractControlCapability {
