@@ -1,4 +1,4 @@
-use ios_control_contracts::capture::{CaptureCapability, CaptureStreamDescriptor, SourceKind};
+use ios_control_contracts::capture::{CaptureStreamDescriptor, SourceKind};
 use ios_control_frame_transport::FrameSlot;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
@@ -7,7 +7,7 @@ use std::io::{self, BufRead, Write};
 use plugin_capture_direct::backend::{
     allocate_mock_slot, mock_frame, mock_frame_bytes, DIRECT_HEIGHT, DIRECT_WIDTH,
 };
-use plugin_capture_direct::helper_launcher::find_helper;
+use plugin_capture_direct::helper_launcher::{capture_capability, find_helper};
 
 const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
@@ -63,16 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ProbeCapture => {
-                let capability = CaptureCapability {
-                    available: find_helper().is_some(),
-                    reason: if find_helper().is_some() {
-                        None
-                    } else {
-                        Some("direct receiver helper not configured".into())
-                    },
-                    backend_id: "capture.direct".into(),
-                    supports_input_bridge: false,
-                };
+                let capability = capture_capability(find_helper());
                 let reply = PluginToHost::CaptureCapability { capability };
                 write_reply(&mut stdout, &reply)?;
             }
