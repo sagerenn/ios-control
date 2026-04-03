@@ -19,6 +19,7 @@ const STREAM_HEIGHT: u32 = 720;
 struct StreamState {
     source_id: String,
     helper_path: std::path::PathBuf,
+    last_frame_index: u64,
     slot: FrameSlot,
 }
 
@@ -197,6 +198,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 stream = Some(StreamState {
                     source_id,
                     helper_path: config.helper_path,
+                    last_frame_index: 0,
                     slot,
                 });
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
@@ -246,7 +248,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let mut frame = mock_frame(&state.source_id, event.frame_index);
+                let frame_index = if event.frame_index > state.last_frame_index {
+                    event.frame_index
+                } else {
+                    state.last_frame_index.saturating_add(1)
+                };
+                state.last_frame_index = frame_index;
+                let mut frame = mock_frame(&state.source_id, frame_index);
                 frame.width = event.width;
                 frame.height = event.height;
                 frame.health = FrameHealth::Healthy;

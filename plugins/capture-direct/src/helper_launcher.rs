@@ -48,16 +48,41 @@ pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()?;
-    let status = wait_for_exit(&mut child, "direct helper probe")?;
-    if !status.success() {
-        return Err(anyhow!("direct helper probe failed"));
-    }
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| anyhow!("missing helper stdout"))?;
-    let mut bytes = Vec::new();
-    stdout.read_to_end(&mut bytes)?;
+    let (tx, rx) = mpsc::sync_channel(1);
+    let reader = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let result = (|| {
+            let mut bytes = Vec::new();
+            stdout.read_to_end(&mut bytes)?;
+            Result::<Vec<u8>>::Ok(bytes)
+        })();
+        let _ = tx.send(result);
+    });
+
+    let status = wait_for_exit(&mut child, "direct helper probe")?;
+    if !status.success() {
+        drop(reader);
+        return Err(anyhow!("direct helper probe failed"));
+    }
+    let bytes = match rx.recv_timeout(HELPER_TIMEOUT) {
+        Ok(result) => result?,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            drop(reader);
+            return Err(anyhow!(
+                "direct helper probe stdout read timed out after {:?}",
+                HELPER_TIMEOUT
+            ));
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            drop(reader);
+            return Err(anyhow!("direct helper probe stdout read failed"));
+        }
+    };
+    let _ = reader.join();
     serde_json::from_slice(&bytes).map_err(Into::into)
 }
 

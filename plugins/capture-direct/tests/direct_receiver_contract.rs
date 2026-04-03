@@ -239,3 +239,77 @@ exit 2
         started.elapsed()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn direct_stream_reads_keep_frame_index_monotonic_when_helper_repeats() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"supports_input_bridge":false}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":1,"width":1179,"height":2556,"fill_byte":9}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: "direct-1".into(),
+    });
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureStreamOpened { .. }
+    ));
+
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    let first_index = match plugin.recv() {
+        PluginToHost::CaptureFrame { frame } => frame.frame_index,
+        other => panic!("unexpected first read reply: {other:?}"),
+    };
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    let second_index = match plugin.recv() {
+        PluginToHost::CaptureFrame { frame } => frame.frame_index,
+        other => panic!("unexpected second read reply: {other:?}"),
+    };
+
+    assert!(second_index > first_index);
+    assert_eq!(first_index, 1);
+    assert_eq!(second_index, 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_probe_handles_large_stdout_without_timeout() {
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  padding="$(head -c 70000 /dev/zero | tr '\0' 'a')"
+  printf '{"available":true,"supports_input_bridge":false,"padding":"%s"}\n' "$padding"
+  exit 0
+fi
+exit 2
+"#,
+    );
+
+    let started = Instant::now();
+    let probe = run_probe(&helper.path).unwrap();
+    assert!(probe.available);
+    assert!(!probe.supports_input_bridge);
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "probe path took too long: {:?}",
+        started.elapsed()
+    );
+}
