@@ -1,6 +1,8 @@
 pub use ios_control_contracts::plugin::{PluginDescriptor, PluginKind};
 
-use ios_control_contracts::capture::{VideoFrameDescriptor, VideoSource};
+use ios_control_contracts::capture::{
+    CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
+};
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
 };
@@ -19,7 +21,7 @@ pub enum HostToPlugin {
     GetCaptureFrame { source_id: String },
     StartDirectCapture,
     PlanGrounding { request: GroundingRequest },
-    ExecutePlan { summary: String },
+    ExecutePlan { plan: GroundingPlan },
     Stop,
 }
 
@@ -37,6 +39,9 @@ pub enum PluginToHost {
     },
     CaptureSources {
         sources: Vec<VideoSource>,
+    },
+    CaptureStreamOpened {
+        stream: CaptureStreamDescriptor,
     },
     CaptureFrame {
         frame: VideoFrameDescriptor,

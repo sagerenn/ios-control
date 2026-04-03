@@ -1,4 +1,5 @@
-use ios_control_contracts::capture::VideoFrameDescriptor;
+use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoFrameDescriptor};
+use ios_control_contracts::control::{ExecutionPhase, ExecutionSummary};
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, PlanKind, TargetInput};
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 
@@ -44,6 +45,58 @@ fn capture_stream_messages_roundtrip() {
     let json = serde_json::to_string(&request).unwrap();
     let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, request);
+
+    let response = PluginToHost::CaptureStreamOpened {
+        stream: CaptureStreamDescriptor {
+            source_id: "window-1".into(),
+            source_kind: ios_control_contracts::capture::SourceKind::Window,
+            width: 1280,
+            height: 720,
+            rotation_degrees: 0,
+            slot_bytes: 1280 * 720 * 4,
+        },
+    };
+    let response_json = serde_json::to_string(&response).unwrap();
+    let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(decoded_response, response);
+}
+
+#[test]
+fn execution_messages_roundtrip() {
+    let plan = GroundingPlan {
+        kind: PlanKind::Keyboard,
+        failure: None,
+        summary: "selected keyboard plan".into(),
+    };
+
+    let request = HostToPlugin::ExecutePlan { plan: plan.clone() };
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, request);
+
+    let response = PluginToHost::ExecutionSummary {
+        summary: ExecutionSummary {
+            summary: "executed keyboard plan".into(),
+            phase: ExecutionPhase::Succeeded,
+            failure_reason: None,
+        },
+    };
+    let response_json = serde_json::to_string(&response).unwrap();
+    let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(decoded_response, response);
+}
+
+#[test]
+fn incremental_stream_messages_roundtrip() {
+    let request = HostToPlugin::ReadCaptureFrame;
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, request);
+
+    let close_request = HostToPlugin::CloseCaptureStream;
+    let close_json = serde_json::to_string(&close_request).unwrap();
+    let close_decoded: HostToPlugin = serde_json::from_str(&close_json).unwrap();
+    assert_eq!(close_decoded, close_request);
 
     let response = PluginToHost::CaptureFrame {
         frame: VideoFrameDescriptor {
