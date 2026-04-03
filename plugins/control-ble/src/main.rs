@@ -8,8 +8,6 @@ use ios_control_contracts::control::{
 use ios_control_contracts::grounding::PlanKind;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
-use plugin_control_ble::linux_backend::probe_linux_backend;
-use plugin_control_ble::windows_backend::probe_windows_backend;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
@@ -30,19 +28,6 @@ fn probe_control_capability() -> ControlCapability {
     }
 }
 
-fn runtime_control_capability() -> ControlCapability {
-    if cfg!(target_os = "linux") {
-        return probe_linux_backend().as_capability();
-    }
-    if cfg!(target_os = "windows") {
-        return probe_windows_backend().as_capability();
-    }
-    ControlCapability {
-        supported: false,
-        reason: Some("unsupported host os for ble control".into()),
-    }
-}
-
 fn to_contract_capability(capability: &ControlCapability) -> ContractControlCapability {
     ContractControlCapability {
         supported: capability.supported,
@@ -59,31 +44,27 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
                 .unwrap_or_else(|| "ble control not supported".into()),
         );
     }
-    ControlSession {
-        state: ControlSessionState::Error("ble advertise/connect not implemented".into()),
-        checklist: vec![
-            "Enable Bluetooth".into(),
-            "Pair the device when it appears".into(),
+    ControlSession::ready(
+        vec!["Enable Bluetooth".into(), "Pair the device when it appears".into()],
+        vec![
+            "BLE advertising/connect not implemented yet".into(),
+            "HID reports will be generated but not transmitted".into(),
         ],
-        notes: Vec::new(),
-        pending_reports: 0,
-    }
+    )
 }
 
 fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, ControlSetupChecklist) {
     let phase = match session.state {
         ControlSessionState::Unsupported => ControlSessionPhase::Unavailable,
-        ControlSessionState::Ready => ControlSessionPhase::Error,
+        ControlSessionState::Ready => ControlSessionPhase::ReadyToAdvertise,
         ControlSessionState::Advertising => ControlSessionPhase::Advertising,
         ControlSessionState::Connected => ControlSessionPhase::Connected,
         ControlSessionState::Error(_) => ControlSessionPhase::Error,
     };
-    let mut items = session.checklist.clone();
-    items.extend(session.notes.clone());
     (
         phase,
         ControlSetupChecklist {
-            items,
+            items: session.checklist.clone(),
         },
     )
 }
@@ -129,7 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::PrepareControl => {
-                let capability = runtime_control_capability();
+                let capability = probe_control_capability();
                 let snapshot = build_session_from_capability(&capability);
                 let (phase, checklist) = session_to_contract(&snapshot);
                 session = Some(snapshot);
