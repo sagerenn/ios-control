@@ -1,6 +1,7 @@
 use std::env;
 use std::io;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -13,7 +14,24 @@ pub fn find_helper() -> Option<PathBuf> {
 }
 
 pub fn helper_available(path: Option<PathBuf>) -> bool {
-    path.is_some()
+    path.as_ref().is_some_and(|path| helper_is_executable(path))
+}
+
+pub fn helper_is_executable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;

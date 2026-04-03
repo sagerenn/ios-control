@@ -5,11 +5,12 @@ use ios_control_contracts::control::{
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
 use plugin_control_window_bridge::helper_launcher::{
-    find_helper, helper_available, launch_helper, run_embedded_helper_mode,
+    find_helper, helper_available, helper_is_executable, launch_helper, run_embedded_helper_mode,
     should_run_embedded_helper_mode,
 };
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 
 const PROTOCOL_VERSION: u32 = 3;
 
@@ -22,16 +23,25 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn control_capability() -> ControlCapability {
-    let configured = std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER").is_some();
-    let supported = helper_available(find_helper());
+    let configured = std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER");
+    let configured_path = configured.clone().map(PathBuf::from);
+    let discovered = find_helper();
+    let supported = helper_available(discovered.clone());
     ControlCapability {
         supported,
         reason: if supported {
             None
-        } else if !configured {
+        } else if configured.is_none() {
             Some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into())
-        } else {
+        } else if discovered.is_none() {
             Some("IOS_CONTROL_WINDOW_INPUT_HELPER does not point to a file".into())
+        } else if !configured_path
+            .as_ref()
+            .is_some_and(|path| helper_is_executable(path))
+        {
+            Some("IOS_CONTROL_WINDOW_INPUT_HELPER is not executable".into())
+        } else {
+            Some("IOS_CONTROL_WINDOW_INPUT_HELPER is not usable".into())
         },
         transport: ControlTransportKind::WindowInputBridge,
     }
@@ -86,13 +96,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 )?;
             }
             HostToPlugin::PrepareControl => {
+                let capability = control_capability();
                 let reply = PluginToHost::ControlSession {
-                    phase: ControlSessionPhase::ReadyToAdvertise,
+                    phase: if capability.supported {
+                        ControlSessionPhase::ReadyToAdvertise
+                    } else {
+                        ControlSessionPhase::Unavailable
+                    },
                     checklist: ControlSetupChecklist {
-                        items: vec![
-                            "Configure IOS_CONTROL_WINDOW_INPUT_HELPER".into(),
-                            "Keep the mirrored window visible and focused".into(),
-                        ],
+                        items: if capability.supported {
+                            vec![
+                                "Configure IOS_CONTROL_WINDOW_INPUT_HELPER".into(),
+                                "Keep the mirrored window visible and focused".into(),
+                            ]
+                        } else {
+                            vec![capability
+                                .reason
+                                .unwrap_or_else(|| "window bridge helper unavailable".into())]
+                        },
                     },
                 };
                 write_reply(&mut stdout, &reply)?;

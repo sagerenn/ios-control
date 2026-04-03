@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::env;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
@@ -61,9 +62,40 @@ fn run_for_output(mut command: Command, context: &str) -> Result<Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("{context} missing stdout pipe"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("{context} missing stderr pipe"))?;
+    let stdout_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut reader = stdout;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+    let stderr_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
+        let mut reader = stderr;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+
     let timeout = helper_timeout();
-    let _ = wait_for_completion(&mut child, timeout, context)?;
-    Ok(child.wait_with_output()?)
+    let status = wait_for_completion(&mut child, timeout, context)?;
+    let stdout = stdout_handle
+        .join()
+        .map_err(|_| anyhow!("{context} stdout drainer panicked"))??;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| anyhow!("{context} stderr drainer panicked"))??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 fn run_for_status(mut command: Command, context: &str) -> Result<ExitStatus> {

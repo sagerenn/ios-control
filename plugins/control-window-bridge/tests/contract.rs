@@ -1,8 +1,12 @@
 use ios_control_contracts::grounding::{GroundingPlan, PlanKind};
+use ios_control_contracts::control::ControlSessionPhase;
+use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
 use plugin_control_window_bridge::helper_launcher::{helper_available, launch_helper};
 use std::env;
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 #[cfg(unix)]
 use std::{fs, io::ErrorKind, os::unix::fs::PermissionsExt, time::{SystemTime, UNIX_EPOCH}};
@@ -27,6 +31,18 @@ fn window_bridge_formats_pointer_execution_for_helper() {
 #[test]
 fn window_bridge_helper_requires_existing_executable() {
     assert!(!helper_available(None));
+}
+
+#[cfg(unix)]
+#[test]
+fn window_bridge_helper_rejects_non_executable_file() {
+    let helper = write_test_helper_script("window-nonexec", "#!/bin/sh\nexit 0\n");
+    let mut perms = fs::metadata(&helper).unwrap().permissions();
+    perms.set_mode(0o644);
+    fs::set_permissions(&helper, perms).unwrap();
+
+    assert!(!helper_available(Some(helper.clone())));
+    let _ = fs::remove_file(helper);
 }
 
 #[cfg(unix)]
@@ -132,4 +148,70 @@ fn window_bridge_binary_helper_mode_runs_action_path() {
         Some(value) => env::set_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG", value),
         None => env::remove_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_bridge_protocol_reports_unavailable_for_non_executable_helper() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_test_helper_script("window-nonexec-protocol", "#!/bin/sh\nexit 0\n");
+    let mut perms = fs::metadata(&helper).unwrap().permissions();
+    perms.set_mode(0o644);
+    fs::set_permissions(&helper, perms).unwrap();
+
+    let plugin = resolve_plugin_binary();
+    let mut child = Command::new(plugin)
+        .env("IOS_CONTROL_WINDOW_INPUT_HELPER", &helper)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let requests = vec![
+        HostToPlugin::Handshake {
+            protocol_version: 3,
+        },
+        HostToPlugin::ProbeControl,
+        HostToPlugin::PrepareControl,
+        HostToPlugin::Stop,
+    ];
+    for request in requests {
+        let line = serde_json::to_string(&request).unwrap();
+        writeln!(stdin, "{line}").unwrap();
+    }
+    drop(stdin);
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let lines = String::from_utf8(output.stdout).unwrap();
+    let responses = lines
+        .lines()
+        .map(|line| serde_json::from_str::<PluginToHost>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(matches!(responses.first(), Some(PluginToHost::HandshakeAck { .. })));
+    match responses.get(1) {
+        Some(PluginToHost::ControlCapability { capability }) => {
+            assert!(!capability.supported);
+            assert_eq!(
+                capability.reason.as_deref(),
+                Some("IOS_CONTROL_WINDOW_INPUT_HELPER is not executable")
+            );
+        }
+        other => panic!("unexpected ProbeControl response: {other:?}"),
+    }
+    match responses.get(2) {
+        Some(PluginToHost::ControlSession { phase, checklist }) => {
+            assert_eq!(*phase, ControlSessionPhase::Unavailable);
+            assert!(
+                checklist
+                    .items
+                    .iter()
+                    .any(|item| item.contains("not executable"))
+            );
+        }
+        other => panic!("unexpected PrepareControl response: {other:?}"),
+    }
+
+    let _ = fs::remove_file(helper);
 }

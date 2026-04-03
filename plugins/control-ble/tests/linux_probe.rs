@@ -117,3 +117,25 @@ fn ble_probe_times_out_when_helper_hangs() {
         None => env::remove_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS"),
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn ble_probe_handles_chatty_helper_output_without_timeout() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let old_timeout = env::var_os("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS");
+    env::set_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS", "2000");
+    let helper = write_test_helper_script(
+        "ble-chatty",
+        "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 20000 ]; do\n  printf 'noise-%s\\n' \"$i\" 1>&2\n  i=$((i + 1))\ndone\nprintf '%s\\n' '{\"supported\":true,\"supports_prepare\":true,\"supports_execute\":true}'\n",
+    );
+
+    let capability = probe_ble_helper(Some(helper.clone()));
+    assert!(capability.supported);
+    assert_eq!(capability.reason, None);
+
+    let _ = fs::remove_file(helper);
+    match old_timeout {
+        Some(value) => env::set_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS", value),
+        None => env::remove_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS"),
+    }
+}
