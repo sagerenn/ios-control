@@ -50,16 +50,13 @@ impl WindowsProbeResult {
 }
 
 pub fn probe_windows_backend() -> WindowsProbeResult {
-    let radio_present = if cfg!(target_os = "windows") {
-        [
-            r"C:\Windows\System32\drivers\BthLEEnum.sys",
-            r"C:\Windows\System32\drivers\BTHport.sys",
-        ]
-        .iter()
-        .any(|path| Path::new(path).exists())
-    } else {
-        false
-    };
-    let peripheral_role_supported = false;
+    if !cfg!(target_os = "windows") {
+        return WindowsProbeResult::from_runtime_checks(false, false);
+    }
+
+    let radio_present = Path::new(r"C:\Windows\System32\drivers\BTHport.sys").exists()
+        || Path::new(r"C:\Windows\System32\drivers\BthLEEnum.sys").exists();
+    let peripheral_role_supported =
+        Path::new(r"C:\Windows\System32\drivers\BthLEEnum.sys").exists();
     WindowsProbeResult::from_runtime_checks(peripheral_role_supported, radio_present)
 }
