@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
@@ -24,20 +25,19 @@ impl HostDesktopApp {
             },
             device_detail: DeviceDetailViewModel {
                 device_name: "Mock iPhone".into(),
-                capture_source_labels: vec!["Window: Mock iPhone Mirror".into()],
-                control_checklist: vec![
-                    "Enable AssistiveTouch on the iPhone or iPad".into(),
-                    "Enable Full Keyboard Access for keyboard navigation".into(),
-                    "Pair the host over Bluetooth".into(),
-                ],
+                capture_sources: vec![CaptureSourceOption::new(
+                    "window:mock",
+                    "Mock iPhone Mirror",
+                )],
+                control_checklist: ControlSetupChecklist::for_pointer_mode(),
             },
             session: SessionViewModel {
-                selected_source_label: "Window: Mock iPhone Mirror".into(),
-                frame_summary: "1280x720 frame 1".into(),
+                selected_source: None,
+                latest_frame: None,
             },
             diagnostics: DiagnosticsViewModel {
-                control_summary: "control ready".into(),
-                grounding_summary: "selected pointer".into(),
+                control_summary: "control not started".into(),
+                grounding_summary: "grounding idle".into(),
             },
             settings: SettingsViewModel {
                 plugin_rows: vec![
@@ -58,15 +58,11 @@ impl eframe::App for HostDesktopApp {
             device_detail::render(
                 ui,
                 &self.device_detail.device_name,
-                &self.device_detail.capture_source_labels,
+                &self.device_detail.capture_sources,
                 &self.device_detail.control_checklist,
             );
             ui.separator();
-            session_view::render_summary(
-                ui,
-                &self.session.frame_summary,
-                &self.session.selected_source_label,
-            );
+            session_view::render(ui, &self.session);
             ui.separator();
             diagnostics::render(ui, &self.diagnostics.grounding_summary);
             diagnostics::render_control_diagnostics(ui, &self.diagnostics.control_summary);

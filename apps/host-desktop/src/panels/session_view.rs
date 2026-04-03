@@ -1,6 +1,28 @@
 use egui::Ui;
-pub fn render_summary(ui: &mut Ui, frame_summary: &str, source_label: &str) {
+use ios_control_contracts::capture::VideoFrameDescriptor;
+
+use crate::view_models::session::SessionViewModel;
+
+pub fn render(ui: &mut Ui, view_model: &SessionViewModel) {
     ui.heading("Session View");
-    ui.label(source_label);
-    ui.label(frame_summary);
+    match &view_model.selected_source {
+        Some(source) => {
+            ui.label(format!("Source: {}", source.label()));
+            if let Some(frame) = &view_model.latest_frame {
+                render_frame_summary(ui, frame);
+            } else {
+                ui.label("Waiting for frames");
+            }
+        }
+        None => {
+            ui.label("No active session");
+        }
+    }
+}
+
+fn render_frame_summary(ui: &mut Ui, frame: &VideoFrameDescriptor) {
+    ui.label(format!(
+        "{}x{} frame {}",
+        frame.width, frame.height, frame.frame_index
+    ));
 }

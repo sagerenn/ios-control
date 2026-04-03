@@ -43,15 +43,15 @@ impl CaptureSourceOption {
 pub fn render(
     ui: &mut Ui,
     device_name: &str,
-    capture_source_labels: &[String],
-    control_checklist: &[String],
+    capture_sources: &[CaptureSourceOption],
+    control_checklist: &ControlSetupChecklist,
 ) {
     ui.heading("Device Detail");
     ui.label(device_name);
-    for label in capture_source_labels {
-        ui.label(label);
+    for source in capture_sources {
+        ui.label(source.label());
     }
-    for item in control_checklist {
+    for item in &control_checklist.items {
         ui.label(item);
     }
 }
