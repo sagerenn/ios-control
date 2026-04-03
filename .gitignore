@@ -42,3 +42,5 @@
 
 # Local worktrees
 .worktrees/
+
+__pycache__
