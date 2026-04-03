@@ -235,7 +235,7 @@ impl SessionOrchestrator {
 
         let mut summary = summary;
         if let Some(result) = execution_result.as_ref() {
-            if !result.applied {
+            if result.phase == ExecutionPhase::Failed {
                 summary.phase = SessionPhase::Degraded;
                 plugin_health = PluginHealth::Degraded;
                 summary.plugin_health = plugin_health;
@@ -448,9 +448,7 @@ async fn execute_grounding_plan(
     loop {
         attempts += 1;
         let summary = request_plan_execution(control, plan).await?;
-        let frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
-
-        if summary.phase != ExecutionPhase::Succeeded {
+        if matches!(summary.phase, ExecutionPhase::Pending | ExecutionPhase::Running) {
             let summary_text = format_execution_summary(&summary, false, attempts - 1);
             return Ok((
                 ExecutionResult {
@@ -462,24 +460,39 @@ async fn execute_grounding_plan(
                     grounding_failure: None,
                     failure_reason: summary.failure_reason.clone(),
                 },
-                frame,
+                latest_frame.clone(),
             ));
         }
 
+        if summary.phase == ExecutionPhase::Failed {
+            let summary_text = format_execution_summary(&summary, false, attempts - 1);
+            return Ok((
+                ExecutionResult {
+                    applied: false,
+                    observed_change: false,
+                    phase: ExecutionPhase::Failed,
+                    summary: summary_text,
+                    attempts,
+                    grounding_failure: None,
+                    failure_reason: summary.failure_reason.clone(),
+                },
+                latest_frame.clone(),
+            ));
+        }
+
+        let frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
         match ExecutionMonitor::evaluate(previous_frame_index, frame.frame_index, &mut recovery) {
             ExecutionDecision::ObservedChange => {
                 let summary_text = format_execution_summary(&summary, true, attempts - 1);
                 return Ok((
                     ExecutionResult {
-                        applied: false,
+                        applied: true,
                         observed_change: true,
-                        phase: summary.phase,
+                        phase: ExecutionPhase::Succeeded,
                         summary: summary_text,
                         attempts,
                         grounding_failure: None,
-                        failure_reason: Some(
-                            "frame advanced but action effect is not yet confirmed".into(),
-                        ),
+                        failure_reason: None,
                     },
                     frame,
                 ));
@@ -493,7 +506,7 @@ async fn execute_grounding_plan(
                     ExecutionResult {
                         applied: false,
                         observed_change: false,
-                        phase: summary.phase,
+                        phase: ExecutionPhase::Failed,
                         summary: summary_text,
                         attempts,
                         grounding_failure: Some(failure),
