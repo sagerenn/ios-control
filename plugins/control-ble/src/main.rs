@@ -1,11 +1,7 @@
-#[path = "../../../crates/hid-report-engine/src/lib.rs"]
-mod shared_hid_report_engine;
-
 use ios_control_contracts::control::{
     ControlCapability as ContractControlCapability, ControlSessionPhase,
     ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
 };
-use ios_control_contracts::grounding::PlanKind;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
 use std::error::Error;
@@ -136,19 +132,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                             summary.failure_reason = Some(message.clone());
                         }
                         _ => {
-                            let mut report_count = 0usize;
-                            if plan.kind == PlanKind::Keyboard {
-                                let reports =
-                                    shared_hid_report_engine::text_entry_reports(&plan.summary);
-                                report_count = reports.len();
-                                active.record_report_submission(report_count);
-                            }
                             summary.summary = format!(
-                                "generated {report_count} hid report(s) for plan kind {}",
+                                "execution payload for plan kind {} not implemented",
                                 plan.kind.as_str()
                             );
                             summary.failure_reason =
-                                Some("ble advertise/connect not implemented".into());
+                                Some("control execution requires a concrete action payload".into());
                             summary.phase = ExecutionPhase::Failed;
                         }
                     }
