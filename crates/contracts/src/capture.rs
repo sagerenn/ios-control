@@ -31,6 +31,14 @@ pub struct VideoSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureCapability {
+    pub available: bool,
+    pub reason: Option<String>,
+    pub backend_id: String,
+    pub supports_input_bridge: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptureStreamDescriptor {
     pub source_id: String,
     pub source_kind: SourceKind,

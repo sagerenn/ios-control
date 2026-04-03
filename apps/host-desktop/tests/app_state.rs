@@ -1,6 +1,10 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use host_desktop::view_models::session::SessionUiState;
+use ios_control_contracts::plugin::PluginHealth;
+use ios_control_contracts::session::{
+    BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase, SessionSubstate,
+};
 
 #[test]
 fn host_app_boots_into_an_honest_idle_session_shell() {
@@ -79,4 +83,125 @@ fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
     );
     assert!(app.diagnostics.control_summary.contains("blocked"));
     assert!(app.diagnostics.grounding_summary.contains("blocked"));
+}
+
+#[test]
+fn app_tracks_selected_workspace_separately_from_fleet_rows() {
+    let mut app = HostDesktopApp::new();
+    app.selected_device_id = Some("device-2".into());
+    app.available_device_ids = vec!["device-1".into(), "device-2".into()];
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-2"));
+    assert_eq!(app.available_device_ids.len(), 2);
+}
+
+fn status(
+    device_id: &str,
+    device_name: &str,
+    phase: SessionPhase,
+    substate: SessionSubstate,
+    capture_backend: &str,
+    control_backend: &str,
+    operator_action: Option<&str>,
+) -> DeviceSessionStatus {
+    DeviceSessionStatus::new(
+        DeviceSessionSummary {
+            device_id: device_id.into(),
+            device_name: device_name.into(),
+            phase,
+            plugin_health: if phase == SessionPhase::Degraded {
+                PluginHealth::Degraded
+            } else {
+                PluginHealth::Healthy
+            },
+            capture_plugin: Some(capture_backend.into()),
+            control_plugin: Some(control_backend.into()),
+            grounding_plugin: Some("grounding.core".into()),
+        },
+        substate,
+        BackendSelection {
+            capture_backend: capture_backend.into(),
+            control_backend: control_backend.into(),
+        },
+        operator_action.map(str::to_string),
+    )
+    .expect("valid session status")
+}
+
+#[test]
+fn app_syncs_runtime_statuses_into_fleet_and_workspace() {
+    let mut app = HostDesktopApp::new();
+    app.replace_runtime_statuses(vec![
+        status(
+            "device-1",
+            "Alpha",
+            SessionPhase::Streaming,
+            SessionSubstate::ControlReady,
+            "capture.window.helper",
+            "control.ble",
+            None,
+        ),
+        status(
+            "device-2",
+            "Beta",
+            SessionPhase::Degraded,
+            SessionSubstate::OperatorActionRequired,
+            "capture.window.helper",
+            "control.window-bridge",
+            Some("reconnect mirror helper"),
+        ),
+    ]);
+
+    assert_eq!(app.dashboard.total_devices, 2);
+    assert_eq!(app.dashboard.degraded_devices, 1);
+    assert_eq!(app.available_device_ids, vec!["device-1", "device-2"]);
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-1"));
+    assert_eq!(app.fleet.rows.len(), 2);
+    assert_eq!(app.device_detail.device_name, "Alpha");
+    assert_eq!(app.session.ui_state, SessionUiState::Streaming);
+    assert!(app.diagnostics.host_error.is_none());
+    assert!(app
+        .settings
+        .plugin_rows
+        .iter()
+        .any(|row| row.contains("control.window-bridge")));
+}
+
+#[test]
+fn selecting_a_device_updates_workspace_and_operator_error() {
+    let mut app = HostDesktopApp::new();
+    app.replace_runtime_statuses(vec![
+        status(
+            "device-1",
+            "Alpha",
+            SessionPhase::Streaming,
+            SessionSubstate::ControlReady,
+            "capture.window.helper",
+            "control.ble",
+            None,
+        ),
+        status(
+            "device-2",
+            "Beta",
+            SessionPhase::Degraded,
+            SessionSubstate::OperatorActionRequired,
+            "capture.window.helper",
+            "control.window-bridge",
+            Some("reconnect mirror helper"),
+        ),
+    ]);
+
+    app.select_device("device-2");
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-2"));
+    assert_eq!(app.device_detail.device_name, "Beta");
+    assert_eq!(
+        app.session.ui_state,
+        SessionUiState::Error("reconnect mirror helper".into())
+    );
+    assert_eq!(
+        app.diagnostics.host_error.as_deref(),
+        Some("reconnect mirror helper")
+    );
+    assert!(app.diagnostics.control_summary.contains("control.window-bridge"));
 }

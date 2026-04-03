@@ -1,3 +1,4 @@
+use plugin_capture_window::helper_config::WindowHelperConfig;
 use plugin_capture_window::mock_backend::MockWindowBackend;
 use plugin_capture_window::linux_backend::probe_linux_capture;
 use plugin_capture_window::windows_backend::probe_windows_capture;
@@ -20,53 +21,64 @@ async fn window_capture_lists_mock_source_then_streams_one_frame() {
 }
 
 #[test]
-fn linux_capture_probe_requires_runtime_support() {
+fn window_capture_probe_reports_helper_backed_bridge_support() {
+    let helper = tempfile::NamedTempFile::new().unwrap();
+    let config = WindowHelperConfig::from_parts(
+        Some(helper.path().to_path_buf()),
+        Some("Operator Mirror".into()),
+    )
+    .unwrap();
+
+    let capability = config.capture_capability();
+    assert!(capability.available);
+    assert_eq!(capability.backend_id, "capture.window.helper");
+    assert!(capability.supports_input_bridge);
+}
+
+#[test]
+fn linux_capture_probe_requires_helper_configuration() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let old_wayland = env::var_os("WAYLAND_DISPLAY");
-    let old_display = env::var_os("DISPLAY");
-    env::remove_var("WAYLAND_DISPLAY");
-    env::remove_var("DISPLAY");
+    let old_helper = env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER");
+    env::remove_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER");
+    let helper = tempfile::NamedTempFile::new().unwrap();
 
     if cfg!(target_os = "linux") {
         assert!(
             !probe_linux_capture(),
             "default test environment should not claim real capture support"
         );
-        env::set_var("WAYLAND_DISPLAY", "wayland-0");
+        env::set_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER", helper.path());
         assert!(probe_linux_capture());
     } else {
         assert!(!probe_linux_capture());
     }
 
-    match old_wayland {
-        Some(value) => env::set_var("WAYLAND_DISPLAY", value),
-        None => env::remove_var("WAYLAND_DISPLAY"),
-    }
-    match old_display {
-        Some(value) => env::set_var("DISPLAY", value),
-        None => env::remove_var("DISPLAY"),
+    match old_helper {
+        Some(value) => env::set_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER", value),
+        None => env::remove_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER"),
     }
 }
 
 #[test]
-fn windows_capture_probe_requires_runtime_support() {
+fn windows_capture_probe_requires_helper_configuration() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let old_session = env::var_os("SESSIONNAME");
-    env::remove_var("SESSIONNAME");
+    let old_helper = env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER");
+    env::remove_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER");
+    let helper = tempfile::NamedTempFile::new().unwrap();
 
     if cfg!(target_os = "windows") {
         assert!(
             !probe_windows_capture(),
             "default test environment should not claim real capture support"
         );
-        env::set_var("SESSIONNAME", "Console");
+        env::set_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER", helper.path());
         assert!(probe_windows_capture());
     } else {
         assert!(!probe_windows_capture());
     }
 
-    match old_session {
-        Some(value) => env::set_var("SESSIONNAME", value),
-        None => env::remove_var("SESSIONNAME"),
+    match old_helper {
+        Some(value) => env::set_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER", value),
+        None => env::remove_var("IOS_CONTROL_WINDOW_CAPTURE_HELPER"),
     }
 }

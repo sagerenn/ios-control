@@ -1,0 +1,41 @@
+use ios_control_contracts::capture::{CaptureCapability, SourceKind, VideoSource};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowHelperConfig {
+    pub helper_path: PathBuf,
+    pub display_name: String,
+}
+
+impl WindowHelperConfig {
+    pub fn from_parts(helper_path: Option<PathBuf>, display_name: Option<String>) -> Option<Self> {
+        helper_path.filter(|path| path.is_file()).map(|helper_path| Self {
+            helper_path,
+            display_name: display_name.unwrap_or_else(|| "Operator Mirror".into()),
+        })
+    }
+
+    pub fn from_env() -> Option<Self> {
+        Self::from_parts(
+            std::env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER").map(PathBuf::from),
+            std::env::var("IOS_CONTROL_WINDOW_CAPTURE_NAME").ok(),
+        )
+    }
+
+    pub fn capture_capability(&self) -> CaptureCapability {
+        CaptureCapability {
+            available: true,
+            reason: None,
+            backend_id: "capture.window.helper".into(),
+            supports_input_bridge: true,
+        }
+    }
+
+    pub fn list_sources(&self) -> Vec<VideoSource> {
+        vec![VideoSource {
+            source_id: "window-helper-1".into(),
+            display_name: self.display_name.clone(),
+            kind: SourceKind::Window,
+        }]
+    }
+}

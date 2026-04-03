@@ -1,17 +1,18 @@
 use ios_control_contracts::capture::{
-    CaptureStreamDescriptor, FrameHealth, SourceKind, VideoSource,
+    CaptureCapability, CaptureStreamDescriptor, FrameHealth, SourceKind,
 };
-use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use ios_control_frame_transport::FrameSlot;
+use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
 use plugin_capture_window::backend::{allocate_mock_slot, mock_frame, mock_frame_bytes};
+use plugin_capture_window::helper_config::WindowHelperConfig;
 use plugin_capture_window::linux_backend::probe_linux_capture;
 use plugin_capture_window::windows_backend::probe_windows_capture;
 
-const PROTOCOL_VERSION: u32 = 2;
-const SOURCE_ID: &str = "window-1";
+const PROTOCOL_VERSION: u32 = 3;
+const SOURCE_ID: &str = "window-helper-1";
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
 
 struct StreamState {
@@ -62,16 +63,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 write_reply(&mut stdout, &reply)?;
             }
+            HostToPlugin::ProbeCapture => {
+                let capability = WindowHelperConfig::from_env()
+                    .map(|config| config.capture_capability())
+                    .unwrap_or(CaptureCapability {
+                        available: false,
+                        reason: Some("IOS_CONTROL_WINDOW_CAPTURE_HELPER not configured".into()),
+                        backend_id: "capture.window.helper".into(),
+                        supports_input_bridge: false,
+                    });
+                let reply = PluginToHost::CaptureCapability { capability };
+                write_reply(&mut stdout, &reply)?;
+            }
             HostToPlugin::ListCaptureSources => {
-                let sources = if probe_linux_capture() || probe_windows_capture() {
-                    vec![VideoSource {
-                        source_id: SOURCE_ID.into(),
-                        display_name: "Mock Window".into(),
-                        kind: SourceKind::Window,
-                    }]
-                } else {
-                    Vec::new()
-                };
+                let sources = WindowHelperConfig::from_env()
+                    .map(|config| config.list_sources())
+                    .unwrap_or_default();
                 let reply = PluginToHost::CaptureSources { sources };
                 write_reply(&mut stdout, &reply)?;
             }

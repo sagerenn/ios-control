@@ -102,6 +102,7 @@ jobs:
           cargo build --release --target "${{ matrix.target }}"
           --package host-desktop
           --package plugin-control-ble
+          --package plugin-control-window-bridge
           --package plugin-capture-window
           --package plugin-capture-direct
           --package plugin-grounding-core
@@ -113,6 +114,7 @@ jobs:
           cross build --release --target "${{ matrix.target }}"
           --package host-desktop
           --package plugin-control-ble
+          --package plugin-control-window-bridge
           --package plugin-capture-window
           --package plugin-capture-direct
           --package plugin-grounding-core

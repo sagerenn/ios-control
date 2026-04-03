@@ -1,4 +1,6 @@
-use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoFrameDescriptor};
+use ios_control_contracts::capture::{
+    CaptureCapability, CaptureStreamDescriptor, VideoFrameDescriptor,
+};
 use ios_control_contracts::control::{ExecutionPhase, ExecutionSummary};
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, PlanKind, TargetInput};
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
@@ -116,11 +118,31 @@ fn incremental_stream_messages_roundtrip() {
 }
 
 #[test]
+fn capture_probe_messages_roundtrip() {
+    let request = HostToPlugin::ProbeCapture;
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, request);
+
+    let response = PluginToHost::CaptureCapability {
+        capability: CaptureCapability {
+            available: true,
+            reason: None,
+            backend_id: "capture.window".into(),
+            supports_input_bridge: true,
+        },
+    };
+    let response_json = serde_json::to_string(&response).unwrap();
+    let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(decoded_response, response);
+}
+
+#[test]
 fn handshake_roundtrips_plugin_descriptor() {
     let response = PluginToHost::HandshakeAck {
         descriptor: PluginDescriptor {
             plugin_id: "mock.device".into(),
-            protocol_version: 2,
+            protocol_version: 3,
             kind: PluginKind::Control,
             display_name: "Mock Device".into(),
         },

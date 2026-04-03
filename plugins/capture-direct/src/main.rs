@@ -7,9 +7,9 @@ use std::io::{self, BufRead, Write};
 use plugin_capture_direct::backend::{
     allocate_mock_slot, mock_frame, mock_frame_bytes, DIRECT_HEIGHT, DIRECT_WIDTH,
 };
-use plugin_capture_direct::helper_launcher::find_helper;
+use plugin_capture_direct::helper_launcher::{capture_capability, find_helper};
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
 const SLOT_BYTES: u32 = DIRECT_WIDTH * DIRECT_HEIGHT * 4;
 
@@ -60,6 +60,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let reply = PluginToHost::Error {
                     message: "handshake required for capture-direct plugin".into(),
                 };
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::ProbeCapture => {
+                let capability = capture_capability(find_helper());
+                let reply = PluginToHost::CaptureCapability { capability };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::OpenCaptureStream { source_id } => {

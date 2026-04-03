@@ -1623,6 +1623,7 @@ name = "ios-control-plugin-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ios-control-contracts",
  "ios-control-plugin-protocol",
  "serde_json",
  "tokio",
@@ -2450,6 +2451,7 @@ dependencies = [
  "ios-control-frame-transport",
  "ios-control-plugin-protocol",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -2457,6 +2459,16 @@ dependencies = [
 name = "plugin-control-ble"
 version = "0.1.0"
 dependencies = [
+ "ios-control-contracts",
+ "ios-control-plugin-protocol",
+ "serde_json",
+]
+
+[[package]]
+name = "plugin-control-window-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "ios-control-contracts",
  "ios-control-plugin-protocol",
  "serde_json",

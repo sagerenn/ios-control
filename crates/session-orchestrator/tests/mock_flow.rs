@@ -9,17 +9,18 @@ use support::{build_plugins, plugin_path, prepare_window_runtime_env, workspace_
 async fn start_session_collects_mock_plugin_state() {
     let root = workspace_root();
     build_plugins(&root);
-    let _display_guard = prepare_window_runtime_env();
+    let _display_guard = prepare_window_runtime_env(&root);
 
     let mut orchestrator = SessionOrchestrator::default();
     let state = orchestrator
         .start_session_with_plugins(StartSessionRequest {
             device_id: "device-1".into(),
             device_name: "Mock iPhone".into(),
-            selected_source_id: Some("window-1".into()),
+            selected_source_id: Some("window-helper-1".into()),
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
-                control: plugin_path(&root, "plugin-control-ble"),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
             },
         })
@@ -39,11 +40,11 @@ async fn start_session_collects_mock_plugin_state() {
         state.summary.grounding_plugin.as_deref(),
         Some("grounding.core")
     );
-    assert_eq!(state.selected_source_id.as_deref(), Some("window-1"));
+    assert_eq!(state.selected_source_id.as_deref(), Some("window-helper-1"));
 
     assert_eq!(state.capture_sources.len(), 1);
-    assert_eq!(state.capture_sources[0].source_id, "window-1");
-    assert_eq!(state.latest_frame.as_ref().unwrap().source_id, "window-1");
+    assert_eq!(state.capture_sources[0].source_id, "window-helper-1");
+    assert_eq!(state.latest_frame.as_ref().unwrap().source_id, "window-helper-1");
     assert!(state
         .diagnostics
         .grounding_summary
@@ -89,7 +90,7 @@ async fn start_session_collects_mock_plugin_state() {
         device.preferred_grounding_plugin.as_deref(),
         Some("grounding.core")
     );
-    assert_eq!(device.last_source_id.as_deref(), Some("window-1"));
+    assert_eq!(device.last_source_id.as_deref(), Some("window-helper-1"));
 
     let telemetry = orchestrator.telemetry.for_session("device-1");
     assert!(telemetry
@@ -109,7 +110,7 @@ async fn start_session_collects_mock_plugin_state() {
 async fn start_session_failure_does_not_persist_partial_state() {
     let root = workspace_root();
     build_plugins(&root);
-    let _display_guard = prepare_window_runtime_env();
+    let _display_guard = prepare_window_runtime_env(&root);
 
     let mut orchestrator = SessionOrchestrator::default();
     let error = orchestrator
@@ -119,7 +120,8 @@ async fn start_session_failure_does_not_persist_partial_state() {
             selected_source_id: Some("missing-source".into()),
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
-                control: plugin_path(&root, "plugin-control-ble"),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
             },
         })

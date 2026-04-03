@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use ios_control_contracts::control::ControlTransportKind;
 use ios_control_plugin_protocol::{HostToPlugin, PluginKind, PluginToHost};
 use ios_control_plugin_runtime::RunningPlugin;
 use serde_json::json;
@@ -102,12 +103,13 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     }
     let descriptor = control.handshake().await.unwrap();
     assert_eq!(descriptor.plugin_id, "control.ble");
-    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.protocol_version, 3);
     assert_eq!(descriptor.kind, PluginKind::Control);
     assert_eq!(descriptor.display_name, "Bluetooth Control");
     control.send(&HostToPlugin::ProbeControl).await.unwrap();
     match control.read().await.unwrap() {
         PluginToHost::ControlCapability { capability } => {
+            assert_eq!(capability.transport, ControlTransportKind::BleHid);
             if !capability.supported {
                 assert!(capability.reason.is_some());
             }
@@ -124,10 +126,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     control.stop().await.unwrap();
 
     let window_path = plugin_path(&workspace_root, "plugin-capture-window");
-    let _window_env = EnvVarGuards::new(vec![
-        EnvVarGuard::set("DISPLAY", ":99"),
-        EnvVarGuard::set("SESSIONNAME", "Console"),
-    ]);
+    let _window_env = EnvVarGuards::new(vec![EnvVarGuard::set(
+        "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+        &window_path,
+    )]);
     let mut window = RunningPlugin::spawn(&window_path).await.unwrap();
     window
         .send(&HostToPlugin::ListCaptureSources)
@@ -141,9 +143,19 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     }
     let descriptor = window.handshake().await.unwrap();
     assert_eq!(descriptor.plugin_id, "capture.window");
-    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.protocol_version, 3);
     assert_eq!(descriptor.kind, PluginKind::Capture);
     assert_eq!(descriptor.display_name, "Window Capture");
+    window.send(&HostToPlugin::ProbeCapture).await.unwrap();
+    match window.read().await.unwrap() {
+        PluginToHost::CaptureCapability { capability } => {
+            assert!(capability.available);
+            assert_eq!(capability.reason, None);
+            assert_eq!(capability.backend_id, "capture.window.helper");
+            assert!(capability.supports_input_bridge);
+        }
+        other => panic!("unexpected capture-window capability response: {other:?}"),
+    }
     window
         .send(&HostToPlugin::ListCaptureSources)
         .await
@@ -155,13 +167,14 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         }
         other => panic!("unexpected capture-window sources response: {other:?}"),
     };
+    assert_eq!(source_id, "window-helper-1");
     window
         .send(&HostToPlugin::GetCaptureFrame { source_id })
         .await
         .unwrap();
     match window.read().await.unwrap() {
         PluginToHost::CaptureFrame { frame } => {
-            assert_eq!(frame.source_id, "window-1");
+            assert_eq!(frame.source_id, "window-helper-1");
         }
         other => panic!("unexpected capture-window frame response: {other:?}"),
     }
@@ -182,9 +195,19 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     }
     let descriptor = direct.handshake().await.unwrap();
     assert_eq!(descriptor.plugin_id, "capture.direct");
-    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.protocol_version, 3);
     assert_eq!(descriptor.kind, PluginKind::Capture);
     assert_eq!(descriptor.display_name, "Direct Receiver");
+    direct.send(&HostToPlugin::ProbeCapture).await.unwrap();
+    match direct.read().await.unwrap() {
+        PluginToHost::CaptureCapability { capability } => {
+            assert!(capability.available);
+            assert_eq!(capability.reason, None);
+            assert_eq!(capability.backend_id, "capture.direct.helper");
+            assert!(!capability.supports_input_bridge);
+        }
+        other => panic!("unexpected capture-direct capability response: {other:?}"),
+    }
 
     direct
         .send(&HostToPlugin::OpenCaptureStream {
@@ -206,7 +229,10 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
         }
         other => panic!("unexpected capture-direct read response: {other:?}"),
     }
-    direct.send(&HostToPlugin::CloseCaptureStream).await.unwrap();
+    direct
+        .send(&HostToPlugin::CloseCaptureStream)
+        .await
+        .unwrap();
     match direct.read().await.unwrap() {
         PluginToHost::Ack => {}
         other => panic!("unexpected capture-direct close response: {other:?}"),
@@ -241,7 +267,7 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     }
     let descriptor = grounding.handshake().await.unwrap();
     assert_eq!(descriptor.plugin_id, "grounding.core");
-    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.protocol_version, 3);
     assert_eq!(descriptor.kind, PluginKind::Grounding);
     assert_eq!(descriptor.display_name, "Grounding Core");
     let message: HostToPlugin = serde_json::from_value(json!({

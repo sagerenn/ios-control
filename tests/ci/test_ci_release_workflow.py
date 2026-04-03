@@ -69,6 +69,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('cross build --release --target "${{ matrix.target }}"', workflow_text)
         self.assertIn("--package host-desktop", workflow_text)
         self.assertIn("--package plugin-control-ble", workflow_text)
+        self.assertIn("--package plugin-control-window-bridge", workflow_text)
         self.assertIn("--package plugin-capture-window", workflow_text)
         self.assertIn("--package plugin-capture-direct", workflow_text)
         self.assertIn("--package plugin-grounding-core", workflow_text)

@@ -7,6 +7,10 @@ This matrix reflects current reality on this branch. The only verified path toda
 | Flow | Capture Path | Control Path | Pairing | Live Preview | Live Control | Recovery | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Local mock flow | Mock capture window | Mock BLE control | N/A | Verified | Not yet verified | Not yet verified | Verified |
+| Linux multi-device | Window helper | BLE HID | Pending manual validation | Pending manual validation | Pending manual validation | Pending manual validation | Pending |
+| Linux fallback | Window helper | Window input bridge | N/A | Pending manual validation | Pending manual validation | Pending manual validation | Pending |
+| Windows multi-device | Window helper | BLE HID | Pending manual validation | Pending manual validation | Pending manual validation | Pending manual validation | Pending |
+| Windows fallback | Window helper | Window input bridge | N/A | Pending manual validation | Pending manual validation | Pending manual validation | Pending |
 
 ## Operator Validation Checklist
 
@@ -29,6 +33,8 @@ These combinations are tracked separately because they are not currently verifie
 - Windows + real iPhone/iPad + direct receiver
 - Linux + BLE HID control
 - Windows + BLE HID control
+- Linux + mirrored-window fallback control
+- Windows + mirrored-window fallback control
 
 ## Planned / Expected
 

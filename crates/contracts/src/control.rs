@@ -18,6 +18,13 @@ pub struct KeyPress {
 pub struct ControlCapability {
     pub supported: bool,
     pub reason: Option<String>,
+    pub transport: ControlTransportKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlTransportKind {
+    BleHid,
+    WindowInputBridge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
