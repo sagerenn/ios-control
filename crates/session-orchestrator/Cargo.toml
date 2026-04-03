@@ -5,5 +5,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+ios-control-capability-registry = { path = "../capability-registry" }
 ios-control-contracts = { path = "../contracts" }
+ios-control-device-registry = { path = "../device-registry" }
+ios-control-plugin-protocol = { path = "../plugin-protocol" }
+ios-control-plugin-runtime = { path = "../plugin-runtime" }
+ios-control-telemetry-store = { path = "../telemetry-store" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

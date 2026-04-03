@@ -4,7 +4,7 @@ pub struct TelemetryEvent {
     pub message: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TelemetryStore {
     events: Vec<TelemetryEvent>,
 }
@@ -12,5 +12,17 @@ pub struct TelemetryStore {
 impl TelemetryStore {
     pub fn push(&mut self, event: TelemetryEvent) {
         self.events.push(event);
+    }
+
+    pub fn for_session(&self, session_id: &str) -> Vec<TelemetryEvent> {
+        self.events
+            .iter()
+            .filter(|event| event.session_id == session_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn events(&self) -> &[TelemetryEvent] {
+        &self.events
     }
 }
