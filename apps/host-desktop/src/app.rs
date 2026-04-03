@@ -3,6 +3,7 @@ use ios_control_contracts::capture::{FrameHealth, SourceKind, VideoFrameDescript
 
 use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
+use crate::panels::session_view::SessionAction;
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
@@ -15,6 +16,7 @@ pub struct HostDesktopApp {
     pub session: SessionViewModel,
     pub diagnostics: DiagnosticsViewModel,
     pub settings: SettingsViewModel,
+    pending_session_start: bool,
 }
 
 impl HostDesktopApp {
@@ -46,6 +48,7 @@ impl HostDesktopApp {
                     "grounding.core".into(),
                 ],
             },
+            pending_session_start: false,
         }
     }
 
@@ -55,12 +58,15 @@ impl HostDesktopApp {
 
     pub fn request_start_session(&mut self) {
         self.session = SessionViewModel::starting();
+        self.device_detail.active_source_id = None;
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control bootstrapping".into();
         self.diagnostics.grounding_summary = "grounding bootstrapping".into();
+        self.pending_session_start = true;
     }
 
     pub fn finish_pending_session_start(&mut self) {
+        self.pending_session_start = false;
         let Some(source) = self.device_detail.capture_sources.first().cloned() else {
             let message = "No capture sources available";
             self.session = SessionViewModel::error(message);
@@ -88,11 +94,12 @@ impl HostDesktopApp {
         self.device_detail.active_source_id = Some(source.source_id.clone());
         self.session = SessionViewModel::streaming(source, frame);
         self.diagnostics.host_error = None;
-        self.diagnostics.control_summary = "Connected to mock control session".into();
-        self.diagnostics.grounding_summary = "grounding ready".into();
+        self.diagnostics.control_summary = "control session prepared".into();
+        self.diagnostics.grounding_summary = "grounding ready for execution".into();
     }
 
     pub fn stop_session(&mut self) {
+        self.pending_session_start = false;
         self.device_detail.active_source_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
@@ -103,6 +110,10 @@ impl HostDesktopApp {
 
 impl eframe::App for HostDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.pending_session_start {
+            self.finish_pending_session_start();
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             dashboard::render(ui, &self.dashboard);
             ui.separator();
@@ -113,9 +124,22 @@ impl eframe::App for HostDesktopApp {
                 &self.device_detail.control_checklist,
             );
             ui.separator();
-            session_view::render(ui, &self.session);
+            match session_view::render(ui, &self.session) {
+                SessionAction::None => {}
+                SessionAction::Start => {
+                    self.request_start_session();
+                    ctx.request_repaint();
+                }
+                SessionAction::Stop => {
+                    self.stop_session();
+                }
+            }
             ui.separator();
-            diagnostics::render(ui, &self.diagnostics.grounding_summary);
+            let diagnostic_message = match &self.diagnostics.host_error {
+                Some(error) => format!("{} | {}", self.diagnostics.grounding_summary, error),
+                None => self.diagnostics.grounding_summary.clone(),
+            };
+            diagnostics::render(ui, &diagnostic_message);
             diagnostics::render_control_diagnostics(ui, &self.diagnostics.control_summary);
             ui.separator();
             settings::render_rows(ui, &self.settings.plugin_rows);

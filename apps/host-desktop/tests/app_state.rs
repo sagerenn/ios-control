@@ -47,8 +47,8 @@ fn host_app_can_start_and_stop_a_mock_backed_session() {
         Some("window:mock")
     );
     assert_eq!(app.diagnostics.host_error, None);
-    assert!(app.diagnostics.control_summary.contains("Connected"));
-    assert!(app.diagnostics.grounding_summary.contains("ready"));
+    assert_eq!(app.diagnostics.control_summary, "control session prepared");
+    assert_eq!(app.diagnostics.grounding_summary, "grounding ready for execution");
 
     app.stop_session();
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
