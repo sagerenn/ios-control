@@ -1,0 +1,153 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use ios_control_plugin_protocol::{HostToPlugin, PluginKind, PluginToHost};
+use ios_control_plugin_runtime::RunningPlugin;
+use serde_json::json;
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .to_path_buf()
+}
+
+fn target_dir(workspace_root: &Path) -> PathBuf {
+    match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            }
+        }
+        None => workspace_root.join("target"),
+    }
+}
+
+fn build_plugin(workspace_root: &Path, package: &str) {
+    let output = Command::new("cargo")
+        .args(["build", "-p", package])
+        .current_dir(workspace_root)
+        .output()
+        .expect("failed to invoke cargo build for plugin package");
+
+    assert!(
+        output.status.success(),
+        "cargo build -p {package} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn plugin_path(workspace_root: &Path, name: &str) -> PathBuf {
+    target_dir(workspace_root).join(format!("debug/{}{}", name, std::env::consts::EXE_SUFFIX))
+}
+
+#[tokio::test]
+async fn plugin_runtime_roundtrips_with_real_plugins() {
+    let workspace_root = workspace_root();
+    for package in [
+        "plugin-control-ble",
+        "plugin-capture-window",
+        "plugin-capture-direct",
+        "plugin-grounding-core",
+    ] {
+        build_plugin(&workspace_root, package);
+    }
+
+    let control_path = plugin_path(&workspace_root, "plugin-control-ble");
+    let mut control = RunningPlugin::spawn(&control_path).await.unwrap();
+    let descriptor = control.handshake().await.unwrap();
+    assert_eq!(descriptor.plugin_id, "control.ble");
+    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.kind, PluginKind::Control);
+    assert_eq!(descriptor.display_name, "Bluetooth Control");
+    control.send(&HostToPlugin::ProbeControl).await.unwrap();
+    match control.read().await.unwrap() {
+        PluginToHost::ControlCapability { capability } => {
+            assert!(capability.supported);
+        }
+        other => panic!("unexpected control response: {other:?}"),
+    }
+    control.stop().await.unwrap();
+
+    let window_path = plugin_path(&workspace_root, "plugin-capture-window");
+    let mut window = RunningPlugin::spawn(&window_path).await.unwrap();
+    let descriptor = window.handshake().await.unwrap();
+    assert_eq!(descriptor.plugin_id, "capture.window");
+    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.kind, PluginKind::Capture);
+    assert_eq!(descriptor.display_name, "Window Capture");
+    window.send(&HostToPlugin::ListCaptureSources).await.unwrap();
+    let source_id = match window.read().await.unwrap() {
+        PluginToHost::CaptureSources { sources } => {
+            assert_eq!(sources.len(), 1);
+            sources[0].source_id.clone()
+        }
+        other => panic!("unexpected capture-window sources response: {other:?}"),
+    };
+    window
+        .send(&HostToPlugin::GetCaptureFrame { source_id })
+        .await
+        .unwrap();
+    match window.read().await.unwrap() {
+        PluginToHost::CaptureFrame { frame } => {
+            assert_eq!(frame.source_id, "window-1");
+        }
+        other => panic!("unexpected capture-window frame response: {other:?}"),
+    }
+    window.stop().await.unwrap();
+
+    let direct_path = plugin_path(&workspace_root, "plugin-capture-direct");
+    let mut direct = RunningPlugin::spawn(&direct_path).await.unwrap();
+    let descriptor = direct.handshake().await.unwrap();
+    assert_eq!(descriptor.plugin_id, "capture.direct");
+    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.kind, PluginKind::Capture);
+    assert_eq!(descriptor.display_name, "Direct Receiver");
+    direct.send(&HostToPlugin::StartDirectCapture).await.unwrap();
+    match direct.read().await.unwrap() {
+        PluginToHost::CaptureFrame { frame } => {
+            assert_eq!(frame.source_id, "direct-1");
+        }
+        other => panic!("unexpected capture-direct response: {other:?}"),
+    }
+    direct.stop().await.unwrap();
+
+    let grounding_path = plugin_path(&workspace_root, "plugin-grounding-core");
+    let mut grounding = RunningPlugin::spawn(&grounding_path).await.unwrap();
+    let descriptor = grounding.handshake().await.unwrap();
+    assert_eq!(descriptor.plugin_id, "grounding.core");
+    assert_eq!(descriptor.protocol_version, 2);
+    assert_eq!(descriptor.kind, PluginKind::Grounding);
+    assert_eq!(descriptor.display_name, "Grounding Core");
+    let request = json!({
+        "target": {
+            "semantic_label": "submit",
+            "visual_region": [120, 240, 360, 480],
+            "confidence": 0.8
+        },
+        "device_size": [1920, 1080],
+        "pointer_estimate": [0.4, 0.6],
+        "uncertainty_radius": 0.2,
+        "focus_confidence": 0.7,
+        "keyboard_preferred": true
+    });
+    let message = json!({
+        "PlanGrounding": { "request": request }
+    });
+    grounding
+        .send_raw(&message.to_string())
+        .await
+        .unwrap();
+    match grounding.read().await.unwrap() {
+        PluginToHost::GroundingPlan { plan } => {
+            assert!(plan.summary.contains("keyboard"));
+        }
+        other => panic!("unexpected grounding response: {other:?}"),
+    }
+    grounding.stop().await.unwrap();
+}

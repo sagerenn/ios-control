@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 ios-control-contracts = { path = "../../crates/contracts" }
+ios-control-plugin-protocol = { path = "../../crates/plugin-protocol" }
+serde_json = "1"
