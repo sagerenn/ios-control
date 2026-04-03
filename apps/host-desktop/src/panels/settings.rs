@@ -1,6 +1,8 @@
 use egui::Ui;
 
-pub fn render(ui: &mut Ui) {
+pub fn render_rows(ui: &mut Ui, rows: &[String]) {
     ui.heading("Settings");
-    ui.label("Advanced configuration goes here");
+    for row in rows {
+        ui.label(row);
+    }
 }

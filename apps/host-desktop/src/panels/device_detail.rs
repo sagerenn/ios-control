@@ -40,7 +40,18 @@ impl CaptureSourceOption {
     }
 }
 
-pub fn render(ui: &mut Ui, device_name: &str) {
+pub fn render(
+    ui: &mut Ui,
+    device_name: &str,
+    capture_source_labels: &[String],
+    control_checklist: &[String],
+) {
     ui.heading("Device Detail");
     ui.label(device_name);
+    for label in capture_source_labels {
+        ui.label(label);
+    }
+    for item in control_checklist {
+        ui.label(item);
+    }
 }
