@@ -27,8 +27,8 @@ async fn start_session_collects_mock_plugin_state() {
 
     assert_eq!(state.summary.device_id, "device-1");
     assert_eq!(state.summary.device_name, "Mock iPhone");
-    assert_eq!(state.summary.phase, SessionPhase::Streaming);
-    assert_eq!(state.summary.plugin_health, PluginHealth::Healthy);
+    assert_eq!(state.summary.phase, SessionPhase::Degraded);
+    assert_eq!(state.summary.plugin_health, PluginHealth::Degraded);
     assert_eq!(
         state.summary.capture_plugin.as_deref(),
         Some("capture.window")
@@ -59,12 +59,18 @@ async fn start_session_collects_mock_plugin_state() {
     assert!(state.execution_result.is_some());
     let execution = state.execution_result.as_ref().unwrap();
     assert!(!execution.applied);
+    assert!(!execution.observed_change);
+    assert_eq!(execution.phase, ios_control_contracts::control::ExecutionPhase::Failed);
     assert_eq!(execution.attempts, 1);
     assert_eq!(
-        execution.failure,
-        Some(ios_control_contracts::grounding::GroundingFailure::ExecutionMismatch)
+        execution.grounding_failure,
+        None
     );
     assert!(execution.summary.contains("execution payload"));
+    assert_eq!(
+        execution.failure_reason.as_deref(),
+        Some("control execution requires a concrete action payload")
+    );
 
     let control_capability = orchestrator.capabilities.get("control.ble").unwrap();
     assert!(control_capability.supported);

@@ -58,8 +58,8 @@ fn choose_plan_fails_when_keyboard_not_preferred_and_pointer_not_viable() {
 
 #[test]
 fn screen_changed_reports_difference() {
-    assert!(!ExecutionMonitor::screen_changed(1234, 1234));
-    assert!(ExecutionMonitor::screen_changed(1234, 5678));
+    assert!(!ExecutionMonitor::frame_advanced(1234, 1234));
+    assert!(ExecutionMonitor::frame_advanced(1234, 5678));
 }
 
 #[test]
@@ -74,6 +74,15 @@ fn execution_monitor_requests_retry_then_fails_when_screen_never_changes() {
         second,
         ExecutionDecision::Failed(GroundingFailure::RecoveryExhausted)
     );
+}
+
+#[test]
+fn execution_monitor_reports_observed_change_when_frame_advances() {
+    let mut recovery = RecoveryController::default();
+
+    let decision = ExecutionMonitor::evaluate(10, 11, &mut recovery);
+
+    assert_eq!(decision, ExecutionDecision::ObservedChange);
 }
 
 #[test]

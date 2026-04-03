@@ -4,7 +4,7 @@ use crate::recovery_controller::RecoveryController;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionDecision {
-    Applied,
+    ObservedChange,
     Retry,
     Failed(GroundingFailure),
 }
@@ -12,7 +12,7 @@ pub enum ExecutionDecision {
 pub struct ExecutionMonitor;
 
 impl ExecutionMonitor {
-    pub fn screen_changed(before: u64, after: u64) -> bool {
+    pub fn frame_advanced(before: u64, after: u64) -> bool {
         before != after
     }
 
@@ -21,8 +21,8 @@ impl ExecutionMonitor {
         after: u64,
         recovery: &mut RecoveryController,
     ) -> ExecutionDecision {
-        if Self::screen_changed(before, after) {
-            return ExecutionDecision::Applied;
+        if Self::frame_advanced(before, after) {
+            return ExecutionDecision::ObservedChange;
         }
 
         match recovery.next_action(true) {

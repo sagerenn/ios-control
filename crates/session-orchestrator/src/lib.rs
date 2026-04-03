@@ -47,9 +47,12 @@ pub struct SessionDiagnostics {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionResult {
     pub applied: bool,
+    pub observed_change: bool,
+    pub phase: ExecutionPhase,
     pub summary: String,
     pub attempts: u8,
-    pub failure: Option<GroundingFailure>,
+    pub grounding_failure: Option<GroundingFailure>,
+    pub failure_reason: Option<String>,
 }
 
 pub struct ActiveSessionState {
@@ -183,7 +186,7 @@ impl SessionOrchestrator {
                 (None, None, None, None, Some(latest_frame))
             };
 
-        let plugin_health = if control_capability.supported {
+        let mut plugin_health = if control_capability.supported {
             PluginHealth::Healthy
         } else {
             PluginHealth::Degraded
@@ -228,6 +231,15 @@ impl SessionOrchestrator {
         self.devices.upsert(device_record);
         for event in staged_telemetry {
             self.telemetry.push(event);
+        }
+
+        let mut summary = summary;
+        if let Some(result) = execution_result.as_ref() {
+            if !result.applied {
+                summary.phase = SessionPhase::Degraded;
+                plugin_health = PluginHealth::Degraded;
+                summary.plugin_health = plugin_health;
+            }
         }
 
         Ok(ActiveSessionState {
@@ -418,9 +430,12 @@ async fn execute_grounding_plan(
         return Ok((
             ExecutionResult {
                 applied: false,
+                observed_change: false,
+                phase: ExecutionPhase::Failed,
                 summary: format!("grounding failed before execution: {}", failure.as_str()),
                 attempts: 0,
-                failure: Some(failure),
+                grounding_failure: Some(failure),
+                failure_reason: Some(failure.as_str().to_string()),
             },
             latest_frame.clone(),
         ));
@@ -440,23 +455,31 @@ async fn execute_grounding_plan(
             return Ok((
                 ExecutionResult {
                     applied: false,
+                    observed_change: false,
+                    phase: summary.phase,
                     summary: summary_text,
                     attempts,
-                    failure: Some(GroundingFailure::ExecutionMismatch),
+                    grounding_failure: None,
+                    failure_reason: summary.failure_reason.clone(),
                 },
                 frame,
             ));
         }
 
         match ExecutionMonitor::evaluate(previous_frame_index, frame.frame_index, &mut recovery) {
-            ExecutionDecision::Applied => {
+            ExecutionDecision::ObservedChange => {
                 let summary_text = format_execution_summary(&summary, true, attempts - 1);
                 return Ok((
                     ExecutionResult {
-                        applied: true,
+                        applied: false,
+                        observed_change: true,
+                        phase: summary.phase,
                         summary: summary_text,
                         attempts,
-                        failure: None,
+                        grounding_failure: None,
+                        failure_reason: Some(
+                            "frame advanced but action effect is not yet confirmed".into(),
+                        ),
                     },
                     frame,
                 ));
@@ -469,9 +492,12 @@ async fn execute_grounding_plan(
                 return Ok((
                     ExecutionResult {
                         applied: false,
+                        observed_change: false,
+                        phase: summary.phase,
                         summary: summary_text,
                         attempts,
-                        failure: Some(failure),
+                        grounding_failure: Some(failure),
+                        failure_reason: summary.failure_reason.clone(),
                     },
                     frame,
                 ));
