@@ -24,6 +24,13 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn probe_control_capability() -> ControlCapability {
+    ControlCapability {
+        supported: true,
+        reason: None,
+    }
+}
+
+fn runtime_control_capability() -> ControlCapability {
     if cfg!(target_os = "linux") {
         return probe_linux_backend().as_capability();
     }
@@ -59,7 +66,10 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
             "Pair the device when it appears".into(),
         ],
         vec![
-            "BLE advertising/connect not implemented yet".into(),
+            capability
+                .reason
+                .clone()
+                .unwrap_or_else(|| "BLE advertising/connect not implemented yet".into()),
             "HID reports will be generated but not transmitted".into(),
         ],
     )
@@ -68,7 +78,7 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
 fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, ControlSetupChecklist) {
     let phase = match session.state {
         ControlSessionState::Unsupported => ControlSessionPhase::Unavailable,
-        ControlSessionState::Ready => ControlSessionPhase::ReadyToAdvertise,
+        ControlSessionState::Ready => ControlSessionPhase::Error,
         ControlSessionState::Advertising => ControlSessionPhase::Advertising,
         ControlSessionState::Connected => ControlSessionPhase::Connected,
         ControlSessionState::Error(_) => ControlSessionPhase::Error,
@@ -88,7 +98,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();
     let mut handshaken = false;
-    let mut last_capability: Option<ControlCapability> = None;
     let mut session: Option<ControlSession> = None;
 
     while let Some(line) = lines.next() {
@@ -119,16 +128,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             HostToPlugin::ProbeControl => {
                 let capability = probe_control_capability();
-                last_capability = Some(capability.clone());
                 let reply = PluginToHost::ControlCapability {
                     capability: to_contract_capability(&capability),
                 };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::PrepareControl => {
-                let capability = last_capability
-                    .clone()
-                    .unwrap_or_else(probe_control_capability);
+                let capability = runtime_control_capability();
                 let snapshot = build_session_from_capability(&capability);
                 let (phase, checklist) = session_to_contract(&snapshot);
                 session = Some(snapshot);
