@@ -1639,6 +1639,7 @@ dependencies = [
  "ios-control-plugin-protocol",
  "ios-control-plugin-runtime",
  "ios-control-telemetry-store",
+ "plugin-grounding-core",
  "tokio",
 ]
 
@@ -2433,6 +2434,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ios-control-contracts",
+ "ios-control-frame-transport",
  "ios-control-plugin-protocol",
  "serde_json",
  "tokio",
@@ -2445,6 +2447,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ios-control-contracts",
+ "ios-control-frame-transport",
  "ios-control-plugin-protocol",
  "serde_json",
  "tokio",
