@@ -32,7 +32,7 @@ impl CaptureSourceOption {
     }
 
     pub fn label(&self) -> String {
-        if self.source_id.starts_with("window:") {
+        if self.source_id.starts_with("window:") || self.source_id.starts_with("window-") {
             format!("Window: {}", self.display_name)
         } else {
             format!("Direct: {}", self.display_name)
