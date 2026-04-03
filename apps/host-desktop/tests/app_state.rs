@@ -27,7 +27,7 @@ fn host_app_boots_into_an_honest_idle_session_shell() {
 }
 
 #[test]
-fn host_app_can_start_and_stop_a_mock_backed_session() {
+fn host_app_transitions_from_starting_to_honest_bootstrap_error() {
     let mut app = HostDesktopApp::new();
 
     app.request_start_session();
@@ -36,19 +36,19 @@ fn host_app_can_start_and_stop_a_mock_backed_session() {
     assert!(app.session.latest_frame.is_none());
 
     app.finish_pending_session_start();
-    assert_eq!(app.session.ui_state, SessionUiState::Streaming);
     assert_eq!(
-        app.session.selected_source,
-        Some(CaptureSourceOption::new("window:mock", "Mock iPhone Mirror"))
+        app.session.ui_state,
+        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
     );
-    assert!(app.session.latest_frame.is_some());
+    assert!(app.session.selected_source.is_none());
+    assert!(app.session.latest_frame.is_none());
+    assert_eq!(app.device_detail.active_source_id, None);
     assert_eq!(
-        app.device_detail.active_source_id.as_deref(),
-        Some("window:mock")
+        app.diagnostics.host_error.as_deref(),
+        Some("Session bootstrap is not wired to the runtime yet")
     );
-    assert_eq!(app.diagnostics.host_error, None);
-    assert_eq!(app.diagnostics.control_summary, "control session prepared");
-    assert_eq!(app.diagnostics.grounding_summary, "grounding ready for execution");
+    assert_eq!(app.diagnostics.control_summary, "control blocked");
+    assert_eq!(app.diagnostics.grounding_summary, "grounding blocked");
 
     app.stop_session();
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
