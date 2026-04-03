@@ -127,6 +127,7 @@ Linux example:
 cargo build --release \
   --package host-desktop \
   --package plugin-control-ble \
+  --package plugin-control-window-bridge \
   --package plugin-capture-window \
   --package plugin-capture-direct \
   --package plugin-grounding-core \
@@ -147,3 +148,5 @@ python3 scripts/package_release.py \
 - The orchestrator-backed mock flow is the main local E2E path today.
 - The desktop shell is still a demo UI, not a real device-session UI yet.
 - Real iPhone/iPad control is not fully implemented yet.
+- Release bundles now include the fallback control plugin `plugin-control-window-bridge`.
+- Pending Linux/Windows multi-device and fallback validation rows live in `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.

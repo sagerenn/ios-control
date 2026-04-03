@@ -21,6 +21,7 @@ SPEC.loader.exec_module(package_release)
 EXPECTED_HOST_BINARY = "host-desktop"
 EXPECTED_PLUGIN_BINARIES = [
     "plugin-control-ble",
+    "plugin-control-window-bridge",
     "plugin-capture-window",
     "plugin-capture-direct",
     "plugin-grounding-core",
