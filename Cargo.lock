@@ -1613,6 +1613,7 @@ dependencies = [
 name = "ios-control-plugin-protocol"
 version = "0.1.0"
 dependencies = [
+ "ios-control-contracts",
  "serde",
  "serde_json",
 ]

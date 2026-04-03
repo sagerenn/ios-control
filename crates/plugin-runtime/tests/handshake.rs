@@ -55,4 +55,6 @@ async fn handshake_returns_mock_plugin_descriptor() {
 
     assert_eq!(descriptor.plugin_id, "mock.device");
     assert_eq!(descriptor.protocol_version, 1);
+    assert_eq!(descriptor.kind, ios_control_plugin_protocol::PluginKind::Control);
+    assert_eq!(descriptor.display_name, "Mock Device");
 }

@@ -1,5 +1,5 @@
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, PlanKind, TargetInput};
-use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
+use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 
 #[test]
 fn host_to_plugin_roundtrips_operational_messages() {
@@ -33,4 +33,20 @@ fn host_to_plugin_roundtrips_operational_messages() {
     let response_json = serde_json::to_string(&response).unwrap();
     let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
     assert_eq!(decoded_response, response);
+}
+
+#[test]
+fn handshake_roundtrips_plugin_descriptor() {
+    let response = PluginToHost::HandshakeAck {
+        descriptor: PluginDescriptor {
+            plugin_id: "mock.device".into(),
+            protocol_version: 1,
+            kind: PluginKind::Control,
+            display_name: "Mock Device".into(),
+        },
+    };
+
+    let json = serde_json::to_string(&response).unwrap();
+    let decoded: PluginToHost = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, response);
 }

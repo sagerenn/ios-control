@@ -1,7 +1,8 @@
+pub use ios_control_contracts::plugin::{PluginDescriptor, PluginKind};
+
 use ios_control_contracts::capture::{VideoFrameDescriptor, VideoSource};
 use ios_control_contracts::control::{ControlCapability, ControlSessionPhase, ControlSetupChecklist};
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest};
-use ios_control_contracts::plugin::PluginDescriptor;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

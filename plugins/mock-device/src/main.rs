@@ -1,4 +1,4 @@
-use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginToHost};
+use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::main]
@@ -13,6 +13,8 @@ async fn main() -> anyhow::Result<()> {
                 descriptor: PluginDescriptor {
                     plugin_id: "mock.device".into(),
                     protocol_version: 1,
+                    kind: PluginKind::Control,
+                    display_name: "Mock Device".into(),
                 },
             };
             stdout.write_all(serde_json::to_string(&reply)?.as_bytes()).await?;

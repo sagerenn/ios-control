@@ -39,6 +39,7 @@ impl PluginRuntime {
 
         match serde_json::from_str::<PluginToHost>(&line)? {
             PluginToHost::HandshakeAck { descriptor } => Ok(descriptor),
+            other => Err(anyhow!("unexpected handshake response: {other:?}")),
         }
     }
 }
