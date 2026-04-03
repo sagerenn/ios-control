@@ -1,6 +1,7 @@
+use plugin_capture_window::helper_bridge::{HelperFrameEvent, HelperProbe};
 use plugin_capture_window::helper_config::WindowHelperConfig;
-use plugin_capture_window::mock_backend::MockWindowBackend;
 use plugin_capture_window::linux_backend::probe_linux_capture;
+use plugin_capture_window::mock_backend::MockWindowBackend;
 use plugin_capture_window::windows_backend::probe_windows_capture;
 use std::env;
 use std::sync::Mutex;
@@ -33,6 +34,30 @@ fn window_capture_probe_reports_helper_backed_bridge_support() {
     assert!(capability.available);
     assert_eq!(capability.backend_id, "capture.window.helper");
     assert!(capability.supports_input_bridge);
+}
+
+#[test]
+fn window_helper_probe_requires_display_name_and_bridge_support() {
+    let probe: HelperProbe = serde_json::from_str(
+        r#"{"available":true,"display_name":"Operator Mirror","supports_input_bridge":true}"#,
+    )
+    .unwrap();
+
+    assert!(probe.available);
+    assert_eq!(probe.display_name, "Operator Mirror");
+    assert!(probe.supports_input_bridge);
+}
+
+#[test]
+fn window_helper_frame_event_roundtrips_frame_metadata() {
+    let event: HelperFrameEvent =
+        serde_json::from_str(r#"{"frame_index":7,"width":1280,"height":720,"fill_byte":42}"#)
+            .unwrap();
+
+    assert_eq!(event.frame_index, 7);
+    assert_eq!(event.width, 1280);
+    assert_eq!(event.height, 720);
+    assert_eq!(event.fill_byte, 42);
 }
 
 #[test]

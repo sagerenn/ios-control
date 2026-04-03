@@ -1,6 +1,8 @@
 use ios_control_contracts::capture::{CaptureCapability, SourceKind, VideoSource};
 use std::path::PathBuf;
 
+pub const WINDOW_HELPER_SOURCE_ID: &str = "window-helper-1";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowHelperConfig {
     pub helper_path: PathBuf,
@@ -9,10 +11,12 @@ pub struct WindowHelperConfig {
 
 impl WindowHelperConfig {
     pub fn from_parts(helper_path: Option<PathBuf>, display_name: Option<String>) -> Option<Self> {
-        helper_path.filter(|path| path.is_file()).map(|helper_path| Self {
-            helper_path,
-            display_name: display_name.unwrap_or_else(|| "Operator Mirror".into()),
-        })
+        helper_path
+            .filter(|path| path.is_file())
+            .map(|helper_path| Self {
+                helper_path,
+                display_name: display_name.unwrap_or_else(|| "Operator Mirror".into()),
+            })
     }
 
     pub fn from_env() -> Option<Self> {
@@ -32,9 +36,18 @@ impl WindowHelperConfig {
     }
 
     pub fn list_sources(&self) -> Vec<VideoSource> {
+        self.list_sources_with_name(&self.display_name)
+    }
+
+    pub fn list_sources_with_name(&self, display_name: &str) -> Vec<VideoSource> {
+        let display_name = if display_name.is_empty() {
+            self.display_name.clone()
+        } else {
+            display_name.to_string()
+        };
         vec![VideoSource {
-            source_id: "window-helper-1".into(),
-            display_name: self.display_name.clone(),
+            source_id: WINDOW_HELPER_SOURCE_ID.into(),
+            display_name,
             kind: SourceKind::Window,
         }]
     }

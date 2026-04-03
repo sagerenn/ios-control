@@ -4,10 +4,10 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, Pl
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
-use plugin_capture_direct::backend::{
-    allocate_mock_slot, mock_frame, mock_frame_bytes, DIRECT_HEIGHT, DIRECT_WIDTH,
+use plugin_capture_direct::backend::{allocate_mock_slot, mock_frame, DIRECT_HEIGHT, DIRECT_WIDTH};
+use plugin_capture_direct::helper_launcher::{
+    capture_capability, find_helper, read_next_frame_event,
 };
-use plugin_capture_direct::helper_launcher::{capture_capability, find_helper};
 
 const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
@@ -15,7 +15,7 @@ const SLOT_BYTES: u32 = DIRECT_WIDTH * DIRECT_HEIGHT * 4;
 
 struct StreamState {
     source_id: String,
-    frame_index: u64,
+    helper_path: std::path::PathBuf,
     slot: FrameSlot,
 }
 
@@ -28,13 +28,16 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if run_helper_mode()? {
+        return Ok(());
+    }
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();
     let mut handshaken = false;
     let mut stream: Option<StreamState> = None;
     let mut legacy_frame_index: u64 = 0;
-    let mut stream_frame_index: u64 = 0;
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -76,13 +79,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                if find_helper().is_none() {
-                    let reply = PluginToHost::Error {
-                        message: "direct receiver helper not configured".into(),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                    continue;
-                }
+                let helper_path = match find_helper() {
+                    Some(path) => path,
+                    None => {
+                        let reply = PluginToHost::Error {
+                            message: "direct receiver helper not configured".into(),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
 
                 let slot = match allocate_mock_slot() {
                     Ok(slot) => slot,
@@ -106,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 stream = Some(StreamState {
                     source_id,
-                    frame_index: stream_frame_index,
+                    helper_path,
                     slot,
                 });
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
@@ -124,9 +130,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                state.frame_index += 1;
-                stream_frame_index = state.frame_index;
-                let bytes = mock_frame_bytes();
+                let event = match read_next_frame_event(&state.helper_path, &state.source_id) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("failed to read helper frame event: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+
+                let bytes = vec![event.fill_byte; state.slot.byte_len()];
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {
                         message: format!("failed to write frame slot: {}", err),
@@ -135,7 +150,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let frame = mock_frame(&state.source_id, state.frame_index);
+                let mut frame = mock_frame(&state.source_id, event.frame_index);
+                frame.width = event.width;
+                frame.height = event.height;
                 let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -161,4 +178,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
+    let mut args = std::env::args().skip(1);
+    let Some(mode) = args.next() else {
+        return Ok(false);
+    };
+
+    match mode.as_str() {
+        "probe" => {
+            let payload = serde_json::json!({
+                "available": true,
+                "supports_input_bridge": false
+            });
+            println!("{}", serde_json::to_string(&payload)?);
+            Ok(true)
+        }
+        "stream" => {
+            let _ = args.next();
+            let _ = args.next();
+            let payload = serde_json::json!({
+                "frame_index": 1_u64,
+                "width": DIRECT_WIDTH,
+                "height": DIRECT_HEIGHT,
+                "fill_byte": 64_u8
+            });
+            println!("{}", serde_json::to_string(&payload)?);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }

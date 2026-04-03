@@ -6,18 +6,17 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, Pl
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
-use plugin_capture_window::backend::{allocate_mock_slot, mock_frame, mock_frame_bytes};
+use plugin_capture_window::backend::{allocate_mock_slot, mock_frame};
+use plugin_capture_window::helper_bridge;
 use plugin_capture_window::helper_config::WindowHelperConfig;
-use plugin_capture_window::linux_backend::probe_linux_capture;
-use plugin_capture_window::windows_backend::probe_windows_capture;
+use plugin_capture_window::helper_config::WINDOW_HELPER_SOURCE_ID;
 
 const PROTOCOL_VERSION: u32 = 3;
-const SOURCE_ID: &str = "window-helper-1";
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
 
 struct StreamState {
     source_id: String,
-    frame_index: u64,
+    helper_path: std::path::PathBuf,
     slot: FrameSlot,
 }
 
@@ -30,6 +29,10 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if run_helper_mode()? {
+        return Ok(());
+    }
+
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();
@@ -64,26 +67,42 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ProbeCapture => {
-                let capability = WindowHelperConfig::from_env()
-                    .map(|config| config.capture_capability())
-                    .unwrap_or(CaptureCapability {
+                let probe = WindowHelperConfig::from_env().and_then(|config| {
+                    helper_bridge::run_probe(&config.helper_path)
+                        .ok()
+                        .map(|probe| (config, probe))
+                });
+
+                let capability = match probe.as_ref() {
+                    Some((_config, probe)) => CaptureCapability {
+                        available: probe.available,
+                        reason: None,
+                        backend_id: "capture.window.helper".into(),
+                        supports_input_bridge: probe.supports_input_bridge,
+                    },
+                    None => CaptureCapability {
                         available: false,
                         reason: Some("IOS_CONTROL_WINDOW_CAPTURE_HELPER not configured".into()),
                         backend_id: "capture.window.helper".into(),
                         supports_input_bridge: false,
-                    });
+                    },
+                };
                 let reply = PluginToHost::CaptureCapability { capability };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ListCaptureSources => {
                 let sources = WindowHelperConfig::from_env()
-                    .map(|config| config.list_sources())
+                    .and_then(|config| {
+                        helper_bridge::run_probe(&config.helper_path)
+                            .ok()
+                            .map(|probe| config.list_sources_with_name(&probe.display_name))
+                    })
                     .unwrap_or_default();
                 let reply = PluginToHost::CaptureSources { sources };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::OpenCaptureStream { source_id } => {
-                if source_id != SOURCE_ID {
+                if source_id != WINDOW_HELPER_SOURCE_ID {
                     let reply = PluginToHost::Error {
                         message: "unsupported source for capture-window plugin".into(),
                     };
@@ -91,9 +110,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                if !probe_linux_capture() && !probe_windows_capture() {
+                let config = match WindowHelperConfig::from_env() {
+                    Some(config) => config,
+                    None => {
+                        let reply = PluginToHost::Error {
+                            message: "window capture helper not configured".into(),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+                let probe = match helper_bridge::run_probe(&config.helper_path) {
+                    Ok(probe) => probe,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("window helper probe failed: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+                if !probe.available {
                     let reply = PluginToHost::Error {
-                        message: "window capture backend unavailable".into(),
+                        message: "window capture helper unavailable".into(),
                     };
                     write_reply(&mut stdout, &reply)?;
                     continue;
@@ -121,7 +160,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 stream = Some(StreamState {
                     source_id,
-                    frame_index: 0,
+                    helper_path: config.helper_path,
                     slot,
                 });
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
@@ -139,8 +178,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                state.frame_index += 1;
-                let bytes = mock_frame_bytes();
+                let event = match helper_bridge::read_next_frame_event(
+                    &state.helper_path,
+                    &state.source_id,
+                ) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("failed to read helper frame event: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+                let bytes = vec![event.fill_byte; state.slot.byte_len()];
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {
                         message: format!("failed to write frame slot: {}", err),
@@ -149,7 +200,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let mut frame = mock_frame(&state.source_id, state.frame_index);
+                let mut frame = mock_frame(&state.source_id, event.frame_index);
+                frame.width = event.width;
+                frame.height = event.height;
                 frame.health = FrameHealth::Healthy;
                 let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
@@ -159,7 +212,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
             }
             HostToPlugin::GetCaptureFrame { source_id } => {
-                if source_id != SOURCE_ID {
+                if source_id != WINDOW_HELPER_SOURCE_ID {
                     let reply = PluginToHost::Error {
                         message: "unsupported request for capture-window plugin".into(),
                     };
@@ -182,4 +235,38 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
+    let mut args = std::env::args().skip(1);
+    let Some(mode) = args.next() else {
+        return Ok(false);
+    };
+
+    match mode.as_str() {
+        "probe" => {
+            let display_name = std::env::var("IOS_CONTROL_WINDOW_CAPTURE_NAME")
+                .unwrap_or_else(|_| "Operator Mirror".into());
+            let payload = serde_json::json!({
+                "available": true,
+                "display_name": display_name,
+                "supports_input_bridge": true
+            });
+            println!("{}", serde_json::to_string(&payload)?);
+            Ok(true)
+        }
+        "stream" => {
+            let _ = args.next();
+            let _ = args.next();
+            let payload = serde_json::json!({
+                "frame_index": 1_u64,
+                "width": 1280_u32,
+                "height": 720_u32,
+                "fill_byte": 128_u8
+            });
+            println!("{}", serde_json::to_string(&payload)?);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
