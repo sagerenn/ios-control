@@ -2428,6 +2428,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ios-control-contracts",
+ "ios-control-plugin-protocol",
+ "serde_json",
  "tokio",
 ]
 
@@ -2438,6 +2440,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "ios-control-contracts",
+ "ios-control-plugin-protocol",
+ "serde_json",
  "tokio",
 ]
 
@@ -2446,6 +2450,8 @@ name = "plugin-control-ble"
 version = "0.1.0"
 dependencies = [
  "ios-control-contracts",
+ "ios-control-plugin-protocol",
+ "serde_json",
 ]
 
 [[package]]
@@ -2453,6 +2459,8 @@ name = "plugin-grounding-core"
 version = "0.1.0"
 dependencies = [
  "ios-control-contracts",
+ "ios-control-plugin-protocol",
+ "serde_json",
 ]
 
 [[package]]
