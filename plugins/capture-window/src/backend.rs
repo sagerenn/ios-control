@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use ios_control_contracts::capture::{FrameHealth, SourceKind, VideoFrameDescriptor};
+use ios_control_frame_transport::FrameSlot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowSource {
@@ -23,4 +24,12 @@ pub fn mock_frame(source_id: &str, frame_index: u64) -> VideoFrameDescriptor {
         frame_index,
         health: FrameHealth::Healthy,
     }
+}
+
+pub fn allocate_mock_slot() -> anyhow::Result<FrameSlot> {
+    FrameSlot::new(mock_frame_bytes().len())
+}
+
+pub fn mock_frame_bytes() -> Vec<u8> {
+    vec![128_u8; 1280 * 720 * 4]
 }

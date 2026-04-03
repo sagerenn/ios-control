@@ -1,5 +1,9 @@
 use async_trait::async_trait;
 use ios_control_contracts::capture::{FrameHealth, SourceKind, VideoFrameDescriptor};
+use ios_control_frame_transport::FrameSlot;
+
+pub const DIRECT_WIDTH: u32 = 1179;
+pub const DIRECT_HEIGHT: u32 = 2556;
 
 #[async_trait]
 pub trait DirectReceiverBackend {
@@ -7,13 +11,25 @@ pub trait DirectReceiverBackend {
 }
 
 pub fn first_frame(source_id: &str) -> VideoFrameDescriptor {
+    mock_frame(source_id, 1)
+}
+
+pub fn mock_frame(source_id: &str, frame_index: u64) -> VideoFrameDescriptor {
     VideoFrameDescriptor {
         source_id: source_id.into(),
         source_kind: SourceKind::DirectReceiver,
-        width: 1179,
-        height: 2556,
+        width: DIRECT_WIDTH,
+        height: DIRECT_HEIGHT,
         rotation_degrees: 0,
-        frame_index: 1,
+        frame_index,
         health: FrameHealth::Healthy,
     }
+}
+
+pub fn allocate_mock_slot() -> anyhow::Result<FrameSlot> {
+    FrameSlot::new(mock_frame_bytes().len())
+}
+
+pub fn mock_frame_bytes() -> Vec<u8> {
+    vec![64_u8; (DIRECT_WIDTH as usize) * (DIRECT_HEIGHT as usize) * 4]
 }
