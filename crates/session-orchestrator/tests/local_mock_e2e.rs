@@ -24,7 +24,8 @@ async fn local_mock_e2e_builds_streaming_session() {
         .await
         .unwrap();
 
-    // Keep this smoke test pinned to the developer flow documented in README.
+    // Keep this smoke test pinned to the developer flow documented in README,
+    // and to the real-device acceptance matrix for current validation status.
     assert_eq!(state.summary.phase, SessionPhase::Degraded);
     assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.window"));
     assert_eq!(state.summary.control_plugin.as_deref(), Some("control.ble"));
