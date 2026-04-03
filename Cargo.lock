@@ -2462,8 +2462,10 @@ dependencies = [
 name = "plugin-control-ble"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ios-control-contracts",
  "ios-control-plugin-protocol",
+ "serde",
  "serde_json",
 ]
 
