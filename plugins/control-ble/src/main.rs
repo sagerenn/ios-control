@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();
+    let mut handshaken = false;
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -32,6 +33,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                         kind: PluginKind::Control,
                         display_name: "Bluetooth Control".into(),
                     },
+                };
+                handshaken = true;
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::Stop => {
+                write_reply(&mut stdout, &PluginToHost::Ack)?;
+                break;
+            }
+            _ if !handshaken => {
+                let reply = PluginToHost::Error {
+                    message: "handshake required for control plugin".into(),
                 };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -55,10 +67,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     },
                 };
                 write_reply(&mut stdout, &reply)?;
-            }
-            HostToPlugin::Stop => {
-                write_reply(&mut stdout, &PluginToHost::Ack)?;
-                break;
             }
             _ => {
                 let reply = PluginToHost::Error {

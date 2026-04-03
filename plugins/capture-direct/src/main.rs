@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut stdout = io::BufWriter::new(io::stdout());
     let mut lines = stdin.lock().lines();
     let mut frame_index: u64 = 0;
+    let mut handshaken = false;
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -32,6 +33,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                         kind: PluginKind::Capture,
                         display_name: "Direct Receiver".into(),
                     },
+                };
+                handshaken = true;
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::Stop => {
+                write_reply(&mut stdout, &PluginToHost::Ack)?;
+                break;
+            }
+            _ if !handshaken => {
+                let reply = PluginToHost::Error {
+                    message: "handshake required for capture-direct plugin".into(),
                 };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -49,10 +61,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     },
                 };
                 write_reply(&mut stdout, &reply)?;
-            }
-            HostToPlugin::Stop => {
-                write_reply(&mut stdout, &PluginToHost::Ack)?;
-                break;
             }
             _ => {
                 let reply = PluginToHost::Error {

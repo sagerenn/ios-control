@@ -21,6 +21,7 @@ impl RunningPlugin {
         let mut child = Command::new(plugin_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()?;
 
         let stdin = child
