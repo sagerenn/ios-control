@@ -22,6 +22,49 @@ sudo apt-get install -y \
   libssl-dev
 ```
 
+Windows builds also need:
+
+- Visual Studio Build Tools with the C++ toolchain
+- a normal PowerShell or Developer PowerShell environment
+
+## First-time setup
+
+### Linux
+
+```bash
+git clone <repo-url> ios-control
+cd ios-control
+
+rustup default stable
+
+sudo apt-get update
+sudo apt-get install -y \
+  libxcb-render0-dev \
+  libxcb-shape0-dev \
+  libxcb-xfixes0-dev \
+  libxkbcommon-dev \
+  libssl-dev
+
+cargo test --workspace
+```
+
+### Windows
+
+```powershell
+git clone <repo-url> ios-control
+cd ios-control
+
+rustup default stable
+
+cargo test --workspace
+```
+
+Expected result:
+
+- the workspace compiles successfully
+- all Rust tests pass
+- you can then run the local mock E2E flow below
+
 ## Quick start
 
 Run the workspace tests:
@@ -37,6 +80,48 @@ cargo run -p host-desktop
 ```
 
 The desktop app currently opens into a demo shell UI. The real local end-to-end path today is the orchestrator-backed mock session test below.
+
+## iPhone / iPad setup
+
+If you want to try the intended real-device flow, prepare the iPhone or iPad first:
+
+1. Keep the device unlocked during setup.
+2. Turn on Bluetooth.
+3. If you want pointer-style control:
+   Enable `Settings > Accessibility > Touch > AssistiveTouch`.
+4. If you want keyboard-style navigation:
+   Enable `Settings > Accessibility > Keyboards > Full Keyboard Access`.
+5. If you want direct screen mirroring:
+   Keep the iPhone/iPad and PC on the same local network.
+6. If you want window-based screen capture:
+   install and launch a third-party mirroring app on the PC and connect the device to that app first.
+
+## How to connect
+
+There are two intended screen paths and one intended control path:
+
+- Window capture:
+  Mirror the iPhone/iPad into a third-party desktop app first, then let `ios-control` work against that window.
+- Direct receiver:
+  Start the receiver on the PC, then choose the PC from the iPhone/iPad `Control Center > Screen Mirroring` picker.
+- BLE control:
+  Pair the iPhone/iPad with the PC from iOS Bluetooth settings, then use keyboard/pointer semantics from the host.
+
+## Current user-facing status
+
+What is verified today:
+
+- local mock plugin-backed flow
+- local desktop shell startup
+
+What is not yet verified today:
+
+- real iPhone/iPad pairing end to end
+- real live preview from a physical device
+- real BLE control on a physical device
+- real reconnect / recovery on a physical device
+
+So, this repository does not yet provide a polished “install app, pair iPhone, start controlling it” end-user flow. The sections above describe the intended setup path, not a fully validated product workflow.
 
 ## End-to-end developer flow
 
