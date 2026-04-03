@@ -6,7 +6,7 @@ This matrix reflects current reality on this branch. The only verified path toda
 
 | Flow | Capture Path | Control Path | Pairing | Live Preview | Live Control | Recovery | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Local mock flow | Mock capture window | Mock BLE control | N/A | Verified | Verified | Verified | Verified |
+| Local mock flow | Mock capture window | Mock BLE control | N/A | Verified | Not yet verified | Not yet verified | Verified |
 
 ## Operator Validation Checklist
 

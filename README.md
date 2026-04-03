@@ -64,10 +64,10 @@ cargo test -p ios-control-session-orchestrator \
 
 Expected result:
 
-- `SessionOrchestrator::start_session_with_plugins(...)` reaches `SessionPhase::Streaming`
+- `SessionOrchestrator::start_session_with_plugins(...)` reaches a plugin-backed session and currently ends in `SessionPhase::Degraded`
 - The mock session selects capture source `window-1`
 - The active session reports `capture.window`, `control.ble`, and `grounding.core`
-- The test shuts the session down cleanly
+- The test proves capture/session wiring and shuts the session down cleanly
 
 ### 3. Run the desktop shell
 
