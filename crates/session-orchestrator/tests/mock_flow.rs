@@ -130,4 +130,34 @@ async fn start_session_collects_mock_plugin_state() {
     assert!(telemetry
         .iter()
         .any(|event| event.message.contains("grounding planned")));
+
+    state.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn start_session_failure_does_not_persist_partial_state() {
+    let root = workspace_root();
+    build_plugins(&root);
+
+    let mut orchestrator = SessionOrchestrator::default();
+    let error = orchestrator
+        .start_session_with_plugins(StartSessionRequest {
+            device_id: "device-2".into(),
+            device_name: "Broken Mock iPhone".into(),
+            selected_source_id: Some("missing-source".into()),
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                control: plugin_path(&root, "plugin-control-ble"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("requested capture source `missing-source` is unavailable"));
+    assert!(orchestrator.capabilities.entries().is_empty());
+    assert!(orchestrator.devices.entries().is_empty());
+    assert!(orchestrator.telemetry.events().is_empty());
 }

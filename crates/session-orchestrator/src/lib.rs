@@ -42,7 +42,6 @@ pub struct SessionDiagnostics {
     pub grounding_summary: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveSessionState {
     pub summary: DeviceSessionSummary,
     pub selected_source_id: Option<String>,
@@ -50,6 +49,22 @@ pub struct ActiveSessionState {
     pub latest_frame: Option<VideoFrameDescriptor>,
     pub control_checklist: ControlSetupChecklist,
     pub diagnostics: SessionDiagnostics,
+    capture_plugin: Option<RunningPlugin>,
+    control_plugin: Option<RunningPlugin>,
+    grounding_plugin: Option<RunningPlugin>,
+}
+
+impl std::fmt::Debug for ActiveSessionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActiveSessionState")
+            .field("summary", &self.summary)
+            .field("selected_source_id", &self.selected_source_id)
+            .field("capture_sources", &self.capture_sources)
+            .field("latest_frame", &self.latest_frame)
+            .field("control_checklist", &self.control_checklist)
+            .field("diagnostics", &self.diagnostics)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -60,6 +75,9 @@ pub struct SessionOrchestrator {
 }
 
 impl SessionOrchestrator {
+    /// Compatibility shim for callers that only need a requested-plugin summary.
+    /// This does not spawn plugin processes, perform handshakes, or create a live session.
+    #[deprecated(note = "use start_session_with_plugins for a live plugin-backed session")]
     pub async fn start_session(
         &self,
         device_id: &str,
@@ -81,12 +99,13 @@ impl SessionOrchestrator {
         request: StartSessionRequest,
     ) -> Result<ActiveSessionState> {
         let session_id = request.device_id.clone();
+        let mut staged_capabilities = Vec::new();
+        let mut staged_telemetry = Vec::new();
 
         let mut capture = RunningPlugin::spawn(&request.plugin_paths.capture).await?;
         let capture_descriptor = capture.handshake().await?;
-        self.capabilities
-            .record(capture_descriptor.plugin_id.clone(), true, None);
-        self.telemetry.push(TelemetryEvent {
+        staged_capabilities.push((capture_descriptor.plugin_id.clone(), true, None));
+        staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("capture plugin ready: {}", capture_descriptor.plugin_id),
         });
@@ -99,8 +118,7 @@ impl SessionOrchestrator {
         )?;
         let latest_frame =
             request_capture_frame(&mut capture, &capture_descriptor, &selected_source_id).await?;
-        capture.stop().await?;
-        self.telemetry.push(TelemetryEvent {
+        staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("capture source selected: {selected_source_id}"),
         });
@@ -108,33 +126,34 @@ impl SessionOrchestrator {
         let mut control = RunningPlugin::spawn(&request.plugin_paths.control).await?;
         let control_descriptor = control.handshake().await?;
         let control_capability = request_control_capability(&mut control).await?;
-        self.capabilities.record(
+        staged_capabilities.push((
             control_descriptor.plugin_id.clone(),
             control_capability.supported,
             control_capability.reason.clone(),
-        );
+        ));
         let (control_phase, control_checklist) = request_control_session(&mut control).await?;
-        control.stop().await?;
-        self.telemetry.push(TelemetryEvent {
+        staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("control prepared: {control_phase:?}"),
         });
 
-        let (grounding_plugin, grounding_summary) =
+        let (grounding_plugin_id, grounding_summary, grounding_plugin) =
             if let Some(path) = request.plugin_paths.grounding.as_ref() {
                 let mut grounding = RunningPlugin::spawn(path).await?;
                 let grounding_descriptor = grounding.handshake().await?;
                 let plan = request_grounding_plan(&mut grounding).await?;
-                grounding.stop().await?;
-                self.capabilities
-                    .record(grounding_descriptor.plugin_id.clone(), true, None);
-                self.telemetry.push(TelemetryEvent {
+                staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
+                staged_telemetry.push(TelemetryEvent {
                     session_id: session_id.clone(),
                     message: format!("grounding planned: {}", plan.summary),
                 });
-                (Some(grounding_descriptor.plugin_id), Some(plan.summary))
+                (
+                    Some(grounding_descriptor.plugin_id),
+                    Some(plan.summary),
+                    Some(grounding),
+                )
             } else {
-                (None, None)
+                (None, None, None)
             };
 
         let plugin_health = if control_capability.supported {
@@ -160,21 +179,29 @@ impl SessionOrchestrator {
             plugin_health,
             capture_plugin: Some(capture_descriptor.plugin_id.clone()),
             control_plugin: Some(control_descriptor.plugin_id.clone()),
-            grounding_plugin: grounding_plugin.clone(),
+            grounding_plugin: grounding_plugin_id.clone(),
         };
 
-        self.devices.upsert(DeviceRecord {
+        let device_record = DeviceRecord {
             device_id: request.device_id.clone(),
             device_name: request.device_name.clone(),
             preferred_capture_plugin: capture_descriptor.plugin_id.clone(),
             preferred_control_plugin: control_descriptor.plugin_id.clone(),
-            preferred_grounding_plugin: grounding_plugin.clone(),
+            preferred_grounding_plugin: grounding_plugin_id.clone(),
             last_source_id: Some(selected_source_id.clone()),
-        });
-        self.telemetry.push(TelemetryEvent {
+        };
+        staged_telemetry.push(TelemetryEvent {
             session_id,
             message: "session started".into(),
         });
+
+        for (plugin_id, supported, reason) in staged_capabilities {
+            self.capabilities.record(plugin_id, supported, reason);
+        }
+        self.devices.upsert(device_record);
+        for event in staged_telemetry {
+            self.telemetry.push(event);
+        }
 
         Ok(ActiveSessionState {
             summary,
@@ -186,7 +213,41 @@ impl SessionOrchestrator {
                 control_summary,
                 grounding_summary,
             },
+            capture_plugin: Some(capture),
+            control_plugin: Some(control),
+            grounding_plugin,
         })
+    }
+}
+
+impl ActiveSessionState {
+    pub async fn shutdown(mut self) -> Result<()> {
+        let mut first_error = None;
+
+        if let Some(mut grounding) = self.grounding_plugin.take() {
+            if let Err(error) = grounding.stop().await {
+                first_error = Some(error);
+            }
+        }
+        if let Some(mut control) = self.control_plugin.take() {
+            if let Err(error) = control.stop().await {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(mut capture) = self.capture_plugin.take() {
+            if let Err(error) = capture.stop().await {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
