@@ -13,3 +13,23 @@ pub struct KeyPress {
     pub usage_id: u8,
     pub modifiers: KeyModifiers,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlCapability {
+    pub supported: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControlSetupChecklist {
+    pub items: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlSessionPhase {
+    Unavailable,
+    ReadyToAdvertise,
+    Advertising,
+    Connected,
+    Error,
+}

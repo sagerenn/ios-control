@@ -15,6 +15,13 @@ pub enum FrameHealth {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoSource {
+    pub source_id: String,
+    pub display_name: String,
+    pub kind: SourceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VideoFrameDescriptor {
     pub source_id: String,
     pub source_kind: SourceKind,
