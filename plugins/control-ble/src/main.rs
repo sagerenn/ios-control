@@ -59,20 +59,15 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
                 .unwrap_or_else(|| "ble control not supported".into()),
         );
     }
-    ControlSession::ready(
-        vec![
-            "Ensure Bluetooth adapter is powered".into(),
-            "Enable iOS Bluetooth and keep the device unlocked".into(),
+    ControlSession {
+        state: ControlSessionState::Error("ble advertise/connect not implemented".into()),
+        checklist: vec![
+            "Enable Bluetooth".into(),
             "Pair the device when it appears".into(),
         ],
-        vec![
-            capability
-                .reason
-                .clone()
-                .unwrap_or_else(|| "BLE advertising/connect not implemented yet".into()),
-            "HID reports will be generated but not transmitted".into(),
-        ],
-    )
+        notes: Vec::new(),
+        pending_reports: 0,
+    }
 }
 
 fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, ControlSetupChecklist) {

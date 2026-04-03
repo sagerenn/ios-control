@@ -1,4 +1,5 @@
 use crate::backend::ControlCapability;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowsProbeResult {
@@ -49,10 +50,16 @@ impl WindowsProbeResult {
 }
 
 pub fn probe_windows_backend() -> WindowsProbeResult {
-    let radio_present = std::env::var_os("IOS_CONTROL_BLE_RADIO_PRESENT").is_some();
-    let peripheral_role_supported = match std::env::var("IOS_CONTROL_BLE_PERIPHERAL_ROLE") {
-        Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
-        Err(_) => false,
+    let radio_present = if cfg!(target_os = "windows") {
+        [
+            r"C:\Windows\System32\drivers\BthLEEnum.sys",
+            r"C:\Windows\System32\drivers\BTHport.sys",
+        ]
+        .iter()
+        .any(|path| Path::new(path).exists())
+    } else {
+        false
     };
+    let peripheral_role_supported = false;
     WindowsProbeResult::from_runtime_checks(peripheral_role_supported, radio_present)
 }

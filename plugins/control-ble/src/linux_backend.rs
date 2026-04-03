@@ -24,7 +24,7 @@ impl LinuxProbeResult {
     pub fn from_runtime_checks(
         system_bus_socket: bool,
         adapter_present: bool,
-        service_name: Option<&str>,
+        bluetoothd_present: bool,
     ) -> Self {
         if !system_bus_socket {
             return Self {
@@ -38,9 +38,11 @@ impl LinuxProbeResult {
                 reason: Some("bluetooth adapter not detected".into()),
             };
         }
-        let service_probe = Self::from_service_name(service_name);
-        if !service_probe.supported {
-            return service_probe;
+        if !bluetoothd_present {
+            return Self {
+                supported: false,
+                reason: Some("bluetooth backend tools not detected".into()),
+            };
         }
         Self {
             supported: true,
@@ -62,10 +64,16 @@ pub fn probe_linux_backend() -> LinuxProbeResult {
         .ok()
         .and_then(|mut entries| entries.next())
         .is_some();
-    let service_name = std::env::var("IOS_CONTROL_BLUEZ_SERVICE").ok();
+    let bluetoothd_present = [
+        "/usr/sbin/bluetoothd",
+        "/usr/lib/bluetooth/bluetoothd",
+        "/usr/libexec/bluetooth/bluetoothd",
+    ]
+    .iter()
+    .any(|path| Path::new(path).exists());
     LinuxProbeResult::from_runtime_checks(
         system_bus_socket,
         adapter_present,
-        service_name.as_deref(),
+        bluetoothd_present,
     )
 }
