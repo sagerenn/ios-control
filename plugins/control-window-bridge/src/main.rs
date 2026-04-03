@@ -4,6 +4,7 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
+use plugin_control_window_bridge::helper_launcher::{find_helper, helper_available, launch_helper};
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
@@ -18,11 +19,17 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
 }
 
 fn control_capability() -> ControlCapability {
+    let configured = std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER").is_some();
+    let supported = helper_available(find_helper());
     ControlCapability {
-        supported: std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER").is_some(),
-        reason: std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER")
-            .is_none()
-            .then_some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into()),
+        supported,
+        reason: if supported {
+            None
+        } else if !configured {
+            Some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into())
+        } else {
+            Some("IOS_CONTROL_WINDOW_INPUT_HELPER does not point to a file".into())
+        },
         transport: ControlTransportKind::WindowInputBridge,
     }
 }
@@ -82,16 +89,33 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ExecutePlan { plan } => {
-                let summary = match command_for_plan("window-helper-1", &plan) {
-                    Ok(command) => ExecutionSummary {
-                        summary: format!("launched window bridge helper {:?}", command.args),
-                        phase: ExecutionPhase::Succeeded,
-                        failure_reason: None,
+                let summary = match (find_helper(), command_for_plan("window-helper-1", &plan)) {
+                    (Some(helper), Ok(command)) => match launch_helper(helper, &command.args) {
+                        Ok(status) if status.success() => ExecutionSummary {
+                            summary: "window bridge helper executed".into(),
+                            phase: ExecutionPhase::Succeeded,
+                            failure_reason: None,
+                        },
+                        Ok(_) => ExecutionSummary {
+                            summary: "window bridge execution failed".into(),
+                            phase: ExecutionPhase::Failed,
+                            failure_reason: Some("helper returned non-zero exit status".into()),
+                        },
+                        Err(err) => ExecutionSummary {
+                            summary: "window bridge execution failed".into(),
+                            phase: ExecutionPhase::Failed,
+                            failure_reason: Some(err.to_string()),
+                        },
                     },
-                    Err(err) => ExecutionSummary {
+                    (_, Err(err)) => ExecutionSummary {
                         summary: "window bridge execution failed".into(),
                         phase: ExecutionPhase::Failed,
                         failure_reason: Some(err.to_string()),
+                    },
+                    (None, Ok(_)) => ExecutionSummary {
+                        summary: "window bridge execution failed".into(),
+                        phase: ExecutionPhase::Failed,
+                        failure_reason: Some("IOS_CONTROL_WINDOW_INPUT_HELPER not configured".into()),
                     },
                 };
                 write_reply(&mut stdout, &PluginToHost::ExecutionSummary { summary })?;

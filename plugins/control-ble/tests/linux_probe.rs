@@ -1,4 +1,5 @@
 use plugin_control_ble::linux_backend::{probe_linux_backend, LinuxProbeResult};
+use plugin_control_ble::helper_bridge::{BleHelperExecution, BleHelperProbe};
 use plugin_control_ble::helper_config::probe_ble_helper;
 use std::env;
 use std::sync::Mutex;
@@ -48,4 +49,25 @@ fn ble_probe_reports_helper_backed_transport() {
         capability.reason.as_deref(),
         Some("IOS_CONTROL_BLE_HELPER not configured")
     );
+}
+
+#[test]
+fn ble_helper_probe_requires_prepare_and_execute_support() {
+    let probe: BleHelperProbe = serde_json::from_str(
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
+    )
+    .unwrap();
+
+    assert!(probe.supported);
+    assert!(probe.supports_prepare);
+    assert!(probe.supports_execute);
+}
+
+#[test]
+fn ble_helper_execution_roundtrips_success() {
+    let execution: BleHelperExecution =
+        serde_json::from_str(r#"{"phase":"Succeeded","summary":"helper executed"}"#).unwrap();
+
+    assert_eq!(execution.phase, "Succeeded");
+    assert_eq!(execution.summary, "helper executed");
 }

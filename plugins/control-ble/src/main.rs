@@ -4,11 +4,13 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
+use plugin_control_ble::helper_bridge::{run_execute, run_prepare, BleHelperExecution};
 use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
 use plugin_control_ble::windows_backend::probe_windows_backend;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
 
 const PROTOCOL_VERSION: u32 = 3;
 
@@ -64,10 +66,7 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
             "Enable Bluetooth".into(),
             "Pair the device when it appears".into(),
         ],
-        vec![
-            "BLE advertising/connect not implemented yet".into(),
-            "HID reports will be generated but not transmitted".into(),
-        ],
+        vec!["BLE control path is ready for execution".into()],
     )
 }
 
@@ -82,6 +81,38 @@ fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, Contro
     let mut items = session.checklist.clone();
     items.extend(session.notes.clone());
     (phase, ControlSetupChecklist { items })
+}
+
+fn ble_helper_path_if_supported() -> Option<PathBuf> {
+    let helper = find_ble_helper()?;
+    let capability = probe_ble_helper(Some(helper.clone()));
+    capability.supported.then_some(helper)
+}
+
+fn map_execution_phase(phase: &str) -> ExecutionPhase {
+    match phase {
+        "Pending" => ExecutionPhase::Pending,
+        "Running" => ExecutionPhase::Running,
+        "Succeeded" => ExecutionPhase::Succeeded,
+        "Failed" => ExecutionPhase::Failed,
+        _ => ExecutionPhase::Failed,
+    }
+}
+
+fn summary_from_helper_execution(execution: BleHelperExecution) -> ExecutionSummary {
+    let phase = map_execution_phase(&execution.phase);
+    let failure_reason = if matches!(phase, ExecutionPhase::Failed) {
+        execution
+            .failure_reason
+            .or_else(|| Some("ble helper reported failed execution".into()))
+    } else {
+        execution.failure_reason
+    };
+    ExecutionSummary {
+        summary: execution.summary,
+        phase,
+        failure_reason,
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -126,7 +157,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             HostToPlugin::PrepareControl => {
                 let capability = probe_control_capability();
-                let snapshot = build_session_from_capability(&capability);
+                let mut snapshot = build_session_from_capability(&capability);
+                if let Some(helper) = ble_helper_path_if_supported() {
+                    if let Err(err) = run_prepare(&helper) {
+                        snapshot = ControlSession {
+                            state: ControlSessionState::Error(err.to_string()),
+                            checklist: vec![],
+                            notes: vec!["ble helper prepare failed".into()],
+                            pending_reports: 0,
+                        };
+                    }
+                }
                 let (phase, checklist) = session_to_contract(&snapshot);
                 session = Some(snapshot);
                 let reply = PluginToHost::ControlSession { phase, checklist };
@@ -151,13 +192,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                             summary.failure_reason = Some(message.clone());
                         }
                         _ => {
-                            summary.summary = format!(
-                                "execution payload for plan kind {} not implemented",
-                                plan.kind.as_str()
-                            );
-                            summary.failure_reason =
-                                Some("control execution requires a concrete action payload".into());
-                            summary.phase = ExecutionPhase::Failed;
+                            if let Some(helper) = ble_helper_path_if_supported() {
+                                match run_execute(&helper, plan.kind.as_str()) {
+                                    Ok(execution) => {
+                                        summary = summary_from_helper_execution(execution);
+                                    }
+                                    Err(err) => {
+                                        summary.summary = "ble helper execution failed".into();
+                                        summary.phase = ExecutionPhase::Failed;
+                                        summary.failure_reason = Some(err.to_string());
+                                    }
+                                }
+                            } else {
+                                summary.summary = "ble execution helper unavailable".into();
+                                summary.failure_reason = Some(
+                                    "configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support"
+                                        .into(),
+                                );
+                                summary.phase = ExecutionPhase::Failed;
+                            }
                         }
                     }
                 }
