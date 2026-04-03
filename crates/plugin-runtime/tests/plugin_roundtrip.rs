@@ -46,6 +46,29 @@ fn plugin_path(workspace_root: &Path, name: &str) -> PathBuf {
     target_dir(workspace_root).join(format!("debug/{}{}", name, std::env::consts::EXE_SUFFIX))
 }
 
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let original = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 #[tokio::test]
 async fn plugin_runtime_roundtrips_with_real_plugins() {
     let workspace_root = workspace_root();
@@ -122,6 +145,7 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     window.stop().await.unwrap();
 
     let direct_path = plugin_path(&workspace_root, "plugin-capture-direct");
+    let _helper_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &direct_path);
     let mut direct = RunningPlugin::spawn(&direct_path).await.unwrap();
     direct
         .send(&HostToPlugin::StartDirectCapture)
@@ -138,15 +162,31 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     assert_eq!(descriptor.protocol_version, 2);
     assert_eq!(descriptor.kind, PluginKind::Capture);
     assert_eq!(descriptor.display_name, "Direct Receiver");
+
     direct
-        .send(&HostToPlugin::StartDirectCapture)
+        .send(&HostToPlugin::OpenCaptureStream {
+            source_id: "direct-1".into(),
+        })
         .await
         .unwrap();
+    match direct.read().await.unwrap() {
+        PluginToHost::CaptureStreamOpened { stream } => {
+            assert_eq!(stream.source_id, "direct-1");
+            assert!(stream.slot_bytes > 0);
+        }
+        other => panic!("unexpected capture-direct stream-open response: {other:?}"),
+    }
+    direct.send(&HostToPlugin::ReadCaptureFrame).await.unwrap();
     match direct.read().await.unwrap() {
         PluginToHost::CaptureFrame { frame } => {
             assert_eq!(frame.source_id, "direct-1");
         }
-        other => panic!("unexpected capture-direct response: {other:?}"),
+        other => panic!("unexpected capture-direct read response: {other:?}"),
+    }
+    direct.send(&HostToPlugin::CloseCaptureStream).await.unwrap();
+    match direct.read().await.unwrap() {
+        PluginToHost::Ack => {}
+        other => panic!("unexpected capture-direct close response: {other:?}"),
     }
     direct.stop().await.unwrap();
 

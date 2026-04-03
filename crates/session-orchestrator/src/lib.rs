@@ -297,17 +297,38 @@ async fn request_capture_frame(
     descriptor: &PluginDescriptor,
     selected_source_id: &str,
 ) -> Result<VideoFrameDescriptor> {
-    let response = match descriptor.plugin_id.as_str() {
-        "capture.direct" => request_plugin(capture, &HostToPlugin::StartDirectCapture).await?,
-        _ => {
-            request_plugin(
-                capture,
-                &HostToPlugin::GetCaptureFrame {
-                    source_id: selected_source_id.into(),
-                },
-            )
-            .await?
+    let response = if descriptor.plugin_id == "capture.direct" {
+        match request_plugin(
+            capture,
+            &HostToPlugin::OpenCaptureStream {
+                source_id: selected_source_id.into(),
+            },
+        )
+        .await?
+        {
+            PluginToHost::CaptureStreamOpened { .. } => {}
+            other => return Err(anyhow!("unexpected capture stream response: {other:?}")),
         }
+
+        let frame = match request_plugin(capture, &HostToPlugin::ReadCaptureFrame).await? {
+            PluginToHost::CaptureFrame { frame } => frame,
+            other => return Err(anyhow!("unexpected capture frame response: {other:?}")),
+        };
+
+        match request_plugin(capture, &HostToPlugin::CloseCaptureStream).await? {
+            PluginToHost::Ack => {}
+            other => return Err(anyhow!("unexpected capture close response: {other:?}")),
+        }
+
+        return Ok(frame);
+    } else {
+        request_plugin(
+            capture,
+            &HostToPlugin::GetCaptureFrame {
+                source_id: selected_source_id.into(),
+            },
+        )
+        .await?
     };
 
     match response {
