@@ -59,6 +59,11 @@ async fn start_session_collects_mock_plugin_state() {
     assert!(state.execution_result.is_some());
     let execution = state.execution_result.as_ref().unwrap();
     assert!(!execution.applied);
+    assert_eq!(execution.attempts, 1);
+    assert_eq!(
+        execution.failure,
+        Some(ios_control_contracts::grounding::GroundingFailure::ExecutionMismatch)
+    );
     assert!(execution.summary.contains("execution payload"));
 
     let control_capability = orchestrator.capabilities.get("control.ble").unwrap();

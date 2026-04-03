@@ -6,13 +6,15 @@ use ios_control_contracts::capture::{SourceKind, VideoFrameDescriptor, VideoSour
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
 };
-use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, TargetInput};
+use ios_control_contracts::grounding::{GroundingFailure, GroundingPlan, GroundingRequest, TargetInput};
 use ios_control_contracts::plugin::{PluginDescriptor, PluginHealth};
 use ios_control_contracts::session::{DeviceSessionSummary, SessionPhase};
 use ios_control_device_registry::{DeviceRecord, DeviceRegistry};
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use ios_control_plugin_runtime::RunningPlugin;
 use ios_control_telemetry_store::{TelemetryEvent, TelemetryStore};
+use plugin_grounding_core::execution_monitor::{ExecutionDecision, ExecutionMonitor};
+use plugin_grounding_core::recovery_controller::RecoveryController;
 
 #[derive(Debug, Clone)]
 pub struct RequestedPlugins {
@@ -46,6 +48,8 @@ pub struct SessionDiagnostics {
 pub struct ExecutionResult {
     pub applied: bool,
     pub summary: String,
+    pub attempts: u8,
+    pub failure: Option<GroundingFailure>,
 }
 
 pub struct ActiveSessionState {
@@ -410,30 +414,70 @@ async fn execute_grounding_plan(
     selected_source_id: &str,
     latest_frame: &VideoFrameDescriptor,
 ) -> Result<(ExecutionResult, VideoFrameDescriptor)> {
-    let mut attempts = 0u8;
-    let mut previous_frame_index = latest_frame.frame_index;
-    let mut summary = request_plan_execution(control, plan).await?;
-    let mut frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
-    let mut screen_changed = frame.frame_index != previous_frame_index;
-
-    while summary.phase == ExecutionPhase::Succeeded && !screen_changed && attempts < 1 {
-        attempts += 1;
-        previous_frame_index = frame.frame_index;
-        summary = request_plan_execution(control, plan).await?;
-        frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
-        screen_changed = frame.frame_index != previous_frame_index;
+    if let Some(failure) = plan.failure {
+        return Ok((
+            ExecutionResult {
+                applied: false,
+                summary: format!("grounding failed before execution: {}", failure.as_str()),
+                attempts: 0,
+                failure: Some(failure),
+            },
+            latest_frame.clone(),
+        ));
     }
 
-    let applied = summary.phase == ExecutionPhase::Succeeded && screen_changed;
-    let summary_text = format_execution_summary(&summary, screen_changed, attempts);
+    let mut recovery = RecoveryController::default();
+    let mut attempts = 0u8;
+    let mut previous_frame_index = latest_frame.frame_index;
 
-    Ok((
-        ExecutionResult {
-            applied,
-            summary: summary_text,
-        },
-        frame,
-    ))
+    loop {
+        attempts += 1;
+        let summary = request_plan_execution(control, plan).await?;
+        let frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
+
+        if summary.phase != ExecutionPhase::Succeeded {
+            let summary_text = format_execution_summary(&summary, false, attempts - 1);
+            return Ok((
+                ExecutionResult {
+                    applied: false,
+                    summary: summary_text,
+                    attempts,
+                    failure: Some(GroundingFailure::ExecutionMismatch),
+                },
+                frame,
+            ));
+        }
+
+        match ExecutionMonitor::evaluate(previous_frame_index, frame.frame_index, &mut recovery) {
+            ExecutionDecision::Applied => {
+                let summary_text = format_execution_summary(&summary, true, attempts - 1);
+                return Ok((
+                    ExecutionResult {
+                        applied: true,
+                        summary: summary_text,
+                        attempts,
+                        failure: None,
+                    },
+                    frame,
+                ));
+            }
+            ExecutionDecision::Retry => {
+                previous_frame_index = frame.frame_index;
+            }
+            ExecutionDecision::Failed(failure) => {
+                let summary_text = format_execution_summary(&summary, false, attempts - 1);
+                return Ok((
+                    ExecutionResult {
+                        applied: false,
+                        summary: summary_text,
+                        attempts,
+                        failure: Some(failure),
+                    },
+                    frame,
+                ));
+            }
+        }
+    }
 }
 
 fn format_execution_summary(

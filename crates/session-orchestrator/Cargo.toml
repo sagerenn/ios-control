@@ -11,4 +11,5 @@ ios-control-device-registry = { path = "../device-registry" }
 ios-control-plugin-protocol = { path = "../plugin-protocol" }
 ios-control-plugin-runtime = { path = "../plugin-runtime" }
 ios-control-telemetry-store = { path = "../telemetry-store" }
+plugin-grounding-core = { path = "../../plugins/grounding-core" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
