@@ -22,4 +22,8 @@ impl HostRuntimeBridge {
     pub fn take_pending_start(&mut self) -> Option<String> {
         self.pending_start_device_id.take()
     }
+
+    pub fn has_pending_start(&self) -> bool {
+        self.pending_start_device_id.is_some()
+    }
 }

@@ -8,6 +8,7 @@ fn main() -> eframe::Result<()> {
             if let Ok(device_id) = std::env::var("IOS_CONTROL_PENDING_START_DEVICE") {
                 app.enable_runtime_start(&device_id);
             }
+            app.start_runtime_session_on_launch();
             Ok(Box::new(app))
         }),
     )

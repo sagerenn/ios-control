@@ -107,6 +107,21 @@ fn start_session_uses_runtime_bridge_instead_of_bootstrap_error() {
 }
 
 #[test]
+fn startup_runtime_queue_advances_start_path_on_launch() {
+    let mut app = HostDesktopApp::new();
+    app.enable_runtime_start("device-1");
+
+    app.start_runtime_session_on_launch();
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-1"));
+    assert_eq!(app.session.ui_state, SessionUiState::Starting);
+    assert_ne!(
+        app.session.ui_state,
+        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+    );
+}
+
+#[test]
 fn app_tracks_selected_workspace_separately_from_fleet_rows() {
     let mut app = HostDesktopApp::new();
     app.selected_device_id = Some("device-2".into());

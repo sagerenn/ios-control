@@ -13,19 +13,27 @@ pub async fn start_session_actor(
 }
 
 pub fn status_snapshot(active: &ActiveSessionState) -> Result<DeviceSessionStatus> {
-    let mut summary = active.summary.clone();
-    summary.phase = SessionPhase::Streaming;
-    let substate = SessionSubstate::ControlReady;
+    let summary = active.summary.clone();
+    let substate = substate_for_phase(summary.phase);
     DeviceSessionStatus::new(
         summary.clone(),
         substate,
         BackendSelection {
             capture_backend: capture_backend_for_summary(&summary),
-            control_backend: control_backend_for_active(active, &summary),
+            control_backend: control_backend_for_summary(&summary),
         },
         operator_action_for_substate(substate, &active.diagnostics.control_summary),
     )
     .map_err(|error| anyhow!(error))
+}
+
+fn substate_for_phase(phase: SessionPhase) -> SessionSubstate {
+    match phase {
+        SessionPhase::Disconnected => SessionSubstate::Stopped,
+        SessionPhase::Connecting => SessionSubstate::StartingControl,
+        SessionPhase::Streaming => SessionSubstate::ControlReady,
+        SessionPhase::Degraded => SessionSubstate::DegradedControl,
+    }
 }
 
 fn operator_action_for_substate(
@@ -47,18 +55,7 @@ fn capture_backend_for_summary(summary: &DeviceSessionSummary) -> String {
     }
 }
 
-fn control_backend_for_active(
-    active: &ActiveSessionState,
-    summary: &DeviceSessionSummary,
-) -> String {
-    if active
-        .diagnostics
-        .control_summary
-        .starts_with("control unsupported;")
-    {
-        return "control.window-bridge".into();
-    }
-
+fn control_backend_for_summary(summary: &DeviceSessionSummary) -> String {
     match summary.control_plugin.as_deref() {
         Some("control.window-bridge") => "control.window-bridge".into(),
         Some("control.ble") => "control.ble".into(),

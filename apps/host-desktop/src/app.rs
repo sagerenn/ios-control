@@ -81,6 +81,13 @@ impl HostDesktopApp {
         self.runtime.queue_start(device_id.into());
     }
 
+    pub fn start_runtime_session_on_launch(&mut self) {
+        if self.runtime.has_pending_start() {
+            self.request_start_session();
+            self.finish_pending_session_start();
+        }
+    }
+
     pub fn request_start_session(&mut self) {
         self.session = SessionViewModel::starting();
         self.device_detail.active_source_id = None;
