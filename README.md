@@ -51,7 +51,7 @@ cargo build \
 
 Expected result:
 
-- The plugin binaries are built under `target/debug`
+- The plugin binaries are built under your active Cargo target directory
 - They speak newline-delimited JSON over stdio using protocol version `2`
 
 ### 2. Run the local mock end-to-end test

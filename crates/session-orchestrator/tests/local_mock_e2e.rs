@@ -13,7 +13,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn target_dir(workspace_root: &Path) -> PathBuf {
-    match std::env::var_os("CARGO_TARGET_DIR") {
+    let mut base = match std::env::var_os("CARGO_TARGET_DIR") {
         Some(path) => {
             let path = PathBuf::from(path);
             if path.is_absolute() {
@@ -23,7 +23,13 @@ fn target_dir(workspace_root: &Path) -> PathBuf {
             }
         }
         None => workspace_root.join("target"),
+    };
+
+    if let Some(target) = std::env::var_os("CARGO_BUILD_TARGET") {
+        base.push(target);
     }
+
+    base
 }
 
 fn plugin_path(workspace_root: &Path, name: &str) -> PathBuf {
@@ -73,11 +79,20 @@ async fn local_mock_e2e_builds_streaming_session() {
         .await
         .unwrap();
 
+    // Keep this smoke test pinned to the developer flow documented in README.
     assert_eq!(state.summary.phase, SessionPhase::Streaming);
+    assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.window"));
+    assert_eq!(state.summary.control_plugin.as_deref(), Some("control.ble"));
+    assert_eq!(
+        state.summary.grounding_plugin.as_deref(),
+        Some("grounding.core")
+    );
     assert_eq!(state.selected_source_id.as_deref(), Some("window-1"));
     assert!(state.latest_frame.is_some());
-    assert!(state.summary.capture_plugin.is_some());
-    assert!(state.summary.control_plugin.is_some());
+    assert_eq!(
+        state.diagnostics.grounding_summary.as_deref(),
+        Some("selected pointer plan")
+    );
 
     state.shutdown().await.unwrap();
 }
