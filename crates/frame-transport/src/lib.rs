@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct FrameSlot {
-    file: File,
+    file: Option<File>,
     path: PathBuf,
-    mmap: MmapMut,
+    mmap: Option<MmapMut>,
     byte_len: usize,
 }
 
@@ -30,9 +30,9 @@ impl FrameSlot {
             .with_context(|| format!("failed to size frame slot at {}", path.display()))?;
         let mmap = unsafe { MmapMut::map_mut(&file)? };
         Ok(Self {
-            file,
+            file: Some(file),
             path,
-            mmap,
+            mmap: Some(mmap),
             byte_len,
         })
     }
@@ -53,15 +53,23 @@ impl FrameSlot {
                 bytes.len()
             );
         }
-        self.mmap[..bytes.len()].copy_from_slice(bytes);
+        let mmap = self
+            .mmap
+            .as_mut()
+            .expect("frame slot mapping unavailable during write");
+        mmap[..bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
 }
 
 impl Drop for FrameSlot {
     fn drop(&mut self) {
-        let _ = self.mmap.flush();
-        let _ = self.file.sync_all();
+        if let Some(mmap) = self.mmap.take() {
+            let _ = mmap.flush();
+        }
+        if let Some(file) = self.file.take() {
+            let _ = file.sync_all();
+        }
         let _ = remove_file(&self.path);
     }
 }
