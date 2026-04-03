@@ -2,7 +2,7 @@ pub use ios_control_contracts::plugin::{PluginDescriptor, PluginKind};
 
 use ios_control_contracts::capture::{VideoFrameDescriptor, VideoSource};
 use ios_control_contracts::control::{
-    ControlCapability, ControlSessionPhase, ControlSetupChecklist,
+    ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
 };
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest};
 use serde::{Deserialize, Serialize};
@@ -13,9 +13,13 @@ pub enum HostToPlugin {
     ProbeControl,
     PrepareControl,
     ListCaptureSources,
+    OpenCaptureStream { source_id: String },
+    ReadCaptureFrame,
+    CloseCaptureStream,
     GetCaptureFrame { source_id: String },
     StartDirectCapture,
     PlanGrounding { request: GroundingRequest },
+    ExecutePlan { summary: String },
     Stop,
 }
 
@@ -36,6 +40,9 @@ pub enum PluginToHost {
     },
     CaptureFrame {
         frame: VideoFrameDescriptor,
+    },
+    ExecutionSummary {
+        summary: ExecutionSummary,
     },
     GroundingPlan {
         plan: GroundingPlan,

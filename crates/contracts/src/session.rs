@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::capture::CaptureStreamPhase;
+use crate::control::ExecutionPhase;
 use crate::plugin::PluginHealth;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +21,12 @@ pub struct DeviceSessionSummary {
     pub capture_plugin: Option<String>,
     pub control_plugin: Option<String>,
     pub grounding_plugin: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveSessionStatus {
+    pub capture_phase: CaptureStreamPhase,
+    pub execution_phase: Option<ExecutionPhase>,
 }
 
 impl DeviceSessionSummary {

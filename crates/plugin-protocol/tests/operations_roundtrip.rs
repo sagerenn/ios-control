@@ -1,3 +1,4 @@
+use ios_control_contracts::capture::VideoFrameDescriptor;
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, PlanKind, TargetInput};
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 
@@ -30,6 +31,31 @@ fn host_to_plugin_roundtrips_operational_messages() {
         },
     };
 
+    let response_json = serde_json::to_string(&response).unwrap();
+    let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(decoded_response, response);
+}
+
+#[test]
+fn capture_stream_messages_roundtrip() {
+    let request = HostToPlugin::OpenCaptureStream {
+        source_id: "window-1".into(),
+    };
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, request);
+
+    let response = PluginToHost::CaptureFrame {
+        frame: VideoFrameDescriptor {
+            source_id: "window-1".into(),
+            source_kind: ios_control_contracts::capture::SourceKind::Window,
+            width: 1280,
+            height: 720,
+            rotation_degrees: 0,
+            frame_index: 7,
+            health: ios_control_contracts::capture::FrameHealth::Healthy,
+        },
+    };
     let response_json = serde_json::to_string(&response).unwrap();
     let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
     assert_eq!(decoded_response, response);

@@ -33,3 +33,18 @@ pub enum ControlSessionPhase {
     Connected,
     Error,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionPhase {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionSummary {
+    pub summary: String,
+    pub phase: ExecutionPhase,
+    pub failure_reason: Option<String>,
+}
