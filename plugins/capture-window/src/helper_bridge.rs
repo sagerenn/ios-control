@@ -24,8 +24,18 @@ pub struct HelperFrameEvent {
 const HELPER_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+fn helper_command(helper: &Path) -> Command {
+    if helper.extension().and_then(|ext| ext.to_str()) == Some("sh") {
+        let mut command = Command::new("/bin/sh");
+        command.arg(helper);
+        return command;
+    }
+
+    Command::new(helper)
+}
+
 pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
-    let mut child = Command::new(helper)
+    let mut child = helper_command(helper)
         .arg("probe")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -69,7 +79,7 @@ pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
 }
 
 pub fn read_next_frame_event(helper: &Path, source_id: &str) -> Result<HelperFrameEvent> {
-    let mut child = Command::new(helper)
+    let mut child = helper_command(helper)
         .args(["stream", "--source", source_id])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
