@@ -69,6 +69,17 @@ Expected result:
 - The active session reports `capture.window`, `control.ble`, and `grounding.core`
 - The test proves capture/session wiring and shuts the session down cleanly
 
+## E2E config
+
+Current local E2E is configuration-light, but these inputs matter:
+
+- `DISPLAY` or `WAYLAND_DISPLAY`:
+  Used by the window-capture runtime probe. For the current orchestrator-backed mock flow, the test harness injects a display signal for you. For manual local experiments outside the tests, you need a real desktop session or an equivalent display env var.
+- `IOS_CONTROL_DIRECT_RECEIVER_HELPER`:
+  Used by the direct-capture stream path. It must point to an existing executable. The current verified local E2E flow does not require it because it uses `plugin-capture-window`, not `plugin-capture-direct`.
+- `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET`:
+  The test/support helpers honor these when locating built plugin binaries. If you override them locally, keep your plugin builds and test runs consistent.
+
 ### 3. Run the desktop shell
 
 ```bash
@@ -93,6 +104,20 @@ python3 scripts/assert_ci_release.py full
 Real-device end-to-end validation is not yet complete on this branch. The only verified flow today is the local mock plugin-backed session described above. Use the acceptance matrix below to track current, verified status and gaps.
 
 See `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md` for the operator-facing matrix and validation checklist.
+
+## GitHub workflow
+
+The repository uses one workflow at `.github/workflows/ci-release.yml`.
+
+Behavior by event:
+
+- `pull_request`:
+  Runs native validation only on Linux and Windows.
+  It does not run the full release matrix, package release archives, or publish GitHub releases.
+- `push` to `main`:
+  Runs native validation, the full release build matrix, release packaging, artifact upload, and rolling release publishing.
+- `push` of `v*` tags:
+  Runs native validation, the full release build matrix, release packaging, artifact upload, and versioned release publishing.
 
 ## Release packaging
 
