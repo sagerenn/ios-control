@@ -454,11 +454,19 @@ async fn execute_grounding_plan(
                 ExecutionResult {
                     applied: false,
                     observed_change: false,
-                    phase: summary.phase,
+                    phase: ExecutionPhase::Failed,
                     summary: summary_text,
                     attempts,
                     grounding_failure: None,
-                    failure_reason: summary.failure_reason.clone(),
+                    failure_reason: Some(
+                        summary
+                            .failure_reason
+                            .clone()
+                            .unwrap_or_else(|| {
+                                "async execution progress is not yet supported in the orchestrator"
+                                    .into()
+                            }),
+                    ),
                 },
                 latest_frame.clone(),
             ));
@@ -486,13 +494,16 @@ async fn execute_grounding_plan(
                 let summary_text = format_execution_summary(&summary, true, attempts - 1);
                 return Ok((
                     ExecutionResult {
-                        applied: true,
+                        applied: false,
                         observed_change: true,
                         phase: ExecutionPhase::Succeeded,
                         summary: summary_text,
                         attempts,
                         grounding_failure: None,
-                        failure_reason: None,
+                        failure_reason: Some(
+                            "frame advanced after execution, but action effect is not yet confirmed"
+                                .into(),
+                        ),
                     },
                     frame,
                 ));
