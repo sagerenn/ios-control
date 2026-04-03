@@ -6,7 +6,7 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginToHost};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 pub struct PluginRuntime;
 

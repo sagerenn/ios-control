@@ -1,4 +1,4 @@
-use ios_control_contracts::capture::{CaptureStreamDescriptor, SourceKind};
+use ios_control_contracts::capture::{CaptureCapability, CaptureStreamDescriptor, SourceKind};
 use ios_control_frame_transport::FrameSlot;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
@@ -9,7 +9,7 @@ use plugin_capture_direct::backend::{
 };
 use plugin_capture_direct::helper_launcher::find_helper;
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
 const SLOT_BYTES: u32 = DIRECT_WIDTH * DIRECT_HEIGHT * 4;
 
@@ -60,6 +60,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let reply = PluginToHost::Error {
                     message: "handshake required for capture-direct plugin".into(),
                 };
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::ProbeCapture => {
+                let capability = CaptureCapability {
+                    available: find_helper().is_some(),
+                    reason: if find_helper().is_some() {
+                        None
+                    } else {
+                        Some("direct receiver helper not configured".into())
+                    },
+                    backend_id: "capture.direct".into(),
+                    supports_input_bridge: false,
+                };
+                let reply = PluginToHost::CaptureCapability { capability };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::OpenCaptureStream { source_id } => {

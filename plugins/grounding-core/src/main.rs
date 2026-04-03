@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 use plugin_grounding_core::action_selector::ActionSelector;
 use plugin_grounding_core::focus_tracker::FocusTracker;
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<dyn Error>> {
     let payload = serde_json::to_string(reply)?;

@@ -1,6 +1,6 @@
 use ios_control_contracts::control::{
-    ControlCapability as ContractControlCapability, ControlSessionPhase,
-    ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
+    ControlCapability as ContractControlCapability, ControlSessionPhase, ControlSetupChecklist,
+    ControlTransportKind, ExecutionPhase, ExecutionSummary,
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
@@ -9,7 +9,7 @@ use plugin_control_ble::windows_backend::probe_windows_backend;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<dyn Error>> {
     let payload = serde_json::to_string(reply)?;
@@ -36,6 +36,7 @@ fn to_contract_capability(capability: &ControlCapability) -> ContractControlCapa
     ContractControlCapability {
         supported: capability.supported,
         reason: capability.reason.clone(),
+        transport: ControlTransportKind::BleHid,
     }
 }
 
@@ -49,7 +50,10 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
         );
     }
     ControlSession::ready(
-        vec!["Enable Bluetooth".into(), "Pair the device when it appears".into()],
+        vec![
+            "Enable Bluetooth".into(),
+            "Pair the device when it appears".into(),
+        ],
         vec![
             "BLE advertising/connect not implemented yet".into(),
             "HID reports will be generated but not transmitted".into(),
@@ -67,12 +71,7 @@ fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, Contro
     };
     let mut items = session.checklist.clone();
     items.extend(session.notes.clone());
-    (
-        phase,
-        ControlSetupChecklist {
-            items,
-        },
-    )
+    (phase, ControlSetupChecklist { items })
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

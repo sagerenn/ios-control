@@ -1,7 +1,7 @@
 pub use ios_control_contracts::plugin::{PluginDescriptor, PluginKind};
 
 use ios_control_contracts::capture::{
-    CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
+    CaptureCapability, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
 };
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HostToPlugin {
     Handshake { protocol_version: u32 },
+    ProbeCapture,
     ProbeControl,
     PrepareControl,
     ListCaptureSources,
@@ -29,6 +30,9 @@ pub enum HostToPlugin {
 pub enum PluginToHost {
     HandshakeAck {
         descriptor: PluginDescriptor,
+    },
+    CaptureCapability {
+        capability: CaptureCapability,
     },
     ControlCapability {
         capability: ControlCapability,

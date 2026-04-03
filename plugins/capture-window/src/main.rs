@@ -1,8 +1,8 @@
 use ios_control_contracts::capture::{
-    CaptureStreamDescriptor, FrameHealth, SourceKind, VideoSource,
+    CaptureCapability, CaptureStreamDescriptor, FrameHealth, SourceKind, VideoSource,
 };
-use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use ios_control_frame_transport::FrameSlot;
+use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
 use std::io::{self, BufRead, Write};
 
@@ -10,7 +10,7 @@ use plugin_capture_window::backend::{allocate_mock_slot, mock_frame, mock_frame_
 use plugin_capture_window::linux_backend::probe_linux_capture;
 use plugin_capture_window::windows_backend::probe_windows_capture;
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "window-1";
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
 
@@ -60,6 +60,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let reply = PluginToHost::Error {
                     message: "handshake required for capture-window plugin".into(),
                 };
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::ProbeCapture => {
+                let capability = CaptureCapability {
+                    available: probe_linux_capture() || probe_windows_capture(),
+                    reason: if probe_linux_capture() || probe_windows_capture() {
+                        None
+                    } else {
+                        Some("window capture backend unavailable".into())
+                    },
+                    backend_id: "capture.window".into(),
+                    supports_input_bridge: true,
+                };
+                let reply = PluginToHost::CaptureCapability { capability };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::ListCaptureSources => {
