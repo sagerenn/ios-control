@@ -23,6 +23,7 @@ Use this checklist when validating a new real-device flow. Each item should be r
 5. Live control: confirm keyboard entry and pointer/tap actions are reflected on device.
 6. Recovery: verify stop/start session recovery and reconnection behavior after a simulated disconnect.
 7. Record host OS, helper used, device model, and exact verified outcome before changing any matrix row to `Verified`.
+8. Use `docs/validation/real-device-session-template.md` as the baseline log for each manual validation run.
 
 ## Not Yet Verified / Not Yet Supported
 

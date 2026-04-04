@@ -191,6 +191,7 @@ python3 scripts/assert_ci_release.py full
 Real-device end-to-end validation is not yet complete on this branch. The only verified flow today is the local mock plugin-backed session described above. Use the acceptance matrix below to track current, verified status and gaps.
 
 See `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md` for the operator-facing matrix and validation checklist.
+Use `docs/validation/real-device-session-template.md` when recording a new manual real-device run.
 
 ## GitHub workflow
 

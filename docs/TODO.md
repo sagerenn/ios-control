@@ -58,6 +58,7 @@ Plan: `docs/superpowers/plans/2026-04-04-host-runtime-and-operator-workflow.md`
 
 Plan: `docs/superpowers/plans/2026-04-04-real-device-validation-and-doc-alignment.md`
 
+- Record each manual validation run with `docs/validation/real-device-session-template.md`.
 - Run and record manual validation for:
   - Linux + window capture + BLE HID
   - Linux + window capture + window-input fallback
