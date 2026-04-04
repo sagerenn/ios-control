@@ -1433,6 +1433,7 @@ dependencies = [
  "eframe",
  "egui",
  "ios-control-contracts",
+ "ios-control-frame-transport",
  "ios-control-session-orchestrator",
  "tokio",
 ]

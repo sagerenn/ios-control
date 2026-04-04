@@ -8,5 +8,6 @@ anyhow = "1"
 eframe = "0.31"
 egui = "0.31"
 ios-control-contracts = { path = "../../crates/contracts" }
+ios-control-frame-transport = { path = "../../crates/frame-transport" }
 ios-control-session-orchestrator = { path = "../../crates/session-orchestrator" }
 tokio = { version = "1", features = ["rt-multi-thread"] }

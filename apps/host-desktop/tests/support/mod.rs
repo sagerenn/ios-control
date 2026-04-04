@@ -1,7 +1,10 @@
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 
+use ios_control_frame_transport::FrameSlot;
 use ios_control_session_orchestrator::PluginPaths;
 
 static RUNTIME_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -120,4 +123,12 @@ pub fn prepare_window_runtime_env(workspace_root: &Path) -> EnvVarGuards {
             plugin_path(workspace_root, "plugin-control-window-bridge"),
         ),
     ])
+}
+
+pub fn write_slot_bytes(bytes: &[u8]) -> String {
+    let mut slot = FrameSlot::new(bytes.len()).expect("slot should be created");
+    slot.write(bytes).expect("slot bytes should be written");
+    let path = slot.path().display().to_string();
+    std::mem::forget(slot);
+    path
 }

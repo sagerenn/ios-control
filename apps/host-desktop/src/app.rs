@@ -6,6 +6,7 @@ use crate::panels::device_detail::{
 };
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
+use crate::preview::color_image_from_slot;
 use crate::runtime::{
     HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
 };
@@ -23,6 +24,7 @@ pub struct HostDesktopApp {
     pub runtime: HostRuntimeBridge,
     host_runtime: Option<HostRuntime>,
     runtime_workspace: Option<RuntimeWorkspaceState>,
+    preview_texture: Option<egui::TextureHandle>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -40,6 +42,7 @@ impl HostDesktopApp {
             runtime: HostRuntimeBridge::default(),
             host_runtime: None,
             runtime_workspace: None,
+            preview_texture: None,
             dashboard: DashboardViewModel {
                 total_devices: 1,
                 degraded_devices: 0,
@@ -188,6 +191,7 @@ impl HostDesktopApp {
             let _ = host_runtime.stop_session(device_id);
             self.runtime.replace_statuses(Vec::new());
             self.runtime_workspace = None;
+            self.preview_texture = None;
             self.available_device_ids.clear();
             self.selected_device_id = None;
             self.fleet = FleetViewModel { rows: Vec::new() };
@@ -218,6 +222,7 @@ impl HostDesktopApp {
     fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
         let statuses = snapshot.statuses.clone();
         self.runtime_workspace = Some(snapshot.workspace.clone());
+        self.preview_texture = None;
         self.runtime.replace_statuses(statuses.clone());
         self.sync_from_runtime();
         self.available_device_ids = statuses
@@ -422,6 +427,31 @@ impl HostDesktopApp {
             SessionSubstate::Stopped => SessionViewModel::idle(),
         };
     }
+
+    fn sync_preview_texture(&mut self, ctx: &egui::Context) {
+        let Some(workspace) = self.runtime_workspace.as_ref() else {
+            self.preview_texture = None;
+            return;
+        };
+        let Some(stream) = workspace.capture_stream.as_ref() else {
+            self.preview_texture = None;
+            return;
+        };
+        let Ok(image) = color_image_from_slot(stream) else {
+            self.preview_texture = None;
+            return;
+        };
+
+        if let Some(texture) = self.preview_texture.as_mut() {
+            texture.set(image, egui::TextureOptions::LINEAR);
+        } else {
+            self.preview_texture = Some(ctx.load_texture(
+                "session-preview",
+                image,
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+    }
 }
 
 fn capture_source_for_backend(backend: &str) -> CaptureSourceOption {
@@ -438,6 +468,8 @@ impl eframe::App for HostDesktopApp {
         let mut selected_device = None;
         let mut device_detail_action = DeviceDetailAction::None;
 
+        self.sync_preview_texture(ctx);
+
         egui::CentralPanel::default().show(ctx, |ui| {
             selected_device = dashboard::render(
                 ui,
@@ -448,7 +480,7 @@ impl eframe::App for HostDesktopApp {
             ui.separator();
             device_detail_action = device_detail::render(ui, &self.device_detail);
             ui.separator();
-            pending_action = session_view::render(ui, &self.session);
+            pending_action = session_view::render(ui, &self.session, self.preview_texture.as_ref());
             ui.separator();
             let diagnostic_message = match &self.diagnostics.host_error {
                 Some(error) => format!("{} | {}", self.diagnostics.grounding_summary, error),

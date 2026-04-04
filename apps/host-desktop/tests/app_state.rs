@@ -150,6 +150,7 @@ fn host_app_start_session_uses_real_runtime_snapshot() {
         fixture.app.diagnostics.host_error.as_deref(),
         Some("Session bootstrap is not wired to the runtime yet")
     );
+    assert!(!fixture.app.device_detail.capture_sources.is_empty());
 }
 
 #[test]

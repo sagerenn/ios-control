@@ -1,4 +1,4 @@
-use egui::Ui;
+use egui::{TextureHandle, Ui};
 use ios_control_contracts::capture::VideoFrameDescriptor;
 
 use crate::view_models::session::{SessionUiState, SessionViewModel};
@@ -10,7 +10,11 @@ pub enum SessionAction {
     Stop,
 }
 
-pub fn render(ui: &mut Ui, view_model: &SessionViewModel) -> SessionAction {
+pub fn render(
+    ui: &mut Ui,
+    view_model: &SessionViewModel,
+    texture: Option<&TextureHandle>,
+) -> SessionAction {
     let mut action = SessionAction::None;
 
     ui.heading("Session View");
@@ -36,7 +40,9 @@ pub fn render(ui: &mut Ui, view_model: &SessionViewModel) -> SessionAction {
             if let Some(source) = &view_model.selected_source {
                 ui.label(format!("Source: {}", source.label()));
             }
-            if let Some(frame) = &view_model.latest_frame {
+            if let Some(texture) = texture {
+                ui.image(texture);
+            } else if let Some(frame) = &view_model.latest_frame {
                 render_frame_summary(ui, frame);
             }
         }

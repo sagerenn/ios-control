@@ -1,4 +1,5 @@
 pub mod app;
+pub mod preview;
 pub mod runtime;
 pub mod panels {
     pub mod dashboard;
