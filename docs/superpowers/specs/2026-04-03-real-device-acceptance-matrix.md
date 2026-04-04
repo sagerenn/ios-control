@@ -26,6 +26,8 @@ Use this checklist when validating a new real-device flow. Each item should be r
 8. Use `docs/validation/real-device-session-template.md` as the baseline log for each manual validation run.
 9. Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/` and link it from the matrix update.
 
+When a non-mock row becomes `Verified`, include the matching `docs/validation/...` link in the row update so the evidence is visible from the matrix itself.
+
 ## Not Yet Verified / Not Yet Supported
 
 These combinations are tracked separately because they are not currently verified on this branch:

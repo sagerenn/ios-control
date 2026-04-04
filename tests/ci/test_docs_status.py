@@ -39,3 +39,6 @@ class DocsStatusTests(unittest.TestCase):
             "Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/`",
             matrix,
         )
+        for line in matrix.splitlines():
+            if "| Verified |" in line and "Local mock flow" not in line:
+                self.assertIn("docs/validation/", line)
