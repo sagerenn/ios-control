@@ -117,6 +117,17 @@ fn direct_helper_frame_event_requires_slot_fill_metadata() {
     assert_eq!(event.fill_byte, 64);
 }
 
+#[test]
+fn direct_helper_frame_event_decodes_rgba_payload() {
+    let event: HelperFrameEvent = serde_json::from_str(
+        r#"{"frame_index":3,"width":2,"height":1,"rgba_base64":"AP8A/w=="}"#,
+    )
+    .unwrap();
+
+    assert_eq!(event.frame_index, 3);
+    assert_eq!(event.decode_rgba().unwrap(), vec![0, 255, 0, 255]);
+}
+
 #[cfg(unix)]
 #[test]
 fn direct_probe_rejects_incompatible_helper_contract() {

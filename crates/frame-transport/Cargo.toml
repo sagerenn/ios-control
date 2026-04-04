@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+# Shared frame slots need both writable and read-only mmap access.
 memmap2 = "0.9"

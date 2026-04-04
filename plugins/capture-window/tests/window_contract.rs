@@ -154,6 +154,19 @@ fn window_helper_frame_event_roundtrips_frame_metadata() {
 }
 
 #[test]
+fn helper_frame_event_decodes_rgba_payload() {
+    let event: HelperFrameEvent = serde_json::from_str(
+        r#"{"frame_index":7,"width":2,"height":1,"rgba_base64":"AP8A/w=="}"#,
+    )
+    .unwrap();
+
+    assert_eq!(event.frame_index, 7);
+    assert_eq!(event.width, 2);
+    assert_eq!(event.height, 1);
+    assert_eq!(event.decode_rgba().unwrap(), vec![0, 255, 0, 255]);
+}
+
+#[test]
 fn linux_capture_probe_requires_helper_configuration() {
     let _guard = ENV_LOCK.lock().unwrap();
     let old_helper = env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER");

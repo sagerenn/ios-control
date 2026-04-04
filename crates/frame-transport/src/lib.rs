@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use memmap2::MmapMut;
+use memmap2::{Mmap, MmapMut};
 use std::fs::{remove_file, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -62,6 +62,39 @@ impl FrameSlot {
     }
 }
 
+pub struct FrameSlotReader {
+    file: File,
+    mmap: Mmap,
+    byte_len: usize,
+}
+
+impl FrameSlotReader {
+    pub fn open(path: &Path, byte_len: usize) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(path)
+            .with_context(|| format!("failed to open frame slot at {}", path.display()))?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        if mmap.len() < byte_len {
+            bail!(
+                "frame slot too small: expected at least {}, got {}",
+                byte_len,
+                mmap.len()
+            );
+        }
+        Ok(Self {
+            file,
+            mmap,
+            byte_len,
+        })
+    }
+
+    pub fn read(&self) -> &[u8] {
+        let _ = &self.file;
+        &self.mmap[..self.byte_len]
+    }
+}
+
 impl Drop for FrameSlot {
     fn drop(&mut self) {
         if let Some(mmap) = self.mmap.take() {
@@ -76,7 +109,7 @@ impl Drop for FrameSlot {
 
 #[cfg(test)]
 mod tests {
-    use super::FrameSlot;
+    use super::{FrameSlot, FrameSlotReader};
 
     #[test]
     fn write_accepts_exact_size() {
@@ -89,5 +122,14 @@ mod tests {
         let mut slot = FrameSlot::new(4).unwrap();
         assert!(slot.write(&[1, 2, 3]).is_err());
         assert!(slot.write(&[1, 2, 3, 4, 5]).is_err());
+    }
+
+    #[test]
+    fn frame_slot_reader_reads_exact_rgba_bytes() {
+        let mut slot = FrameSlot::new(8).unwrap();
+        slot.write(&[255, 0, 0, 255, 0, 255, 0, 255]).unwrap();
+
+        let reader = FrameSlotReader::open(slot.path(), 8).unwrap();
+        assert_eq!(reader.read(), &[255, 0, 0, 255, 0, 255, 0, 255]);
     }
 }
