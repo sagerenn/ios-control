@@ -2,10 +2,13 @@ use ios_control_contracts::session::SessionSubstate;
 use ios_control_session_orchestrator::{PluginPaths, SessionSupervisor, StartSessionRequest};
 
 mod support;
-use support::{build_plugins, plugin_path, prepare_window_runtime_env, workspace_root};
+use support::{
+    build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+};
 
 #[tokio::test]
 async fn supervisor_falls_back_when_ble_backend_is_unavailable() {
+    let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
     let _display_guard = prepare_window_runtime_env(&root);

@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
+
+static RUNTIME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct EnvVarGuard {
     key: &'static str,
@@ -40,6 +43,10 @@ pub fn workspace_root() -> PathBuf {
         .and_then(Path::parent)
         .unwrap()
         .to_path_buf()
+}
+
+pub fn runtime_env_lock() -> MutexGuard<'static, ()> {
+    RUNTIME_ENV_LOCK.lock().expect("runtime env lock poisoned")
 }
 
 pub fn target_dir(workspace_root: &Path) -> PathBuf {

@@ -3,10 +3,13 @@ use ios_control_contracts::session::SessionPhase;
 use ios_control_session_orchestrator::{PluginPaths, SessionOrchestrator, StartSessionRequest};
 
 mod support;
-use support::{build_plugins, plugin_path, prepare_window_runtime_env, workspace_root};
+use support::{
+    build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+};
 
 #[tokio::test]
 async fn start_session_collects_mock_plugin_state() {
+    let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
     let _display_guard = prepare_window_runtime_env(&root);
@@ -108,6 +111,7 @@ async fn start_session_collects_mock_plugin_state() {
 
 #[tokio::test]
 async fn start_session_failure_does_not_persist_partial_state() {
+    let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
     let _display_guard = prepare_window_runtime_env(&root);

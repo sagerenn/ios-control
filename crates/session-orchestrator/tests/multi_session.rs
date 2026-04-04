@@ -1,10 +1,13 @@
 use ios_control_session_orchestrator::{PluginPaths, SessionSupervisor, StartSessionRequest};
 
 mod support;
-use support::{build_plugins, plugin_path, prepare_window_runtime_env, workspace_root};
+use support::{
+    build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+};
 
 #[tokio::test]
 async fn supervisor_keeps_sessions_isolated_across_multiple_devices() {
+    let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
     let _display_guard = prepare_window_runtime_env(&root);
@@ -47,6 +50,7 @@ async fn supervisor_keeps_sessions_isolated_across_multiple_devices() {
 
 #[tokio::test]
 async fn supervisor_retains_active_sessions_after_status_reads() {
+    let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
     let _helper_guard = prepare_window_runtime_env(&root);
