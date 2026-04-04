@@ -3,6 +3,13 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "iOS Control Host",
         options,
-        Box::new(|_cc| Ok(Box::new(host_desktop::app::HostDesktopApp::new()))),
+        Box::new(|_cc| {
+            let mut app = host_desktop::app::HostDesktopApp::new();
+            if let Ok(device_id) = std::env::var("IOS_CONTROL_PENDING_START_DEVICE") {
+                app.enable_runtime_start(&device_id);
+            }
+            app.start_runtime_session_on_launch();
+            Ok(Box::new(app))
+        }),
     )
 }

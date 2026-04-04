@@ -22,6 +22,7 @@ Use this checklist when validating a new real-device flow. Each item should be r
 4. Live preview: confirm a stable stream of frames with correct orientation and reasonable latency.
 5. Live control: confirm keyboard entry and pointer/tap actions are reflected on device.
 6. Recovery: verify stop/start session recovery and reconnection behavior after a simulated disconnect.
+7. Record host OS, helper used, device model, and exact verified outcome before changing any matrix row to `Verified`.
 
 ## Not Yet Verified / Not Yet Supported
 

@@ -7,7 +7,9 @@ use ios_control_contracts::capture::{SourceKind, VideoFrameDescriptor, VideoSour
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
 };
-use ios_control_contracts::grounding::{GroundingFailure, GroundingPlan, GroundingRequest, TargetInput};
+use ios_control_contracts::grounding::{
+    GroundingFailure, GroundingPlan, GroundingRequest, TargetInput,
+};
 use ios_control_contracts::plugin::{PluginDescriptor, PluginHealth};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary, SessionPhase};
 use ios_control_device_registry::{DeviceRecord, DeviceRegistry};
@@ -95,7 +97,9 @@ pub struct SessionOrchestrator {
 
 #[derive(Debug, Default)]
 pub struct SessionSupervisor {
+    orchestrator: SessionOrchestrator,
     sessions: BTreeMap<String, DeviceSessionStatus>,
+    active: BTreeMap<String, ActiveSessionState>,
 }
 
 impl SessionOrchestrator {
@@ -161,39 +165,44 @@ impl SessionOrchestrator {
             message: format!("control prepared: {control_phase:?}"),
         });
 
-        let (grounding_plugin_id, grounding_summary, grounding_plugin, execution_result, latest_frame) =
-            if let Some(path) = request.plugin_paths.grounding.as_ref() {
-                let mut grounding = RunningPlugin::spawn(path).await?;
-                let grounding_descriptor = grounding.handshake().await?;
-                let plan = request_grounding_plan(&mut grounding).await?;
-                let (execution_result, latest_frame) = execute_grounding_plan(
-                    &mut capture,
-                    &capture_descriptor,
-                    &mut control,
-                    &plan,
-                    &selected_source_id,
-                    &latest_frame,
-                )
-                .await?;
-                staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
-                staged_telemetry.push(TelemetryEvent {
-                    session_id: session_id.clone(),
-                    message: format!("grounding planned: {}", plan.summary),
-                });
-                staged_telemetry.push(TelemetryEvent {
-                    session_id: session_id.clone(),
-                    message: format!("execution result: {}", execution_result.summary),
-                });
-                (
-                    Some(grounding_descriptor.plugin_id),
-                    Some(plan.summary),
-                    Some(grounding),
-                    Some(execution_result),
-                    Some(latest_frame),
-                )
-            } else {
-                (None, None, None, None, Some(latest_frame))
-            };
+        let (
+            grounding_plugin_id,
+            grounding_summary,
+            grounding_plugin,
+            execution_result,
+            latest_frame,
+        ) = if let Some(path) = request.plugin_paths.grounding.as_ref() {
+            let mut grounding = RunningPlugin::spawn(path).await?;
+            let grounding_descriptor = grounding.handshake().await?;
+            let plan = request_grounding_plan(&mut grounding).await?;
+            let (execution_result, latest_frame) = execute_grounding_plan(
+                &mut capture,
+                &capture_descriptor,
+                &mut control,
+                &plan,
+                &selected_source_id,
+                &latest_frame,
+            )
+            .await?;
+            staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
+            staged_telemetry.push(TelemetryEvent {
+                session_id: session_id.clone(),
+                message: format!("grounding planned: {}", plan.summary),
+            });
+            staged_telemetry.push(TelemetryEvent {
+                session_id: session_id.clone(),
+                message: format!("execution result: {}", execution_result.summary),
+            });
+            (
+                Some(grounding_descriptor.plugin_id),
+                Some(plan.summary),
+                Some(grounding),
+                Some(execution_result),
+                Some(latest_frame),
+            )
+        } else {
+            (None, None, None, None, Some(latest_frame))
+        };
 
         let mut plugin_health = if control_capability.supported {
             PluginHealth::Healthy
@@ -274,14 +283,25 @@ impl SessionSupervisor {
         &mut self,
         request: StartSessionRequest,
     ) -> Result<DeviceSessionStatus> {
-        let status = session_actor::start_session_actor(request).await?;
-        self.sessions
-            .insert(status.summary().device_id.clone(), status.clone());
+        let device_id = request.device_id.clone();
+        let active = session_actor::start_session_actor(&mut self.orchestrator, request).await?;
+        let status = session_actor::status_snapshot(&active)?;
+
+        if let Some(previous) = self.active.remove(&device_id) {
+            previous.shutdown().await?;
+        }
+
+        self.active.insert(device_id.clone(), active);
+        self.sessions.insert(device_id, status.clone());
         Ok(status)
     }
 
     pub fn session_statuses(&self) -> &BTreeMap<String, DeviceSessionStatus> {
         &self.sessions
+    }
+
+    pub fn active_sessions(&self) -> &BTreeMap<String, ActiveSessionState> {
+        &self.active
     }
 }
 
@@ -473,7 +493,10 @@ async fn execute_grounding_plan(
     loop {
         attempts += 1;
         let summary = request_plan_execution(control, plan).await?;
-        if matches!(summary.phase, ExecutionPhase::Pending | ExecutionPhase::Running) {
+        if matches!(
+            summary.phase,
+            ExecutionPhase::Pending | ExecutionPhase::Running
+        ) {
             let summary_text = format_execution_summary(&summary, false, attempts - 1);
             return Ok((
                 ExecutionResult {
@@ -483,15 +506,9 @@ async fn execute_grounding_plan(
                     summary: summary_text,
                     attempts,
                     grounding_failure: None,
-                    failure_reason: Some(
-                        summary
-                            .failure_reason
-                            .clone()
-                            .unwrap_or_else(|| {
-                                "async execution progress is not yet supported in the orchestrator"
-                                    .into()
-                            }),
-                    ),
+                    failure_reason: Some(summary.failure_reason.clone().unwrap_or_else(|| {
+                        "async execution progress is not yet supported in the orchestrator".into()
+                    })),
                 },
                 latest_frame.clone(),
             ));

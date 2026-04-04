@@ -19,7 +19,10 @@ fn host_app_boots_into_an_honest_idle_session_shell() {
     );
     assert_eq!(
         app.device_detail.capture_sources,
-        vec![CaptureSourceOption::new("window:mock", "Mock iPhone Mirror")]
+        vec![CaptureSourceOption::new(
+            "window:mock",
+            "Mock iPhone Mirror"
+        )]
     );
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
     assert!(app.session.selected_source.is_none());
@@ -27,7 +30,11 @@ fn host_app_boots_into_an_honest_idle_session_shell() {
     assert_eq!(app.diagnostics.host_error, None);
     assert_eq!(app.diagnostics.control_summary, "control not started");
     assert_eq!(app.diagnostics.grounding_summary, "grounding idle");
-    assert!(app.settings.plugin_rows.iter().any(|row| row.contains("control.ble")));
+    assert!(app
+        .settings
+        .plugin_rows
+        .iter()
+        .any(|row| row.contains("control.ble")));
 }
 
 #[test]
@@ -83,6 +90,35 @@ fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
     );
     assert!(app.diagnostics.control_summary.contains("blocked"));
     assert!(app.diagnostics.grounding_summary.contains("blocked"));
+}
+
+#[test]
+fn start_session_uses_runtime_bridge_instead_of_bootstrap_error() {
+    let mut app = HostDesktopApp::new();
+    app.enable_runtime_start("device-1");
+
+    app.request_start_session();
+    app.finish_pending_session_start();
+
+    assert_ne!(
+        app.session.ui_state,
+        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+    );
+}
+
+#[test]
+fn startup_runtime_queue_advances_start_path_on_launch() {
+    let mut app = HostDesktopApp::new();
+    app.enable_runtime_start("device-1");
+
+    app.start_runtime_session_on_launch();
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-1"));
+    assert_eq!(app.session.ui_state, SessionUiState::Starting);
+    assert_ne!(
+        app.session.ui_state,
+        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+    );
 }
 
 #[test]
@@ -203,5 +239,8 @@ fn selecting_a_device_updates_workspace_and_operator_error() {
         app.diagnostics.host_error.as_deref(),
         Some("reconnect mirror helper")
     );
-    assert!(app.diagnostics.control_summary.contains("control.window-bridge"));
+    assert!(app
+        .diagnostics
+        .control_summary
+        .contains("control.window-bridge"));
 }

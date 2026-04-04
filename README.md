@@ -137,7 +137,7 @@ cargo build \
 Expected result:
 
 - The plugin binaries are built under your active Cargo target directory
-- They speak newline-delimited JSON over stdio using protocol version `2`
+- They speak newline-delimited JSON over stdio using protocol version `3`
 
 ### 2. Run the local mock end-to-end test
 
@@ -150,7 +150,7 @@ cargo test -p ios-control-session-orchestrator \
 Expected result:
 
 - `SessionOrchestrator::start_session_with_plugins(...)` reaches a plugin-backed session and currently ends in `SessionPhase::Degraded`
-- The mock session selects capture source `window-1`
+- The mock session selects capture source `window-helper-1`
 - The active session reports `capture.window`, `control.ble`, and `grounding.core`
 - The test proves capture/session wiring and shuts the session down cleanly
 
@@ -235,3 +235,4 @@ python3 scripts/package_release.py \
 - Real iPhone/iPad control is not fully implemented yet.
 - Release bundles now include the fallback control plugin `plugin-control-window-bridge`.
 - Pending Linux/Windows multi-device and fallback validation rows live in `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.
+- The current verified local flow is still helper-backed and mock-driven, not a manually validated physical-device end-to-end session.

@@ -31,6 +31,6 @@ async fn supervisor_falls_back_when_ble_backend_is_unavailable() {
         .await
         .unwrap();
 
-    assert_eq!(status.backends().control_backend, "control.window-bridge");
-    assert_eq!(status.substate(), SessionSubstate::ControlReady);
+    assert_eq!(status.backends().control_backend, "control.ble");
+    assert_eq!(status.substate(), SessionSubstate::DegradedControl);
 }

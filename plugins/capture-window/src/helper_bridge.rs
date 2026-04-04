@@ -1,12 +1,25 @@
-use crate::helper_bridge::{HelperFrameEvent, HelperProbe};
 use anyhow::{anyhow, Result};
-use ios_control_contracts::capture::CaptureCapability;
+use serde::Deserialize;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HelperProbe {
+    pub available: bool,
+    pub display_name: String,
+    pub supports_input_bridge: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HelperFrameEvent {
+    pub frame_index: u64,
+    pub width: u32,
+    pub height: u32,
+    pub fill_byte: u8,
+}
 
 const HELPER_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -19,37 +32,6 @@ fn helper_command(helper: &Path) -> Command {
     }
 
     Command::new(helper)
-}
-
-pub fn find_helper() -> Option<PathBuf> {
-    std::env::var_os("IOS_CONTROL_DIRECT_RECEIVER_HELPER")
-        .map(PathBuf::from)
-        .filter(|path| path.is_file())
-}
-
-pub fn capture_capability(helper: Option<PathBuf>) -> CaptureCapability {
-    match helper {
-        Some(path) => match run_probe(&path) {
-            Ok(probe) => CaptureCapability {
-                available: probe.available,
-                reason: (!probe.available).then_some("direct receiver helper unavailable".into()),
-                backend_id: "capture.direct.helper".into(),
-                supports_input_bridge: probe.supports_input_bridge,
-            },
-            Err(err) => CaptureCapability {
-                available: false,
-                reason: Some(format!("incompatible helper probe: {}", err)),
-                backend_id: "capture.direct.helper".into(),
-                supports_input_bridge: false,
-            },
-        },
-        None => CaptureCapability {
-            available: false,
-            reason: Some("IOS_CONTROL_DIRECT_RECEIVER_HELPER not configured".into()),
-            backend_id: "capture.direct.helper".into(),
-            supports_input_bridge: false,
-        },
-    }
 }
 
 pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
@@ -73,23 +55,23 @@ pub fn run_probe(helper: &Path) -> Result<HelperProbe> {
         let _ = tx.send(result);
     });
 
-    let status = wait_for_exit(&mut child, "direct helper probe")?;
+    let status = wait_for_exit(&mut child, "window helper probe")?;
     if !status.success() {
         drop(reader);
-        return Err(anyhow!("direct helper probe failed"));
+        return Err(anyhow!("window helper probe failed"));
     }
     let bytes = match rx.recv_timeout(HELPER_TIMEOUT) {
         Ok(result) => result?,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             drop(reader);
             return Err(anyhow!(
-                "direct helper probe stdout read timed out after {:?}",
+                "window helper probe stdout read timed out after {:?}",
                 HELPER_TIMEOUT
             ));
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             drop(reader);
-            return Err(anyhow!("direct helper probe stdout read failed"));
+            return Err(anyhow!("window helper probe stdout read failed"));
         }
     };
     let _ = reader.join();
@@ -114,7 +96,7 @@ pub fn read_next_frame_event(helper: &Path, source_id: &str) -> Result<HelperFra
             let line = lines
                 .next()
                 .ok_or_else(|| anyhow!("missing frame event"))??;
-            let event = serde_json::from_str(&line)?;
+            let event: HelperFrameEvent = serde_json::from_str(&line)?;
             Result::<HelperFrameEvent>::Ok(event)
         })();
         let _ = tx.send(result);
@@ -127,7 +109,7 @@ pub fn read_next_frame_event(helper: &Path, source_id: &str) -> Result<HelperFra
             let _ = child.wait();
             drop(reader);
             return Err(anyhow!(
-                "direct helper frame event read timed out after {:?}",
+                "window helper frame event read timed out after {:?}",
                 HELPER_TIMEOUT
             ));
         }
@@ -135,7 +117,7 @@ pub fn read_next_frame_event(helper: &Path, source_id: &str) -> Result<HelperFra
             let _ = child.kill();
             let _ = child.wait();
             drop(reader);
-            return Err(anyhow!("direct helper frame event read failed"));
+            return Err(anyhow!("window helper frame event read failed"));
         }
     };
 

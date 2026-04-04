@@ -76,6 +76,18 @@ impl HostDesktopApp {
         self.sync_selected_workspace();
     }
 
+    pub fn enable_runtime_start(&mut self, device_id: &str) {
+        self.selected_device_id = Some(device_id.into());
+        self.runtime.queue_start(device_id.into());
+    }
+
+    pub fn start_runtime_session_on_launch(&mut self) {
+        if self.runtime.has_pending_start() {
+            self.request_start_session();
+            self.finish_pending_session_start();
+        }
+    }
+
     pub fn request_start_session(&mut self) {
         self.session = SessionViewModel::starting();
         self.device_detail.active_source_id = None;
@@ -87,6 +99,12 @@ impl HostDesktopApp {
 
     pub fn finish_pending_session_start(&mut self) {
         self.pending_session_start = None;
+
+        if let Some(device_id) = self.runtime.take_pending_start() {
+            self.select_device(&device_id);
+            return;
+        }
+
         let Some(source) = self.device_detail.capture_sources.first().cloned() else {
             let message = "No capture sources available";
             self.session = SessionViewModel::error(message);
@@ -124,7 +142,10 @@ impl HostDesktopApp {
             .iter()
             .map(|row| row.device_id.clone())
             .collect();
-        let summaries: Vec<_> = statuses.iter().map(|status| status.summary().clone()).collect();
+        let summaries: Vec<_> = statuses
+            .iter()
+            .map(|status| status.summary().clone())
+            .collect();
         self.dashboard = DashboardViewModel::from_sessions(&summaries);
 
         if self
@@ -186,7 +207,10 @@ impl HostDesktopApp {
                             .active_source_id
                             .clone()
                             .unwrap_or_else(|| "window-helper-1".into()),
-                        source_kind: if status.backends().capture_backend.starts_with("capture.window")
+                        source_kind: if status
+                            .backends()
+                            .capture_backend
+                            .starts_with("capture.window")
                         {
                             ios_control_contracts::capture::SourceKind::Window
                         } else {
@@ -230,8 +254,12 @@ impl eframe::App for HostDesktopApp {
         let mut selected_device = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            selected_device =
-                dashboard::render(ui, &self.dashboard, &self.fleet, self.selected_device_id.as_deref());
+            selected_device = dashboard::render(
+                ui,
+                &self.dashboard,
+                &self.fleet,
+                self.selected_device_id.as_deref(),
+            );
             ui.separator();
             device_detail::render(
                 ui,
