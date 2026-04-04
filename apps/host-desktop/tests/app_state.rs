@@ -1,11 +1,13 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
-use host_desktop::runtime::HostRuntimeConfig;
+use host_desktop::runtime::{HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
 use host_desktop::view_models::session::SessionUiState;
+use ios_control_contracts::control::ControlSessionPhase;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::{
     BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase, SessionSubstate,
 };
+use ios_control_session_orchestrator::SessionDiagnostics;
 
 mod support;
 use support::{
@@ -33,6 +35,53 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
         _guards: guards,
         app,
     }
+}
+
+fn runtime_snapshot_with_control(
+    control_phase: ControlSessionPhase,
+    control_summary: &str,
+    execution_observed_change: Option<bool>,
+) -> HostRuntimeSnapshot {
+    let status = status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Degraded,
+        SessionSubstate::OperatorActionRequired,
+        "capture.window.helper",
+        "control.ble",
+        Some("Reconnect BLE helper"),
+    );
+
+    HostRuntimeSnapshot {
+        statuses: vec![status.clone()],
+        workspace: RuntimeWorkspaceState {
+            device_id: "device-1".into(),
+            summary: status.summary().clone(),
+            capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                source_id: "window-helper-1".into(),
+                display_name: "Operator Mirror".into(),
+                kind: ios_control_contracts::capture::SourceKind::Window,
+            }],
+            capture_stream: None,
+            selected_source_id: Some("window-helper-1".into()),
+            control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                items: vec!["Pair the device".into()],
+            },
+            control_phase,
+            execution_observed_change,
+            diagnostics: SessionDiagnostics {
+                control_phase,
+                control_summary: control_summary.into(),
+                grounding_summary: Some("selected pointer plan".into()),
+            },
+        },
+    }
+}
+
+fn host_app_from_runtime_snapshot(snapshot: HostRuntimeSnapshot) -> HostDesktopApp {
+    let mut app = HostDesktopApp::new();
+    app.apply_runtime_snapshot(snapshot);
+    app
 }
 
 #[test]
@@ -193,7 +242,30 @@ fn runtime_snapshot_populates_control_checklist_and_operator_message() {
         fixture.app.diagnostics.control_summary,
         "control backend control.ble"
     );
-    assert!(fixture.app.diagnostics.control_summary.starts_with("control "));
+    assert!(fixture.app.diagnostics.control_summary.contains("control "));
+}
+
+#[test]
+fn runtime_snapshot_preserves_control_phase_and_observed_change() {
+    let snapshot = runtime_snapshot_with_control(
+        ControlSessionPhase::Advertising,
+        "Waiting for iPhone",
+        Some(true),
+    );
+
+    assert_eq!(snapshot.workspace.control_phase, ControlSessionPhase::Advertising);
+    assert_eq!(snapshot.workspace.execution_observed_change, Some(true));
+}
+
+#[test]
+fn host_app_surfaces_reconnect_guidance_for_degraded_control() {
+    let app = host_app_from_runtime_snapshot(runtime_snapshot_with_control(
+        ControlSessionPhase::Error,
+        "Reconnect BLE helper",
+        Some(false),
+    ));
+
+    assert!(app.diagnostics.control_summary.contains("Reconnect BLE helper"));
 }
 
 #[test]

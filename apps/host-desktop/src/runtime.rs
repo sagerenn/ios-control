@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoSource};
-use ios_control_contracts::control::ControlSetupChecklist;
+use ios_control_contracts::control::{ControlSessionPhase, ControlSetupChecklist};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary};
 use ios_control_session_orchestrator::{
     PluginPaths, SessionDiagnostics, SessionSupervisor, StartSessionRequest,
@@ -47,6 +47,8 @@ pub struct RuntimeWorkspaceState {
     pub capture_stream: Option<CaptureStreamDescriptor>,
     pub selected_source_id: Option<String>,
     pub control_checklist: ControlSetupChecklist,
+    pub control_phase: ControlSessionPhase,
+    pub execution_observed_change: Option<bool>,
     pub diagnostics: SessionDiagnostics,
 }
 
@@ -117,6 +119,11 @@ impl HostRuntime {
                 capture_stream: active.capture_stream.clone(),
                 selected_source_id: active.selected_source_id.clone(),
                 control_checklist: active.control_checklist.clone(),
+                control_phase: active.diagnostics.control_phase,
+                execution_observed_change: active
+                    .execution_result
+                    .as_ref()
+                    .map(|result| result.observed_change),
                 diagnostics: active.diagnostics.clone(),
             },
         })

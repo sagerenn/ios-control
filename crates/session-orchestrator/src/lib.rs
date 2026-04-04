@@ -48,6 +48,7 @@ pub struct StartSessionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDiagnostics {
+    pub control_phase: ControlSessionPhase,
     pub control_summary: String,
     pub grounding_summary: Option<String>,
 }
@@ -270,6 +271,7 @@ impl SessionOrchestrator {
             latest_frame,
             control_checklist,
             diagnostics: SessionDiagnostics {
+                control_phase,
                 control_summary,
                 grounding_summary,
             },

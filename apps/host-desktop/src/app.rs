@@ -219,7 +219,7 @@ impl HostDesktopApp {
         self.session.selected_source = Some(source);
     }
 
-    fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
+    pub fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
         let statuses = snapshot.statuses.clone();
         self.runtime_workspace = Some(snapshot.workspace.clone());
         self.preview_texture = None;
@@ -240,7 +240,10 @@ impl HostDesktopApp {
         self.device_detail.control_checklist = ControlSetupChecklist {
             items: snapshot.workspace.control_checklist.items,
         };
-        self.diagnostics.control_summary = snapshot.workspace.diagnostics.control_summary;
+        self.diagnostics.control_summary = format!(
+            "{:?}: {}",
+            snapshot.workspace.control_phase, snapshot.workspace.diagnostics.control_summary
+        );
         self.diagnostics.grounding_summary = snapshot
             .workspace
             .diagnostics
@@ -325,7 +328,10 @@ impl HostDesktopApp {
                 .unwrap_or_else(|| capture_source_for_backend(status.backends().capture_backend.as_str()));
 
             self.diagnostics.host_error = status.operator_action().map(str::to_string);
-            self.diagnostics.control_summary = workspace.diagnostics.control_summary.clone();
+            self.diagnostics.control_summary = format!(
+                "{:?}: {}",
+                workspace.control_phase, workspace.diagnostics.control_summary
+            );
             self.diagnostics.grounding_summary = workspace
                 .diagnostics
                 .grounding_summary
