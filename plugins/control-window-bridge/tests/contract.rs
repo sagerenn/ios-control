@@ -2,7 +2,7 @@ use ios_control_contracts::grounding::{GroundingPlan, PlanKind};
 use ios_control_contracts::control::ControlSessionPhase;
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
-use plugin_control_window_bridge::helper_launcher::{helper_available, launch_helper};
+use plugin_control_window_bridge::helper_launcher::{helper_available, launch_helper, launch_helper_json};
 use std::env;
 use std::io::Write;
 use std::path::PathBuf;
@@ -148,6 +148,27 @@ fn window_bridge_binary_helper_mode_runs_action_path() {
         Some(value) => env::set_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG", value),
         None => env::remove_var("IOS_CONTROL_WINDOW_INPUT_HELPER_ACTION_LOG"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_bridge_helper_returns_structured_execution_summary() {
+    let helper = write_test_helper_script(
+        "window-json-exec",
+        r#"#!/bin/sh
+printf '%s\n' '{"phase":"Succeeded","summary":"window click applied","observed_change":true}'
+"#,
+    );
+
+    let execution = launch_helper_json(
+        helper.clone(),
+        &["--source".into(), "window-helper-1".into(), "--pointer-plan".into()],
+    )
+    .unwrap();
+    assert_eq!(execution.summary, "window click applied");
+    assert!(execution.observed_change);
+
+    let _ = fs::remove_file(helper);
 }
 
 #[cfg(unix)]

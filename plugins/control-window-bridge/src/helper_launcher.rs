@@ -1,9 +1,10 @@
 use std::env;
 use std::io;
+use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -77,6 +78,49 @@ pub fn launch_helper(helper: PathBuf, args: &[String]) -> std::io::Result<ExitSt
     wait_for_completion(&mut child, helper_timeout())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowHelperExecution {
+    pub phase: String,
+    pub summary: String,
+    pub observed_change: bool,
+    pub failure_reason: Option<String>,
+}
+
+pub fn launch_helper_json(helper: PathBuf, args: &[String]) -> io::Result<WindowHelperExecution> {
+    let mut child = Command::new(helper)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "missing helper stdout"))?;
+    let reader = thread::spawn(move || -> io::Result<Vec<u8>> {
+        let mut reader = stdout;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+
+    let status = wait_for_completion(&mut child, helper_timeout())?;
+    let stdout = reader
+        .join()
+        .map_err(|_| io::Error::other("helper stdout drainer panicked"))??;
+
+    if !status.success() {
+        return Err(io::Error::other("window helper returned non-zero exit status"));
+    }
+
+    decode_helper_execution(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 pub fn should_run_embedded_helper_mode(args: &[String]) -> bool {
     !args.is_empty() && args.iter().any(|arg| arg == "--source")
 }
@@ -134,5 +178,35 @@ pub fn run_embedded_helper_mode(args: &[String]) -> io::Result<()> {
         writeln!(file, "source={source} action={action}")?;
     }
 
+    println!(
+        "{{\"phase\":\"Succeeded\",\"summary\":\"window {} applied\",\"observed_change\":true}}",
+        action
+    );
+
     Ok(())
+}
+
+fn decode_helper_execution(output: Output) -> io::Result<WindowHelperExecution> {
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(io::Error::other)?;
+    Ok(WindowHelperExecution {
+        phase: value
+            .get("phase")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing phase"))?
+            .to_string(),
+        summary: value
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing summary"))?
+            .to_string(),
+        observed_change: value
+            .get("observed_change")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        failure_reason: value
+            .get("failure_reason")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    })
 }

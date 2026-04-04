@@ -5,7 +5,8 @@ use ios_control_contracts::control::{
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
 use plugin_control_window_bridge::helper_launcher::{
-    find_helper, helper_available, helper_is_executable, launch_helper, run_embedded_helper_mode,
+    find_helper, helper_available, helper_is_executable, launch_helper_json,
+    run_embedded_helper_mode,
     should_run_embedded_helper_mode,
 };
 use std::error::Error;
@@ -44,6 +45,16 @@ fn control_capability() -> ControlCapability {
             Some("IOS_CONTROL_WINDOW_INPUT_HELPER is not usable".into())
         },
         transport: ControlTransportKind::WindowInputBridge,
+    }
+}
+
+fn map_execution_phase(phase: &str) -> ExecutionPhase {
+    match phase {
+        "Pending" => ExecutionPhase::Pending,
+        "Running" => ExecutionPhase::Running,
+        "Succeeded" => ExecutionPhase::Succeeded,
+        "Failed" => ExecutionPhase::Failed,
+        _ => ExecutionPhase::Failed,
     }
 }
 
@@ -120,18 +131,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             HostToPlugin::ExecutePlan { plan } => {
                 let summary = match (find_helper(), command_for_plan("window-helper-1", &plan)) {
-                    (Some(helper), Ok(command)) => match launch_helper(helper, &command.args) {
-                        Ok(status) if status.success() => ExecutionSummary {
-                            summary: "window bridge helper executed".into(),
-                            phase: ExecutionPhase::Succeeded,
-                            observed_change: None,
-                            failure_reason: None,
-                        },
-                        Ok(_) => ExecutionSummary {
-                            summary: "window bridge execution failed".into(),
-                            phase: ExecutionPhase::Failed,
-                            observed_change: None,
-                            failure_reason: Some("helper returned non-zero exit status".into()),
+                    (Some(helper), Ok(command)) => match launch_helper_json(helper, &command.args) {
+                        Ok(execution) => ExecutionSummary {
+                            summary: execution.summary,
+                            phase: map_execution_phase(&execution.phase),
+                            observed_change: Some(execution.observed_change),
+                            failure_reason: execution.failure_reason,
                         },
                         Err(err) => ExecutionSummary {
                             summary: "window bridge execution failed".into(),
