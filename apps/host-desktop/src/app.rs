@@ -4,7 +4,7 @@ use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
 use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
-use crate::runtime::HostRuntimeBridge;
+use crate::runtime::{HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
@@ -17,6 +17,7 @@ pub struct HostDesktopApp {
     pub selected_device_id: Option<String>,
     pub fleet: FleetViewModel,
     pub runtime: HostRuntimeBridge,
+    host_runtime: Option<HostRuntime>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -32,6 +33,7 @@ impl HostDesktopApp {
             selected_device_id: None,
             fleet: FleetViewModel { rows: Vec::new() },
             runtime: HostRuntimeBridge::default(),
+            host_runtime: None,
             dashboard: DashboardViewModel {
                 total_devices: 1,
                 degraded_devices: 0,
@@ -66,6 +68,13 @@ impl HostDesktopApp {
         Self::new()
     }
 
+    pub fn with_runtime(config: HostRuntimeConfig) -> Self {
+        let mut app = Self::new();
+        app.host_runtime =
+            Some(HostRuntime::new(config).expect("host runtime should initialize successfully"));
+        app
+    }
+
     pub fn replace_runtime_statuses(&mut self, statuses: Vec<DeviceSessionStatus>) {
         self.runtime.replace_statuses(statuses);
         self.sync_from_runtime();
@@ -83,12 +92,53 @@ impl HostDesktopApp {
 
     pub fn start_runtime_session_on_launch(&mut self) {
         if self.runtime.has_pending_start() {
-            self.request_start_session();
-            self.finish_pending_session_start();
+            if self.host_runtime.is_some() {
+                self.request_start_session();
+            } else {
+                self.request_start_session();
+                self.finish_pending_session_start();
+            }
         }
     }
 
     pub fn request_start_session(&mut self) {
+        if let Some(host_runtime) = self.host_runtime.as_mut() {
+            let Some(device_id) = self
+                .selected_device_id
+                .clone()
+                .or_else(|| self.runtime.take_pending_start())
+                .or_else(|| self.available_device_ids.first().cloned())
+            else {
+                self.session = SessionViewModel::error("No device selected");
+                return;
+            };
+
+            self.selected_device_id = Some(device_id.clone());
+            self.session = SessionViewModel::starting();
+            self.device_detail.active_source_id = None;
+            self.diagnostics.host_error = None;
+            self.diagnostics.control_summary = "control bootstrapping".into();
+            self.diagnostics.grounding_summary = "grounding bootstrapping".into();
+
+            match host_runtime.start_session(
+                &device_id,
+                &self.device_detail.device_name,
+                self.device_detail.active_source_id.clone(),
+            ) {
+                Ok(snapshot) => {
+                    self.apply_runtime_snapshot(snapshot);
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    self.session = SessionViewModel::error(&message);
+                    self.diagnostics.host_error = Some(message);
+                    self.diagnostics.control_summary = "control blocked".into();
+                    self.diagnostics.grounding_summary = "grounding blocked".into();
+                }
+            }
+            return;
+        }
+
         self.session = SessionViewModel::starting();
         self.device_detail.active_source_id = None;
         self.diagnostics.host_error = None;
@@ -125,12 +175,49 @@ impl HostDesktopApp {
     }
 
     pub fn stop_session(&mut self) {
+        if let (Some(host_runtime), Some(device_id)) =
+            (self.host_runtime.as_mut(), self.selected_device_id.as_deref())
+        {
+            let _ = host_runtime.stop_session(device_id);
+            self.runtime.replace_statuses(Vec::new());
+            self.available_device_ids.clear();
+            self.selected_device_id = None;
+            self.fleet = FleetViewModel { rows: Vec::new() };
+            self.dashboard = DashboardViewModel {
+                total_devices: 0,
+                degraded_devices: 0,
+            };
+            self.settings.plugin_rows.clear();
+        }
+
         self.pending_session_start = None;
         self.device_detail.active_source_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control not started".into();
         self.diagnostics.grounding_summary = "grounding idle".into();
+    }
+
+    fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
+        self.runtime.replace_statuses(snapshot.statuses);
+        self.sync_from_runtime();
+        self.selected_device_id = Some(snapshot.workspace.device_id);
+        self.device_detail.capture_sources = snapshot
+            .workspace
+            .capture_sources
+            .iter()
+            .map(|source| CaptureSourceOption::new(&source.source_id, &source.display_name))
+            .collect();
+        self.device_detail.active_source_id = snapshot.workspace.selected_source_id;
+        self.device_detail.control_checklist = ControlSetupChecklist {
+            items: snapshot.workspace.control_checklist.items,
+        };
+        self.diagnostics.control_summary = snapshot.workspace.diagnostics.control_summary;
+        self.diagnostics.grounding_summary = snapshot
+            .workspace
+            .diagnostics
+            .grounding_summary
+            .unwrap_or_else(|| "grounding idle".into());
     }
 
     fn sync_from_runtime(&mut self) {

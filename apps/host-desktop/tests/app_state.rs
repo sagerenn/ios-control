@@ -1,10 +1,39 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
+use host_desktop::runtime::HostRuntimeConfig;
 use host_desktop::view_models::session::SessionUiState;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::{
     BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase, SessionSubstate,
 };
+
+mod support;
+use support::{
+    build_plugins, host_plugin_paths, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+    EnvVarGuards,
+};
+
+struct RuntimeAppFixture {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    _guards: EnvVarGuards,
+    app: HostDesktopApp,
+}
+
+fn host_app_with_runtime() -> RuntimeAppFixture {
+    let lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let guards = prepare_window_runtime_env(&root);
+    let app = HostDesktopApp::with_runtime(HostRuntimeConfig {
+        plugin_paths: host_plugin_paths(&root),
+    });
+
+    RuntimeAppFixture {
+        _lock: lock,
+        _guards: guards,
+        app,
+    }
+}
 
 #[test]
 fn host_app_boots_into_an_honest_idle_session_shell() {
@@ -104,6 +133,35 @@ fn start_session_uses_runtime_bridge_instead_of_bootstrap_error() {
         app.session.ui_state,
         SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
     );
+}
+
+#[test]
+fn host_app_start_session_uses_real_runtime_snapshot() {
+    let mut fixture = host_app_with_runtime();
+    fixture.app.select_device("device-1");
+
+    fixture.app.request_start_session();
+
+    assert!(matches!(
+        fixture.app.session.ui_state,
+        SessionUiState::Streaming | SessionUiState::Error(_)
+    ));
+    assert_ne!(
+        fixture.app.diagnostics.host_error.as_deref(),
+        Some("Session bootstrap is not wired to the runtime yet")
+    );
+}
+
+#[test]
+fn host_app_stop_session_removes_runtime_status() {
+    let mut fixture = host_app_with_runtime();
+    fixture.app.select_device("device-1");
+    fixture.app.request_start_session();
+
+    fixture.app.stop_session();
+
+    assert!(fixture.app.available_device_ids.is_empty());
+    assert_eq!(fixture.app.session.ui_state, SessionUiState::Idle);
 }
 
 #[test]

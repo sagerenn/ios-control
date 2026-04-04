@@ -119,4 +119,8 @@ impl HostRuntime {
             },
         })
     }
+
+    pub fn stop_session(&mut self, device_id: &str) -> Result<()> {
+        self.tokio.block_on(self.supervisor.stop_session(device_id))
+    }
 }
