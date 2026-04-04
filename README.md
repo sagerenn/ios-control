@@ -123,6 +123,8 @@ What is not yet verified today:
 
 So, this repository does not yet provide a polished “install app, pair iPhone, start controlling it” end-user flow. The sections above describe the intended setup path, not a fully validated product workflow.
 
+For the current code-verified gap list, see `docs/TODO.md`.
+
 ## End-to-end developer flow
 
 ### 1. Build the local mock plugin binaries

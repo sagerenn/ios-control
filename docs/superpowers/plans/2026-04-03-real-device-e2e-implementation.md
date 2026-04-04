@@ -1,5 +1,7 @@
 # Real-Device E2E Implementation Plan
 
+> Historical planning artifact. This plan describes a target real-device E2E path from 2026-04-03. It should not be read as evidence that the current branch already provides real-device end-to-end support. For current status, use `README.md`, `docs/TODO.md`, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the current mock-backed host/plugin flow into a real-device end-to-end path that can view a real iPhone/iPad screen, drive real BLE input, execute grounded actions, and surface that live state through the desktop host.

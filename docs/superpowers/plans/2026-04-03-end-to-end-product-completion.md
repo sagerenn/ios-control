@@ -1,5 +1,7 @@
 # End-To-End Product Completion Implementation Plan
 
+> Historical planning artifact. This plan describes a target mock-backed product-completion path from 2026-04-03. It does not mean the current branch is fully wired today. For current status, use `README.md` and `docs/TODO.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete the current scaffold into a fully wired, mock-backed end-to-end product flow where the host can discover plugins, start a local session, render capture/control/grounding state, and verify the entire path through tests and docs.

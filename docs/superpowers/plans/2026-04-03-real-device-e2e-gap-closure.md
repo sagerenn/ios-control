@@ -1,5 +1,7 @@
 # Real-Device E2E Gap Closure Implementation Plan
 
+> Historical planning artifact. This plan captures a gap-closure path proposed on 2026-04-03. It does not supersede the code-verified status of the current branch. For current status, use `README.md`, `docs/TODO.md`, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the remaining gaps between the merged helper-aware runtime scaffold and a true operator-validated real-device E2E path.

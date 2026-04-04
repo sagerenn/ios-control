@@ -1,5 +1,7 @@
 # Operator-Complete Real-Device App Design
 
+> Historical planning artifact. This design describes an intended target state from 2026-04-03. It does not reflect the current branch reality on its own. For current status, use `README.md`, `docs/TODO.md`, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.
+
 **Date:** 2026-04-03
 
 ## Goal

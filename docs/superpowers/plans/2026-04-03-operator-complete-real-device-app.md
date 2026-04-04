@@ -1,5 +1,7 @@
 # Operator-Complete Real-Device App Implementation Plan
 
+> Historical planning artifact. This plan captures an intended implementation path from 2026-04-03. It should not be read as proof that the current branch is operator-complete. For current status, use `README.md`, `docs/TODO.md`, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the current mock-oriented workspace into an operator-grade app that can supervise multiple concurrent real-device sessions on Linux and Windows, using real capture backends, BLE-preferred control, explicit fallback control, and visible diagnostics/recovery.
