@@ -305,11 +305,13 @@ impl SessionSupervisor {
     }
 
     pub async fn stop_session(&mut self, device_id: &str) -> Result<()> {
-        if let Some(active) = self.active.remove(device_id) {
-            active.shutdown().await?;
-        }
+        let shutdown_result = if let Some(active) = self.active.remove(device_id) {
+            active.shutdown().await
+        } else {
+            Ok(())
+        };
         self.sessions.remove(device_id);
-        Ok(())
+        shutdown_result
     }
 }
 
