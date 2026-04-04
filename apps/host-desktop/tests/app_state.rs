@@ -184,8 +184,15 @@ fn runtime_snapshot_populates_control_checklist_and_operator_message() {
     fixture.app.select_device("device-1");
     fixture.app.request_start_session();
 
-    assert!(!fixture.app.device_detail.control_checklist.items.is_empty());
-    assert!(fixture.app.diagnostics.control_summary.contains("control"));
+    assert_ne!(
+        fixture.app.device_detail.control_checklist,
+        ControlSetupChecklist::for_pointer_mode()
+    );
+    assert_ne!(
+        fixture.app.diagnostics.control_summary,
+        "control backend control.ble"
+    );
+    assert!(fixture.app.diagnostics.control_summary.starts_with("control "));
 }
 
 #[test]

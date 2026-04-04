@@ -6,7 +6,9 @@ use crate::panels::device_detail::{
 };
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
-use crate::runtime::{HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot};
+use crate::runtime::{
+    HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
+};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
@@ -20,6 +22,7 @@ pub struct HostDesktopApp {
     pub fleet: FleetViewModel,
     pub runtime: HostRuntimeBridge,
     host_runtime: Option<HostRuntime>,
+    runtime_workspace: Option<RuntimeWorkspaceState>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -36,6 +39,7 @@ impl HostDesktopApp {
             fleet: FleetViewModel { rows: Vec::new() },
             runtime: HostRuntimeBridge::default(),
             host_runtime: None,
+            runtime_workspace: None,
             dashboard: DashboardViewModel {
                 total_devices: 1,
                 degraded_devices: 0,
@@ -78,6 +82,7 @@ impl HostDesktopApp {
     }
 
     pub fn replace_runtime_statuses(&mut self, statuses: Vec<DeviceSessionStatus>) {
+        self.runtime_workspace = None;
         self.runtime.replace_statuses(statuses);
         self.sync_from_runtime();
     }
@@ -182,6 +187,7 @@ impl HostDesktopApp {
         {
             let _ = host_runtime.stop_session(device_id);
             self.runtime.replace_statuses(Vec::new());
+            self.runtime_workspace = None;
             self.available_device_ids.clear();
             self.selected_device_id = None;
             self.fleet = FleetViewModel { rows: Vec::new() };
@@ -211,6 +217,7 @@ impl HostDesktopApp {
 
     fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
         let statuses = snapshot.statuses.clone();
+        self.runtime_workspace = Some(snapshot.workspace.clone());
         self.runtime.replace_statuses(statuses.clone());
         self.sync_from_runtime();
         self.available_device_ids = statuses
@@ -288,6 +295,80 @@ impl HostDesktopApp {
         else {
             return;
         };
+
+        if let Some(workspace) = self
+            .runtime_workspace
+            .as_ref()
+            .filter(|workspace| workspace.device_id == selected_device_id)
+        {
+            self.device_detail.device_name = workspace.summary.device_name.clone();
+            self.device_detail.capture_sources = workspace
+                .capture_sources
+                .iter()
+                .map(|source| CaptureSourceOption::new(&source.source_id, &source.display_name))
+                .collect();
+            self.device_detail.active_source_id = workspace.selected_source_id.clone();
+            self.device_detail.control_checklist = ControlSetupChecklist {
+                items: workspace.control_checklist.items.clone(),
+            };
+
+            let source = workspace
+                .selected_source_id
+                .as_deref()
+                .and_then(|source_id| self.device_detail.capture_source(source_id))
+                .or_else(|| self.device_detail.capture_sources.first().cloned())
+                .unwrap_or_else(|| capture_source_for_backend(status.backends().capture_backend.as_str()));
+
+            self.diagnostics.host_error = status.operator_action().map(str::to_string);
+            self.diagnostics.control_summary = workspace.diagnostics.control_summary.clone();
+            self.diagnostics.grounding_summary = workspace
+                .diagnostics
+                .grounding_summary
+                .clone()
+                .unwrap_or_else(|| "grounding idle".into());
+
+            self.session = match status.substate() {
+                SessionSubstate::ControlReady | SessionSubstate::Streaming => {
+                    SessionViewModel::streaming(
+                        source,
+                        ios_control_contracts::capture::VideoFrameDescriptor {
+                            source_id: self
+                                .device_detail
+                                .active_source_id
+                                .clone()
+                                .unwrap_or_else(|| "window-helper-1".into()),
+                            source_kind: if status
+                                .backends()
+                                .capture_backend
+                                .starts_with("capture.window")
+                            {
+                                ios_control_contracts::capture::SourceKind::Window
+                            } else {
+                                ios_control_contracts::capture::SourceKind::DirectReceiver
+                            },
+                            width: 1280,
+                            height: 720,
+                            rotation_degrees: 0,
+                            frame_index: 1,
+                            health: ios_control_contracts::capture::FrameHealth::Healthy,
+                        },
+                    )
+                }
+                SessionSubstate::Discovering
+                | SessionSubstate::StartingCapture
+                | SessionSubstate::StartingControl
+                | SessionSubstate::Recovering => SessionViewModel::starting(),
+                SessionSubstate::OperatorActionRequired
+                | SessionSubstate::DegradedCapture
+                | SessionSubstate::DegradedControl => SessionViewModel::error(
+                    status
+                        .operator_action()
+                        .unwrap_or("Session requires operator intervention"),
+                ),
+                SessionSubstate::Stopped => SessionViewModel::idle(),
+            };
+            return;
+        }
 
         self.device_detail.device_name = status.summary().device_name.clone();
         let source = capture_source_for_backend(status.backends().capture_backend.as_str());
