@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1"
 eframe = "0.31"
 egui = "0.31"
 ios-control-contracts = { path = "../../crates/contracts" }
+ios-control-session-orchestrator = { path = "../../crates/session-orchestrator" }
+tokio = { version = "1", features = ["rt-multi-thread"] }

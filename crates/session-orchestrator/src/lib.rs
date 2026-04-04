@@ -303,6 +303,14 @@ impl SessionSupervisor {
     pub fn active_sessions(&self) -> &BTreeMap<String, ActiveSessionState> {
         &self.active
     }
+
+    pub async fn stop_session(&mut self, device_id: &str) -> Result<()> {
+        if let Some(active) = self.active.remove(device_id) {
+            active.shutdown().await?;
+        }
+        self.sessions.remove(device_id);
+        Ok(())
+    }
 }
 
 impl ActiveSessionState {
