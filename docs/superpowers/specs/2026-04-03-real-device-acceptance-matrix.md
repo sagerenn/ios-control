@@ -24,6 +24,7 @@ Use this checklist when validating a new real-device flow. Each item should be r
 6. Recovery: verify stop/start session recovery and reconnection behavior after a simulated disconnect.
 7. Record host OS, helper used, device model, and exact verified outcome before changing any matrix row to `Verified`.
 8. Use `docs/validation/real-device-session-template.md` as the baseline log for each manual validation run.
+9. Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/` and link it from the matrix update.
 
 ## Not Yet Verified / Not Yet Supported
 

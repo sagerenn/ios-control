@@ -30,3 +30,12 @@ class DocsStatusTests(unittest.TestCase):
         for path in historical_paths:
             text = Path(path).read_text(encoding="utf-8")
             self.assertIn("Historical planning artifact.", text)
+
+    def test_verified_acceptance_rows_require_explicit_operator_log_reference(self) -> None:
+        matrix = Path(
+            "docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/`",
+            matrix,
+        )
