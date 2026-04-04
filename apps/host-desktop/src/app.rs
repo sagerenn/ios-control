@@ -1,7 +1,9 @@
 use eframe::egui;
 use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
 
-use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
+use crate::panels::device_detail::{
+    CaptureSourceOption, ControlSetupChecklist, DeviceDetailAction,
+};
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
 use crate::runtime::{HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot};
@@ -198,9 +200,23 @@ impl HostDesktopApp {
         self.diagnostics.grounding_summary = "grounding idle".into();
     }
 
+    pub fn select_capture_source(&mut self, source_id: &str) {
+        let Some(source) = self.device_detail.capture_source(source_id) else {
+            return;
+        };
+
+        self.device_detail.active_source_id = Some(source.source_id.clone());
+        self.session.selected_source = Some(source);
+    }
+
     fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
-        self.runtime.replace_statuses(snapshot.statuses);
+        let statuses = snapshot.statuses.clone();
+        self.runtime.replace_statuses(statuses.clone());
         self.sync_from_runtime();
+        self.available_device_ids = statuses
+            .iter()
+            .map(|status| status.summary().device_id.clone())
+            .collect();
         self.selected_device_id = Some(snapshot.workspace.device_id);
         self.device_detail.capture_sources = snapshot
             .workspace
@@ -339,6 +355,7 @@ impl eframe::App for HostDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut pending_action = SessionAction::None;
         let mut selected_device = None;
+        let mut device_detail_action = DeviceDetailAction::None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             selected_device = dashboard::render(
@@ -348,12 +365,7 @@ impl eframe::App for HostDesktopApp {
                 self.selected_device_id.as_deref(),
             );
             ui.separator();
-            device_detail::render(
-                ui,
-                &self.device_detail.device_name,
-                &self.device_detail.capture_sources,
-                &self.device_detail.control_checklist,
-            );
+            device_detail_action = device_detail::render(ui, &self.device_detail);
             ui.separator();
             pending_action = session_view::render(ui, &self.session);
             ui.separator();
@@ -370,6 +382,14 @@ impl eframe::App for HostDesktopApp {
         if let Some(device_id) = selected_device {
             self.select_device(&device_id);
             ctx.request_repaint();
+        }
+
+        match device_detail_action {
+            DeviceDetailAction::None => {}
+            DeviceDetailAction::SelectCaptureSource(source_id) => {
+                self.select_capture_source(&source_id);
+                ctx.request_repaint();
+            }
         }
 
         match pending_action {

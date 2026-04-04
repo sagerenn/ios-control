@@ -7,3 +7,12 @@ pub struct DeviceDetailViewModel {
     pub active_source_id: Option<String>,
     pub control_checklist: ControlSetupChecklist,
 }
+
+impl DeviceDetailViewModel {
+    pub fn capture_source(&self, source_id: &str) -> Option<CaptureSourceOption> {
+        self.capture_sources
+            .iter()
+            .find(|source| source.source_id == source_id)
+            .cloned()
+    }
+}

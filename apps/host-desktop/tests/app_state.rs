@@ -165,6 +165,30 @@ fn host_app_stop_session_removes_runtime_status() {
 }
 
 #[test]
+fn selecting_a_capture_source_updates_runtime_selection() {
+    let mut fixture = host_app_with_runtime();
+    fixture.app.select_device("device-1");
+    fixture.app.request_start_session();
+
+    fixture.app.select_capture_source("window-helper-1");
+
+    assert_eq!(
+        fixture.app.device_detail.active_source_id.as_deref(),
+        Some("window-helper-1")
+    );
+}
+
+#[test]
+fn runtime_snapshot_populates_control_checklist_and_operator_message() {
+    let mut fixture = host_app_with_runtime();
+    fixture.app.select_device("device-1");
+    fixture.app.request_start_session();
+
+    assert!(!fixture.app.device_detail.control_checklist.items.is_empty());
+    assert!(fixture.app.diagnostics.control_summary.contains("control"));
+}
+
+#[test]
 fn startup_runtime_queue_advances_start_path_on_launch() {
     let mut app = HostDesktopApp::new();
     app.enable_runtime_start("device-1");

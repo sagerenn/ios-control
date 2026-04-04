@@ -1,5 +1,7 @@
 use egui::Ui;
 
+use crate::view_models::device_detail::DeviceDetailViewModel;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlSetupChecklist {
     pub items: Vec<String>,
@@ -40,18 +42,26 @@ impl CaptureSourceOption {
     }
 }
 
-pub fn render(
-    ui: &mut Ui,
-    device_name: &str,
-    capture_sources: &[CaptureSourceOption],
-    control_checklist: &ControlSetupChecklist,
-) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceDetailAction {
+    None,
+    SelectCaptureSource(String),
+}
+
+pub fn render(ui: &mut Ui, view_model: &DeviceDetailViewModel) -> DeviceDetailAction {
+    let mut action = DeviceDetailAction::None;
+
     ui.heading("Device Detail");
-    ui.label(device_name);
-    for source in capture_sources {
-        ui.label(source.label());
+    ui.label(&view_model.device_name);
+    for source in &view_model.capture_sources {
+        let selected = view_model.active_source_id.as_deref() == Some(source.source_id.as_str());
+        if ui.selectable_label(selected, source.label()).clicked() {
+            action = DeviceDetailAction::SelectCaptureSource(source.source_id.clone());
+        }
     }
-    for item in &control_checklist.items {
+    for item in &view_model.control_checklist.items {
         ui.label(item);
     }
+
+    action
 }
