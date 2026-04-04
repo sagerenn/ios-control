@@ -166,7 +166,7 @@ printf '%s\n' '{"phase":"Succeeded","summary":"window click applied","observed_c
     )
     .unwrap();
     assert_eq!(execution.summary, "window click applied");
-    assert!(execution.observed_change);
+    assert_eq!(execution.observed_change, Some(true));
 
     let _ = fs::remove_file(helper);
 }

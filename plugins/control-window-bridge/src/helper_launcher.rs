@@ -82,7 +82,7 @@ pub fn launch_helper(helper: PathBuf, args: &[String]) -> std::io::Result<ExitSt
 pub struct WindowHelperExecution {
     pub phase: String,
     pub summary: String,
-    pub observed_change: bool,
+    pub observed_change: Option<bool>,
     pub failure_reason: Option<String>,
 }
 
@@ -202,8 +202,7 @@ fn decode_helper_execution(output: Output) -> io::Result<WindowHelperExecution> 
             .to_string(),
         observed_change: value
             .get("observed_change")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
+            .and_then(serde_json::Value::as_bool),
         failure_reason: value
             .get("failure_reason")
             .and_then(serde_json::Value::as_str)

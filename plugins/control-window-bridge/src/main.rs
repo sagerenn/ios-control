@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Ok(execution) => ExecutionSummary {
                             summary: execution.summary,
                             phase: map_execution_phase(&execution.phase),
-                            observed_change: Some(execution.observed_change),
+                            observed_change: execution.observed_change,
                             failure_reason: execution.failure_reason,
                         },
                         Err(err) => ExecutionSummary {
