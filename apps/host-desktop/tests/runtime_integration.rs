@@ -23,6 +23,10 @@ fn runtime_start_session_returns_workspace_snapshot() {
         .unwrap();
 
     assert_eq!(snapshot.statuses.len(), 1);
+    assert_eq!(
+        snapshot.statuses[0].summary().device_id,
+        snapshot.workspace.device_id
+    );
     assert_eq!(snapshot.workspace.device_id, "device-1");
     assert!(matches!(
         snapshot.workspace.summary.phase,

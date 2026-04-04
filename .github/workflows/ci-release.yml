@@ -30,6 +30,10 @@ jobs:
           key: cargo-test
       - name: Run workspace tests
         run: cargo test --workspace
+      - name: Run host runtime smoke test
+        run: cargo test -p host-desktop runtime_start_session_returns_workspace_snapshot -- --exact
+      - name: Run Python CI and docs tests
+        run: python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
 
   test-native-windows:
     runs-on: windows-latest

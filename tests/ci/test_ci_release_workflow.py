@@ -29,6 +29,17 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_validation_structure(workflow_text)
 
+    def test_ci_runs_host_runtime_smoke_and_python_doc_tests(self) -> None:
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "cargo test -p host-desktop runtime_start_session_returns_workspace_snapshot -- --exact",
+            workflow,
+        )
+        self.assertIn(
+            "python3 -m unittest discover -s tests/ci -p 'test_*.py' -v",
+            workflow,
+        )
+
     def test_release_build_structure_contains_expected_matrix_and_artifacts(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_ci_release.assert_release_build_structure(workflow_text)
