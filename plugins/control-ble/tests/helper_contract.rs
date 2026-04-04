@@ -1,7 +1,14 @@
 use plugin_control_ble::helper_bridge::{run_execute, run_prepare, BleHelperExecution, BleHelperPrepare};
 
 #[cfg(unix)]
-use std::{env, fs, os::unix::fs::PermissionsExt, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    env, fs, os::unix::fs::PermissionsExt, path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(unix)]
+static HELPER_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(unix)]
 fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
@@ -9,9 +16,10 @@ fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    let counter = HELPER_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = env::temp_dir().join(format!(
-        "ios-control-ble-helper-{}-{nanos}.sh",
-        std::process::id()
+        "ios-control-ble-helper-{}-{nanos}-{counter}.sh",
+        std::process::id(),
     ));
     let body = format!(
         r#"#!/bin/sh

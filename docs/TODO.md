@@ -15,12 +15,16 @@ This document is meant to be a living checklist. It reflects the current codebas
 
 ### 1. Wire the desktop host to the real runtime
 
+Plan: `docs/superpowers/plans/2026-04-04-host-runtime-and-operator-workflow.md`
+
 - Add a real runtime layer to `apps/host-desktop` that owns session startup, status updates, and shutdown.
 - Replace the in-memory `HostRuntimeBridge` with a bridge that talks to `ios-control-session-orchestrator`.
 - Remove the fallback bootstrap error path and the simulated pending-start countdown from the host app.
 - Feed real session state, capture source selection, plugin health, and operator actions into the UI.
 
 ### 2. Render a real live preview
+
+Plan: `docs/superpowers/plans/2026-04-04-live-preview-capture-transport.md`
 
 - Transport actual frame bytes through the capture helpers/plugins instead of writing repeated fill bytes into frame slots.
 - Consume frame-slot pixel data in the desktop host and render it as an image instead of a text-only frame summary.
@@ -30,6 +34,8 @@ This document is meant to be a living checklist. It reflects the current codebas
   - direct receiver against a real iPhone/iPad screen-mirroring session
 
 ### 3. Complete real control execution
+
+Plan: `docs/superpowers/plans/2026-04-04-control-execution-and-observation.md`
 
 - Decide the supported production control path:
   - native BLE HID transport
@@ -41,12 +47,16 @@ This document is meant to be a living checklist. It reflects the current codebas
 
 ### 4. Close the host/operator workflow gaps
 
+Plan: `docs/superpowers/plans/2026-04-04-host-runtime-and-operator-workflow.md`
+
 - Let the operator choose devices and capture sources from real runtime data.
 - Start and stop sessions from the UI with actual runtime side effects.
 - Show actionable recovery guidance for degraded capture/control states.
 - Persist enough session/device state to support reconnect and multi-device workflows cleanly.
 
 ### 5. Add real-device validation
+
+Plan: `docs/superpowers/plans/2026-04-04-real-device-validation-and-doc-alignment.md`
 
 - Run and record manual validation for:
   - Linux + window capture + BLE HID
@@ -58,6 +68,8 @@ This document is meant to be a living checklist. It reflects the current codebas
 - Add the strongest practical automated smoke coverage for real-runtime startup without depending on physical hardware in CI.
 
 ### 6. Keep status docs aligned with code
+
+Plan: `docs/superpowers/plans/2026-04-04-real-device-validation-and-doc-alignment.md`
 
 - Keep `README.md`, this file, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md` aligned with the current branch.
 - Treat the design and plan docs in `docs/superpowers/` as historical planning artifacts unless the code and tests match them.
