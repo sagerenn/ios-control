@@ -39,6 +39,7 @@ async fn local_mock_e2e_builds_streaming_session() {
         Some("grounding.core")
     );
     assert_eq!(state.selected_source_id.as_deref(), Some("window-helper-1"));
+    assert!(state.capture_stream.is_some());
     assert!(state.latest_frame.is_some());
     assert_eq!(
         state.diagnostics.grounding_summary.as_deref(),

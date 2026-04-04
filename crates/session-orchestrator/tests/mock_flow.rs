@@ -47,6 +47,7 @@ async fn start_session_collects_mock_plugin_state() {
 
     assert_eq!(state.capture_sources.len(), 1);
     assert_eq!(state.capture_sources[0].source_id, "window-helper-1");
+    assert!(state.capture_stream.is_some());
     assert_eq!(state.latest_frame.as_ref().unwrap().source_id, "window-helper-1");
     assert!(state
         .diagnostics
@@ -138,4 +139,39 @@ async fn start_session_failure_does_not_persist_partial_state() {
     assert!(orchestrator.capabilities.entries().is_empty());
     assert!(orchestrator.devices.entries().is_empty());
     assert!(orchestrator.telemetry.events().is_empty());
+}
+
+#[tokio::test]
+async fn start_session_opens_capture_stream_and_refreshes_frames() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let _display_guard = prepare_window_runtime_env(&root);
+
+    let mut orchestrator = SessionOrchestrator::default();
+    let mut state = orchestrator
+        .start_session_with_plugins(StartSessionRequest {
+            device_id: "device-refresh".into(),
+            device_name: "Refresh Mock iPhone".into(),
+            selected_source_id: Some("window-helper-1".into()),
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert!(state.capture_stream.is_some());
+    let previous = state.latest_frame.as_ref().unwrap().frame_index;
+    let refreshed = state.refresh_capture_frame().await.unwrap();
+    assert!(refreshed.frame_index > previous);
+    assert_eq!(
+        state.capture_stream.as_ref().unwrap().source_id,
+        "window-helper-1"
+    );
+
+    state.shutdown().await.unwrap();
 }

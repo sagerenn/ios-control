@@ -161,7 +161,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let bytes = vec![event.fill_byte; state.slot.byte_len()];
+                let bytes = if event.rgba_base64.is_empty() {
+                    vec![event.fill_byte; state.slot.byte_len()]
+                } else {
+                    event.decode_rgba().map_err(Box::<dyn Error>::from)?
+                };
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {
                         message: format!("failed to write frame slot: {}", err),

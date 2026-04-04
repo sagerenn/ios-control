@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use ios_control_capability_registry::CapabilityRegistry;
-use ios_control_contracts::capture::{SourceKind, VideoFrameDescriptor, VideoSource};
+use ios_control_contracts::capture::{
+    CaptureStreamDescriptor, SourceKind, VideoFrameDescriptor, VideoSource,
+};
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
 };
@@ -65,6 +67,7 @@ pub struct ActiveSessionState {
     pub summary: DeviceSessionSummary,
     pub selected_source_id: Option<String>,
     pub capture_sources: Vec<VideoSource>,
+    pub capture_stream: Option<CaptureStreamDescriptor>,
     pub latest_frame: Option<VideoFrameDescriptor>,
     pub control_checklist: ControlSetupChecklist,
     pub diagnostics: SessionDiagnostics,
@@ -80,6 +83,7 @@ impl std::fmt::Debug for ActiveSessionState {
             .field("summary", &self.summary)
             .field("selected_source_id", &self.selected_source_id)
             .field("capture_sources", &self.capture_sources)
+            .field("capture_stream", &self.capture_stream)
             .field("latest_frame", &self.latest_frame)
             .field("control_checklist", &self.control_checklist)
             .field("diagnostics", &self.diagnostics)
@@ -144,8 +148,8 @@ impl SessionOrchestrator {
             &capture_sources,
             &capture_descriptor,
         )?;
-        let latest_frame =
-            request_capture_frame(&mut capture, &capture_descriptor, &selected_source_id).await?;
+        let (capture_stream, latest_frame) =
+            request_capture_frame(&mut capture, &selected_source_id).await?;
         staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("capture source selected: {selected_source_id}"),
@@ -177,10 +181,8 @@ impl SessionOrchestrator {
             let plan = request_grounding_plan(&mut grounding).await?;
             let (execution_result, latest_frame) = execute_grounding_plan(
                 &mut capture,
-                &capture_descriptor,
                 &mut control,
                 &plan,
-                &selected_source_id,
                 &latest_frame,
             )
             .await?;
@@ -264,6 +266,7 @@ impl SessionOrchestrator {
             summary,
             selected_source_id: Some(selected_source_id),
             capture_sources,
+            capture_stream,
             latest_frame,
             control_checklist,
             diagnostics: SessionDiagnostics {
@@ -316,6 +319,16 @@ impl SessionSupervisor {
 }
 
 impl ActiveSessionState {
+    pub async fn refresh_capture_frame(&mut self) -> Result<VideoFrameDescriptor> {
+        let capture = self
+            .capture_plugin
+            .as_mut()
+            .ok_or_else(|| anyhow!("missing capture plugin"))?;
+        let frame = read_capture_frame(capture).await?;
+        self.latest_frame = Some(frame.clone());
+        Ok(frame)
+    }
+
     pub async fn shutdown(mut self) -> Result<()> {
         let mut first_error = None;
 
@@ -332,6 +345,23 @@ impl ActiveSessionState {
             }
         }
         if let Some(mut capture) = self.capture_plugin.take() {
+            if self.capture_stream.take().is_some() {
+                match request_plugin(&mut capture, &HostToPlugin::CloseCaptureStream).await {
+                    Ok(PluginToHost::Ack) => {}
+                    Ok(other) => {
+                        if first_error.is_none() {
+                            first_error = Some(anyhow!(
+                                "unexpected capture close response during shutdown: {other:?}"
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    }
+                }
+            }
             if let Err(error) = capture.stop().await {
                 if first_error.is_none() {
                     first_error = Some(error);
@@ -389,44 +419,27 @@ fn select_source_id(
 
 async fn request_capture_frame(
     capture: &mut RunningPlugin,
-    descriptor: &PluginDescriptor,
     selected_source_id: &str,
-) -> Result<VideoFrameDescriptor> {
-    let response = if descriptor.plugin_id == "capture.direct" {
-        match request_plugin(
-            capture,
-            &HostToPlugin::OpenCaptureStream {
-                source_id: selected_source_id.into(),
-            },
-        )
-        .await?
-        {
-            PluginToHost::CaptureStreamOpened { .. } => {}
-            other => return Err(anyhow!("unexpected capture stream response: {other:?}")),
-        }
-
-        let frame = match request_plugin(capture, &HostToPlugin::ReadCaptureFrame).await? {
-            PluginToHost::CaptureFrame { frame } => frame,
-            other => return Err(anyhow!("unexpected capture frame response: {other:?}")),
-        };
-
-        match request_plugin(capture, &HostToPlugin::CloseCaptureStream).await? {
-            PluginToHost::Ack => {}
-            other => return Err(anyhow!("unexpected capture close response: {other:?}")),
-        }
-
-        return Ok(frame);
-    } else {
-        request_plugin(
-            capture,
-            &HostToPlugin::GetCaptureFrame {
-                source_id: selected_source_id.into(),
-            },
-        )
-        .await?
+) -> Result<(Option<CaptureStreamDescriptor>, VideoFrameDescriptor)> {
+    let stream = match request_plugin(
+        capture,
+        &HostToPlugin::OpenCaptureStream {
+            source_id: selected_source_id.into(),
+        },
+    )
+    .await?
+    {
+        PluginToHost::CaptureStreamOpened { stream } => stream,
+        other => return Err(anyhow!("unexpected capture stream response: {other:?}")),
     };
 
-    match response {
+    let frame = read_capture_frame(capture).await?;
+
+    Ok((Some(stream), frame))
+}
+
+async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDescriptor> {
+    match request_plugin(capture, &HostToPlugin::ReadCaptureFrame).await? {
         PluginToHost::CaptureFrame { frame } => Ok(frame),
         other => Err(anyhow!("unexpected capture frame response: {other:?}")),
     }
@@ -475,10 +488,8 @@ async fn request_grounding_plan(grounding: &mut RunningPlugin) -> Result<Groundi
 
 async fn execute_grounding_plan(
     capture: &mut RunningPlugin,
-    capture_descriptor: &PluginDescriptor,
     control: &mut RunningPlugin,
     plan: &GroundingPlan,
-    selected_source_id: &str,
     latest_frame: &VideoFrameDescriptor,
 ) -> Result<(ExecutionResult, VideoFrameDescriptor)> {
     if let Some(failure) = plan.failure {
@@ -540,7 +551,7 @@ async fn execute_grounding_plan(
             ));
         }
 
-        let frame = request_capture_frame(capture, capture_descriptor, selected_source_id).await?;
+        let frame = read_capture_frame(capture).await?;
         match ExecutionMonitor::evaluate(previous_frame_index, frame.frame_index, &mut recovery) {
             ExecutionDecision::ObservedChange => {
                 let summary_text = format_execution_summary(&summary, true, attempts - 1);

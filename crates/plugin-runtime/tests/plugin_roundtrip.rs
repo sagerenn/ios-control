@@ -169,14 +169,32 @@ async fn plugin_runtime_roundtrips_with_real_plugins() {
     };
     assert_eq!(source_id, "window-helper-1");
     window
-        .send(&HostToPlugin::GetCaptureFrame { source_id })
+        .send(&HostToPlugin::OpenCaptureStream {
+            source_id: source_id.clone(),
+        })
         .await
         .unwrap();
+    match window.read().await.unwrap() {
+        PluginToHost::CaptureStreamOpened { stream } => {
+            assert_eq!(stream.source_id, "window-helper-1");
+            assert!(stream.slot_bytes > 0);
+        }
+        other => panic!("unexpected capture-window stream-open response: {other:?}"),
+    }
+    window.send(&HostToPlugin::ReadCaptureFrame).await.unwrap();
     match window.read().await.unwrap() {
         PluginToHost::CaptureFrame { frame } => {
             assert_eq!(frame.source_id, "window-helper-1");
         }
         other => panic!("unexpected capture-window frame response: {other:?}"),
+    }
+    window
+        .send(&HostToPlugin::CloseCaptureStream)
+        .await
+        .unwrap();
+    match window.read().await.unwrap() {
+        PluginToHost::Ack => {}
+        other => panic!("unexpected capture-window close response: {other:?}"),
     }
     window.stop().await.unwrap();
 
