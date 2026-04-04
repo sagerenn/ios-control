@@ -15,9 +15,19 @@ pub struct BleHelperProbe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BleHelperPrepare {
+    pub phase: String,
+    pub checklist: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct BleHelperExecution {
     pub phase: String,
     pub summary: String,
+    #[serde(default)]
+    pub observed_change: bool,
     #[serde(default)]
     pub failure_reason: Option<String>,
 }
@@ -98,16 +108,6 @@ fn run_for_output(mut command: Command, context: &str) -> Result<Output> {
     })
 }
 
-fn run_for_status(mut command: Command, context: &str) -> Result<ExitStatus> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command.spawn()?;
-    let timeout = helper_timeout();
-    wait_for_completion(&mut child, timeout, context)
-}
-
 pub fn run_probe(helper: &Path) -> Result<BleHelperProbe> {
     let mut command = Command::new(helper);
     command.arg("probe");
@@ -118,12 +118,12 @@ pub fn run_probe(helper: &Path) -> Result<BleHelperProbe> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-pub fn run_prepare(helper: &Path) -> Result<()> {
+pub fn run_prepare(helper: &Path) -> Result<BleHelperPrepare> {
     let mut command = Command::new(helper);
     command.arg("prepare");
-    let status = run_for_status(command, "ble helper prepare")?;
-    if status.success() {
-        Ok(())
+    let output = run_for_output(command, "ble helper prepare")?;
+    if output.status.success() {
+        Ok(serde_json::from_slice(&output.stdout)?)
     } else {
         Err(anyhow!("ble helper prepare failed"))
     }

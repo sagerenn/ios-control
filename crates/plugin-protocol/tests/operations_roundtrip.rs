@@ -81,6 +81,7 @@ fn execution_messages_roundtrip() {
         summary: ExecutionSummary {
             summary: "executed keyboard plan".into(),
             phase: ExecutionPhase::Succeeded,
+            observed_change: Some(true),
             failure_reason: None,
         },
     };

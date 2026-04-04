@@ -124,27 +124,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Ok(status) if status.success() => ExecutionSummary {
                             summary: "window bridge helper executed".into(),
                             phase: ExecutionPhase::Succeeded,
+                            observed_change: None,
                             failure_reason: None,
                         },
                         Ok(_) => ExecutionSummary {
                             summary: "window bridge execution failed".into(),
                             phase: ExecutionPhase::Failed,
+                            observed_change: None,
                             failure_reason: Some("helper returned non-zero exit status".into()),
                         },
                         Err(err) => ExecutionSummary {
                             summary: "window bridge execution failed".into(),
                             phase: ExecutionPhase::Failed,
+                            observed_change: None,
                             failure_reason: Some(err.to_string()),
                         },
                     },
                     (_, Err(err)) => ExecutionSummary {
                         summary: "window bridge execution failed".into(),
                         phase: ExecutionPhase::Failed,
+                        observed_change: None,
                         failure_reason: Some(err.to_string()),
                     },
                     (None, Ok(_)) => ExecutionSummary {
                         summary: "window bridge execution failed".into(),
                         phase: ExecutionPhase::Failed,
+                        observed_change: None,
                         failure_reason: if std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER")
                             .is_some()
                         {

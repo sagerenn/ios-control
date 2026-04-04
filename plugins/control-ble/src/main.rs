@@ -4,7 +4,9 @@ use ios_control_contracts::control::{
 };
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
-use plugin_control_ble::helper_bridge::{run_execute, run_prepare, BleHelperExecution};
+use plugin_control_ble::helper_bridge::{
+    run_execute, run_prepare, BleHelperExecution, BleHelperPrepare,
+};
 use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
 use plugin_control_ble::windows_backend::probe_windows_backend;
@@ -83,6 +85,24 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
     )
 }
 
+fn helper_prepare_to_session(prepare: BleHelperPrepare) -> ControlSession {
+    let state = match prepare.phase.as_str() {
+        "Advertising" => ControlSessionState::Advertising,
+        "Connected" => ControlSessionState::Connected,
+        "ReadyToAdvertise" => ControlSessionState::Ready,
+        "Unavailable" => ControlSessionState::Unsupported,
+        "Error" => ControlSessionState::Error("ble helper prepare reported error".into()),
+        _ => ControlSessionState::Ready,
+    };
+
+    ControlSession {
+        state,
+        checklist: prepare.checklist,
+        notes: prepare.notes,
+        pending_reports: 0,
+    }
+}
+
 fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, ControlSetupChecklist) {
     let phase = match session.state {
         ControlSessionState::Unsupported => ControlSessionPhase::Unavailable,
@@ -124,6 +144,7 @@ fn summary_from_helper_execution(execution: BleHelperExecution) -> ExecutionSumm
     ExecutionSummary {
         summary: execution.summary,
         phase,
+        observed_change: Some(execution.observed_change),
         failure_reason,
     }
 }
@@ -172,13 +193,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let capability = probe_control_capability();
                 let mut snapshot = build_session_from_capability(&capability);
                 if let Some(helper) = ble_helper_path_if_supported() {
-                    if let Err(err) = run_prepare(&helper) {
-                        snapshot = ControlSession {
-                            state: ControlSessionState::Error(err.to_string()),
-                            checklist: vec![],
-                            notes: vec!["ble helper prepare failed".into()],
-                            pending_reports: 0,
-                        };
+                    match run_prepare(&helper) {
+                        Ok(prepare) => {
+                            snapshot = helper_prepare_to_session(prepare);
+                        }
+                        Err(err) => {
+                            snapshot = ControlSession {
+                                state: ControlSessionState::Error(err.to_string()),
+                                checklist: vec![],
+                                notes: vec!["ble helper prepare failed".into()],
+                                pending_reports: 0,
+                            };
+                        }
                     }
                 }
                 let (phase, checklist) = session_to_contract(&snapshot);
@@ -190,6 +216,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut summary = ExecutionSummary {
                     summary: "no control session prepared".into(),
                     phase: ExecutionPhase::Failed,
+                    observed_change: None,
                     failure_reason: Some("call PrepareControl before ExecutePlan".into()),
                 };
 
@@ -213,11 +240,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                                     Err(err) => {
                                         summary.summary = "ble helper execution failed".into();
                                         summary.phase = ExecutionPhase::Failed;
+                                        summary.observed_change = None;
                                         summary.failure_reason = Some(err.to_string());
                                     }
                                 }
                             } else {
                                 summary.summary = "ble execution helper unavailable".into();
+                                summary.observed_change = None;
                                 summary.failure_reason = Some(
                                     "configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support"
                                         .into(),

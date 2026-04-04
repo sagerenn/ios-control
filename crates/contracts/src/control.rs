@@ -53,5 +53,6 @@ pub enum ExecutionPhase {
 pub struct ExecutionSummary {
     pub summary: String,
     pub phase: ExecutionPhase,
+    pub observed_change: Option<bool>,
     pub failure_reason: Option<String>,
 }
