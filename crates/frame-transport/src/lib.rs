@@ -95,6 +95,49 @@ impl FrameSlotReader {
     }
 }
 
+pub fn decode_base64_bytes(input: &str) -> Result<Vec<u8>> {
+    let mut output = Vec::with_capacity(input.len() * 3 / 4);
+    let mut chunk = [0_u8; 4];
+    let mut len = 0_usize;
+
+    for byte in input.bytes().filter(|byte| !byte.is_ascii_whitespace()) {
+        chunk[len] = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => 64,
+            _ => bail!("invalid base64 byte"),
+        };
+        len += 1;
+
+        if len == 4 {
+            if chunk[0] == 64 || chunk[1] == 64 {
+                bail!("invalid base64 padding");
+            }
+
+            output.push((chunk[0] << 2) | (chunk[1] >> 4));
+            if chunk[2] != 64 {
+                output.push((chunk[1] << 4) | (chunk[2] >> 2));
+                if chunk[3] != 64 {
+                    output.push((chunk[2] << 6) | chunk[3]);
+                }
+            } else if chunk[3] != 64 {
+                bail!("invalid base64 padding");
+            }
+
+            len = 0;
+        }
+    }
+
+    if len != 0 {
+        bail!("invalid base64 length");
+    }
+
+    Ok(output)
+}
+
 impl Drop for FrameSlot {
     fn drop(&mut self) {
         if let Some(mmap) = self.mmap.take() {
@@ -109,7 +152,7 @@ impl Drop for FrameSlot {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameSlot, FrameSlotReader};
+    use super::{decode_base64_bytes, FrameSlot, FrameSlotReader};
 
     #[test]
     fn write_accepts_exact_size() {
@@ -131,5 +174,10 @@ mod tests {
 
         let reader = FrameSlotReader::open(slot.path(), 8).unwrap();
         assert_eq!(reader.read(), &[255, 0, 0, 255, 0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn decode_base64_bytes_decodes_rgba_payload() {
+        assert_eq!(decode_base64_bytes("AP8A/w==").unwrap(), vec![0, 255, 0, 255]);
     }
 }
