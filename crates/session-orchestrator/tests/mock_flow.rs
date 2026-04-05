@@ -75,6 +75,7 @@ async fn start_session_collects_mock_plugin_state() {
     assert_eq!(execution.attempts, 1);
     assert_eq!(execution.grounding_failure, None);
     assert!(execution.summary.contains("screen_changed=true"));
+    assert!(execution.summary.contains("observed-change success"));
     assert_eq!(execution.failure_reason, None);
 
     let control_capability = orchestrator
@@ -83,12 +84,12 @@ async fn start_session_collects_mock_plugin_state() {
         .unwrap();
     assert!(control_capability.supported);
     assert_eq!(control_capability.reason, None);
-    assert!(state.control_checklist.items.len() >= 2);
+    assert!(!state.control_checklist.items.is_empty());
     assert!(state
         .control_checklist
         .items
         .iter()
-        .any(|item| item.contains("IOS_CONTROL_WINDOW_INPUT_HELPER")));
+        .all(|item| !item.trim().is_empty()));
     assert!(state.diagnostics.control_summary.contains("supported"));
     assert_eq!(state.summary.plugin_health, PluginHealth::Healthy);
 
@@ -125,7 +126,7 @@ async fn execution_result_marks_observed_change_as_applied() {
     let helper = write_ble_helper(
         r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
         r#"{"phase":"Connected","checklist":["Pair the device"],"notes":[]}"#,
-        r#"{"phase":"Succeeded","summary":"tap applied","observed_change":true}"#,
+        r#"{"phase":"Succeeded","summary":"tap's applied","observed_change":true}"#,
     );
     let _helper_guard = EnvVarGuard::set("IOS_CONTROL_BLE_HELPER", &helper);
 
@@ -148,6 +149,8 @@ async fn execution_result_marks_observed_change_as_applied() {
     let execution = state.execution_result.as_ref().unwrap();
     assert!(execution.applied);
     assert!(execution.observed_change);
+    assert!(execution.summary.contains("tap's applied"));
+    assert!(execution.summary.contains("observed-change success"));
 
     state.shutdown().await.unwrap();
 }

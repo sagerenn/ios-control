@@ -455,13 +455,16 @@ async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDes
 async fn start_control_backend(
     paths: &PluginPaths,
 ) -> Result<(RunningPlugin, PluginDescriptor, ControlCapability)> {
-    let mut ble = RunningPlugin::spawn(&paths.control_ble).await?;
-    let ble_descriptor = ble.handshake().await?;
-    let ble_capability = request_control_capability(&mut ble).await?;
-    if ble_capability.supported {
-        return Ok((ble, ble_descriptor, ble_capability));
+    if let Ok(mut ble) = RunningPlugin::spawn(&paths.control_ble).await {
+        if let Ok(ble_descriptor) = ble.handshake().await {
+            if let Ok(ble_capability) = request_control_capability(&mut ble).await {
+                if ble_capability.supported {
+                    return Ok((ble, ble_descriptor, ble_capability));
+                }
+            }
+        }
+        let _ = ble.stop().await;
     }
-    ble.stop().await?;
 
     let mut fallback = RunningPlugin::spawn(&paths.control_fallback).await?;
     let fallback_descriptor = fallback.handshake().await?;
@@ -578,7 +581,10 @@ async fn execute_grounding_plan(
         let frame = read_capture_frame(capture).await?;
         match ExecutionMonitor::evaluate(previous_frame_index, frame.frame_index, &mut recovery) {
             ExecutionDecision::ObservedChange => {
-                let summary_text = format_execution_summary(&summary, true, attempts - 1);
+                let mut summary_text = format_execution_summary(&summary, true, attempts - 1);
+                summary_text.push_str(
+                    "; observed-change success: screen changed after execution, semantic confirmation pending",
+                );
                 return Ok((
                     ExecutionResult {
                         applied: summary.phase == ExecutionPhase::Succeeded,

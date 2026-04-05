@@ -116,17 +116,26 @@ pub fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
         "ios-control-session-orchestrator-ble-helper-{}-{nanos}-{counter}.sh",
         std::process::id()
     ));
+    let probe_tag = format!("IOS_CONTROL_BLE_HELPER_PROBE_{nanos}_{counter}");
+    let prepare_tag = format!("IOS_CONTROL_BLE_HELPER_PREPARE_{nanos}_{counter}");
+    let execute_tag = format!("IOS_CONTROL_BLE_HELPER_EXECUTE_{nanos}_{counter}");
     let body = format!(
         r#"#!/bin/sh
 case "$1" in
   probe)
-    printf '%s\n' '{probe}'
+    cat <<'{probe_tag}'
+{probe}
+{probe_tag}
     ;;
   prepare)
-    printf '%s\n' '{prepare}'
+    cat <<'{prepare_tag}'
+{prepare}
+{prepare_tag}
     ;;
   execute)
-    printf '%s\n' '{execute}'
+    cat <<'{execute_tag}'
+{execute}
+{execute_tag}
     ;;
   *)
     exit 2
