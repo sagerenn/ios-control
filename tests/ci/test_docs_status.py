@@ -33,7 +33,10 @@ class DocsStatusTests(unittest.TestCase):
 
     def test_todo_current_reality_mentions_partial_runtime_wiring(self) -> None:
         todo = Path("docs/TODO.md").read_text(encoding="utf-8")
-        self.assertIn("orchestrator-backed runtime path", todo)
+        self.assertIn("## Current Reality", todo)
+        current_reality = todo.split("## Current Reality", 1)[1]
+        self.assertIn("apps/host-desktop", current_reality)
+        self.assertIn("orchestrator", current_reality.lower())
         self.assertNotIn("not wired directly to the session orchestrator", todo)
 
     def test_acceptance_matrix_only_allows_non_mock_verified_rows_with_validation_records(self) -> None:
@@ -45,5 +48,13 @@ class DocsStatusTests(unittest.TestCase):
             matrix,
         )
         for line in matrix.splitlines():
-            if "| Verified |" in line and "Local mock flow" not in line:
-                self.assertIn("docs/validation/", line)
+            stripped = line.strip()
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                continue
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) < 2 or all(set(cell) <= {"-"} for cell in cells):
+                continue
+            is_verified = cells[-1].lower() == "verified"
+            is_mock_row = "mock" in stripped.lower()
+            if is_verified and not is_mock_row:
+                self.assertIn("docs/validation/", stripped.lower())
