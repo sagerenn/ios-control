@@ -98,6 +98,15 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_ci_release.assert_full_workflow(workflow_text)
 
+    def test_publish_tag_uses_idempotent_release_commands(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn('gh release view "$tag" --repo "$GH_REPO"', workflow_text)
+        self.assertIn('gh release upload "$tag" upload/* --clobber --repo "$GH_REPO"', workflow_text)
+        self.assertIn(
+            'gh release create "$tag" upload/* --repo "$GH_REPO" --verify-tag --title "$tag" --generate-notes',
+            workflow_text,
+        )
+
     def test_full_workflow_rejects_missing_publish_invariants(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         without_prerelease = workflow_text.replace("prerelease: true\n", "", 1)
@@ -112,9 +121,13 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(without_flatten)
 
-        without_release_notes = workflow_text.replace("generate_release_notes: true\n", "", 1)
+        without_tag_release_create = workflow_text.replace(
+            '            gh release create "$tag" upload/* --repo "$GH_REPO" --verify-tag --title "$tag" --generate-notes\n',
+            "",
+            1,
+        )
         with self.assertRaises(AssertionError):
-            assert_ci_release.assert_full_workflow(without_release_notes)
+            assert_ci_release.assert_full_workflow(without_tag_release_create)
 
     def test_full_workflow_rejects_cleanup_with_blanket_or_true(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -155,8 +168,8 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_full_workflow_rejects_wrong_tag_release_identity(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "tag_name: ${{ github.ref_name }}\n",
-            "tag_name: ${{ github.sha }}\n",
+            '          tag="${GITHUB_REF_NAME}"\n',
+            '          tag="${GITHUB_SHA}"\n',
             1,
         )
         with self.assertRaises(AssertionError):
@@ -190,19 +203,19 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
-    def test_full_workflow_rejects_wrong_publish_tag_release_name(self) -> None:
+    def test_full_workflow_rejects_wrong_publish_tag_release_title(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "          name: ${{ github.ref_name }}\n",
-            "          name: ${{ github.sha }}\n",
+            '            gh release create "$tag" upload/* --repo "$GH_REPO" --verify-tag --title "$tag" --generate-notes\n',
+            '            gh release create "$tag" upload/* --repo "$GH_REPO" --verify-tag --title "$GITHUB_SHA" --generate-notes\n',
             1,
         )
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
-    def test_full_workflow_rejects_publish_tag_overwrite(self) -> None:
+    def test_full_workflow_rejects_missing_publish_tag_clobber(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        mutated = workflow_text.replace("overwrite_files: false\n", "overwrite_files: true\n", 1)
+        mutated = workflow_text.replace("--clobber ", "", 1)
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 

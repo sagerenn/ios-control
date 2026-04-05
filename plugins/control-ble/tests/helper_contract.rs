@@ -1,17 +1,24 @@
-use plugin_control_ble::helper_bridge::{run_execute, run_prepare, BleHelperExecution, BleHelperPrepare};
-
-#[cfg(unix)]
+use plugin_control_ble::helper_bridge::{
+    run_execute, run_prepare, run_probe, BleHelperExecution, BleHelperPrepare,
+};
 use std::{
-    env, fs, os::unix::fs::PermissionsExt, path::PathBuf,
+    env, fs,
+    path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 static HELPER_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(unix)]
-fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
+fn write_ble_helper_with_mode(
+    probe: &str,
+    prepare: &str,
+    execute: &str,
+    executable: bool,
+) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -40,10 +47,35 @@ esac
 "#
     );
     fs::write(&path, body).unwrap();
-    let mut perms = fs::metadata(&path).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).unwrap();
+    #[cfg(unix)]
+    if executable {
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+    }
     path
+}
+
+#[cfg(unix)]
+fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
+    write_ble_helper_with_mode(probe, prepare, execute, true)
+}
+
+#[test]
+fn ble_helper_probe_runs_shell_script_helpers() {
+    let helper = write_ble_helper_with_mode(
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
+        r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":[]}"#,
+        r#"{"phase":"Succeeded","summary":"tap applied","observed_change":true}"#,
+        false,
+    );
+
+    let probe = run_probe(&helper).unwrap();
+    assert!(probe.supported);
+    assert!(probe.supports_prepare);
+    assert!(probe.supports_execute);
+
+    let _ = fs::remove_file(helper);
 }
 
 #[cfg(unix)]

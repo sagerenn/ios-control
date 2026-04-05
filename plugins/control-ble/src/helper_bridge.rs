@@ -35,6 +35,16 @@ pub struct BleHelperExecution {
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 const POLL_INTERVAL_MS: u64 = 10;
 
+fn helper_command(helper: &Path) -> Command {
+    if helper.extension().and_then(|ext| ext.to_str()) == Some("sh") {
+        let mut command = Command::new("sh");
+        command.arg(helper);
+        return command;
+    }
+
+    Command::new(helper)
+}
+
 fn helper_timeout() -> Duration {
     let from_env = env::var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS")
         .ok()
@@ -44,11 +54,7 @@ fn helper_timeout() -> Duration {
     Duration::from_millis(from_env)
 }
 
-fn wait_for_completion(
-    child: &mut Child,
-    timeout: Duration,
-    context: &str,
-) -> Result<ExitStatus> {
+fn wait_for_completion(child: &mut Child, timeout: Duration, context: &str) -> Result<ExitStatus> {
     let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait()? {
@@ -109,7 +115,7 @@ fn run_for_output(mut command: Command, context: &str) -> Result<Output> {
 }
 
 pub fn run_probe(helper: &Path) -> Result<BleHelperProbe> {
-    let mut command = Command::new(helper);
+    let mut command = helper_command(helper);
     command.arg("probe");
     let output = run_for_output(command, "ble helper probe")?;
     if !output.status.success() {
@@ -119,7 +125,7 @@ pub fn run_probe(helper: &Path) -> Result<BleHelperProbe> {
 }
 
 pub fn run_prepare(helper: &Path) -> Result<BleHelperPrepare> {
-    let mut command = Command::new(helper);
+    let mut command = helper_command(helper);
     command.arg("prepare");
     let output = run_for_output(command, "ble helper prepare")?;
     if output.status.success() {
@@ -130,7 +136,7 @@ pub fn run_prepare(helper: &Path) -> Result<BleHelperPrepare> {
 }
 
 pub fn run_execute(helper: &Path, plan_kind: &str) -> Result<BleHelperExecution> {
-    let mut command = Command::new(helper);
+    let mut command = helper_command(helper);
     command.args(["execute", "--plan-kind", plan_kind]);
     let output = run_for_output(command, "ble helper execute")?;
     if !output.status.success() {

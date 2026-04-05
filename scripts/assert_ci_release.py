@@ -281,21 +281,22 @@ def assert_full_workflow(text: str) -> None:
             "runs-on: ubuntu-latest",
             "permissions:",
             "contents: write",
+            "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+            "GH_REPO: ${{ github.repository }}",
             "actions/download-artifact@v5",
             "mkdir -p upload",
             'find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/',
             "upload/",
-            "softprops/action-gh-release@v2",
-            "files: upload/*",
-            "fail_on_unmatched_files: true",
-            "overwrite_files: false",
-            "generate_release_notes: true",
-            "tag_name: ${{ github.ref_name }}",
+            'tag="${GITHUB_REF_NAME}"',
+            'gh release view "$tag" --repo "$GH_REPO"',
+            'gh release upload "$tag" upload/* --clobber --repo "$GH_REPO"',
+            'gh release create "$tag" upload/* --repo "$GH_REPO" --verify-tag --title "$tag" --generate-notes',
         ],
         "publish-tag",
     )
     _assert_line(publish_main, "name: rolling-main", "publish-main")
-    _assert_line(publish_tag, "name: ${{ github.ref_name }}", "publish-tag")
+    if "softprops/action-gh-release@v2" in publish_tag:
+        raise AssertionError("publish-tag must use gh release commands, not softprops/action-gh-release")
     _assert_snippets(text, PUBLISH_SNIPPETS, "publish")
 
 
