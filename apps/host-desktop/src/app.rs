@@ -129,6 +129,10 @@ impl HostDesktopApp {
         self.sync_from_runtime();
     }
 
+    pub fn apply_startup_view(&mut self, startup: StartupViewModel) {
+        self.startup = startup;
+    }
+
     fn persist_preferences(&mut self) {
         if let Some(store) = self.preferences_store.as_ref() {
             if let Err(error) = store.save(&self.preferences) {

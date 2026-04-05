@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use host_desktop::runtime::{HostRuntime, HostRuntimeConfig};
 use ios_control_contracts::session::SessionPhase;
 
 mod support;
 use support::{
-    build_plugins, host_plugin_paths, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+    build_plugins, host_plugin_paths, prepare_window_runtime_env, runtime_env_lock, target_dir,
+    workspace_root,
 };
 
 #[test]
@@ -57,4 +60,24 @@ fn runtime_refresh_session_updates_workspace_latest_frame() {
 
     let refreshed = runtime.refresh_session("device-1").unwrap();
     assert!(refreshed.workspace.latest_frame.unwrap().frame_index > first);
+}
+
+#[test]
+fn runtime_bootstrap_uses_repo_layout_without_env_vars() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+
+    let bootstrap = host_desktop::bootstrap::bootstrap_startup(
+        target_dir(&root).join(format!("debug/host-desktop{}", std::env::consts::EXE_SUFFIX)),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+    )
+    .unwrap();
+
+    assert!(bootstrap
+        .layout
+        .plugin_paths
+        .capture
+        .ends_with(format!("plugin-capture-window{}", std::env::consts::EXE_SUFFIX)));
+    assert!(!bootstrap.startup.summary.is_empty());
 }
