@@ -1,4 +1,5 @@
 use anyhow::Result;
+use ios_control_contracts::capture::FrameHealth;
 use ios_control_frame_transport::decode_base64_bytes;
 use serde::Deserialize;
 
@@ -14,9 +15,14 @@ pub struct HelperFrameEvent {
     pub width: u32,
     pub height: u32,
     #[serde(default)]
-    pub fill_byte: u8,
-    #[serde(default)]
+    pub rotation_degrees: u16,
+    #[serde(default = "default_frame_health")]
+    pub health: FrameHealth,
     pub rgba_base64: String,
+}
+
+fn default_frame_health() -> FrameHealth {
+    FrameHealth::Healthy
 }
 
 impl HelperFrameEvent {

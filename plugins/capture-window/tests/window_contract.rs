@@ -1,3 +1,4 @@
+use ios_control_contracts::capture::FrameHealth;
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use plugin_capture_window::helper_bridge::{
     read_next_frame_event, run_probe, HelperFrameEvent, HelperProbe,
@@ -143,14 +144,16 @@ fn window_helper_probe_requires_display_name_and_bridge_support() {
 
 #[test]
 fn window_helper_frame_event_roundtrips_frame_metadata() {
-    let event: HelperFrameEvent =
-        serde_json::from_str(r#"{"frame_index":7,"width":1280,"height":720,"fill_byte":42}"#)
-            .unwrap();
+    let event: HelperFrameEvent = serde_json::from_str(
+        r#"{"frame_index":7,"width":1280,"height":720,"rotation_degrees":90,"health":"Occluded","rgba_base64":"AP8A/w=="}"#,
+    )
+    .unwrap();
 
     assert_eq!(event.frame_index, 7);
     assert_eq!(event.width, 1280);
     assert_eq!(event.height, 720);
-    assert_eq!(event.fill_byte, 42);
+    assert_eq!(event.rotation_degrees, 90);
+    assert_eq!(event.health, FrameHealth::Occluded);
 }
 
 #[test]
@@ -164,6 +167,25 @@ fn helper_frame_event_decodes_rgba_payload() {
     assert_eq!(event.width, 2);
     assert_eq!(event.height, 1);
     assert_eq!(event.decode_rgba().unwrap(), vec![0, 255, 0, 255]);
+}
+
+#[test]
+fn helper_frame_event_decodes_rgba_rotation_and_health() {
+    let event: HelperFrameEvent = serde_json::from_str(
+        r#"{
+            "frame_index": 4,
+            "width": 2,
+            "height": 1,
+            "rotation_degrees": 90,
+            "health": "Occluded",
+            "rgba_base64": "AQIDBAUGBwg="
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(event.decode_rgba().unwrap(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(event.rotation_degrees, 90);
+    assert_eq!(event.health, FrameHealth::Occluded);
 }
 
 #[test]
@@ -225,7 +247,7 @@ if [ "$1" = "probe" ]; then
   exit 0
 fi
 if [ "$1" = "stream" ]; then
-  echo '{"frame_index":1,"width":1280,"height":720,"fill_byte":5}'
+  echo '{"frame_index":1,"width":1280,"height":720,"rotation_degrees":0,"health":"Healthy","rgba_base64":"AQIDBA=="}'
   exit 0
 fi
 exit 2
@@ -275,7 +297,7 @@ if [ "$1" = "probe" ]; then
   exit 0
 fi
 if [ "$1" = "stream" ]; then
-  echo '{"frame_index":9,"width":640,"height":480,"fill_byte":7}'
+  echo '{"frame_index":9,"width":640,"height":480,"rotation_degrees":0,"health":"Healthy","rgba_base64":"AQIDBA=="}'
   exit 0
 fi
 exit 2
@@ -372,7 +394,8 @@ if [ "$1" = "probe" ]; then
   exit 0
 fi
 if [ "$1" = "stream" ]; then
-  echo '{"frame_index":1,"width":1280,"height":720,"fill_byte":7}'
+  payload="$(head -c 3686400 /dev/zero | tr '\0' '\7' | base64 | tr -d '\n')"
+  printf '{"frame_index":1,"width":1280,"height":720,"rotation_degrees":0,"health":"Healthy","rgba_base64":"%s"}\n' "$payload"
   exit 0
 fi
 exit 2

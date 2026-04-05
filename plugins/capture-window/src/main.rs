@@ -1,6 +1,4 @@
-use ios_control_contracts::capture::{
-    CaptureCapability, CaptureStreamDescriptor, FrameHealth, SourceKind,
-};
+use ios_control_contracts::capture::{CaptureCapability, CaptureStreamDescriptor, SourceKind};
 use ios_control_frame_transport::FrameSlot;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
@@ -15,6 +13,8 @@ const PROTOCOL_VERSION: u32 = 3;
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
 const STREAM_WIDTH: u32 = 1280;
 const STREAM_HEIGHT: u32 = 720;
+const BASE64_CHARS: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 struct StreamState {
     source_id: String,
@@ -59,6 +59,41 @@ fn write_reply(stdout: &mut impl Write, reply: &PluginToHost) -> Result<(), Box<
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
+}
+
+fn encode_base64_bytes(input: &[u8]) -> String {
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    let mut i = 0usize;
+    while i + 3 <= input.len() {
+        let b0 = input[i];
+        let b1 = input[i + 1];
+        let b2 = input[i + 2];
+        out.push(BASE64_CHARS[(b0 >> 2) as usize] as char);
+        out.push(BASE64_CHARS[((b0 & 0x03) << 4 | (b1 >> 4)) as usize] as char);
+        out.push(BASE64_CHARS[((b1 & 0x0f) << 2 | (b2 >> 6)) as usize] as char);
+        out.push(BASE64_CHARS[(b2 & 0x3f) as usize] as char);
+        i += 3;
+    }
+
+    match input.len() - i {
+        1 => {
+            let b0 = input[i];
+            out.push(BASE64_CHARS[(b0 >> 2) as usize] as char);
+            out.push(BASE64_CHARS[((b0 & 0x03) << 4) as usize] as char);
+            out.push('=');
+            out.push('=');
+        }
+        2 => {
+            let b0 = input[i];
+            let b1 = input[i + 1];
+            out.push(BASE64_CHARS[(b0 >> 2) as usize] as char);
+            out.push(BASE64_CHARS[((b0 & 0x03) << 4 | (b1 >> 4)) as usize] as char);
+            out.push(BASE64_CHARS[((b1 & 0x0f) << 2) as usize] as char);
+            out.push('=');
+        }
+        _ => {}
+    }
+    out
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -239,11 +274,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                     write_reply(&mut stdout, &reply)?;
                     continue;
                 }
-                let bytes = if event.rgba_base64.is_empty() {
-                    vec![event.fill_byte; state.slot.byte_len()]
-                } else {
-                    event.decode_rgba().map_err(Box::<dyn Error>::from)?
-                };
+                let bytes = event.decode_rgba().map_err(Box::<dyn Error>::from)?;
+                if bytes.len() != state.slot.byte_len() {
+                    let reply = PluginToHost::Error {
+                        message: format!(
+                            "helper frame payload size mismatch: expected {}, got {}",
+                            state.slot.byte_len(),
+                            bytes.len()
+                        ),
+                    };
+                    write_reply(&mut stdout, &reply)?;
+                    continue;
+                }
                 if let Err(err) = state.slot.write(&bytes) {
                     let reply = PluginToHost::Error {
                         message: format!("failed to write frame slot: {}", err),
@@ -261,7 +303,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut frame = mock_frame(&state.source_id, frame_index);
                 frame.width = event.width;
                 frame.height = event.height;
-                frame.health = FrameHealth::Healthy;
+                frame.rotation_degrees = event.rotation_degrees;
+                frame.health = event.health;
                 let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -316,11 +359,14 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
         "stream" => {
             let _ = args.next();
             let _ = args.next();
+            let rgba = encode_base64_bytes(&vec![128_u8; (STREAM_WIDTH * STREAM_HEIGHT * 4) as usize]);
             let payload = serde_json::json!({
                 "frame_index": 1_u64,
-                "width": 1280_u32,
-                "height": 720_u32,
-                "fill_byte": 128_u8
+                "width": STREAM_WIDTH,
+                "height": STREAM_HEIGHT,
+                "rotation_degrees": 0_u16,
+                "health": "Healthy",
+                "rgba_base64": rgba
             });
             println!("{}", serde_json::to_string(&payload)?);
             Ok(true)
