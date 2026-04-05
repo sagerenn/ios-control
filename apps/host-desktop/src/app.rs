@@ -90,6 +90,15 @@ impl HostDesktopApp {
                 host_error: None,
                 control_summary: "control not started".into(),
                 grounding_summary: "grounding idle".into(),
+                startup_probe_runs: 0,
+                inventory_refreshes: 0,
+                inventory_rows: 0,
+                inventory_startable_rows: 0,
+                inventory_blocked_rows: 0,
+                session_start_attempts: 0,
+                session_start_successes: 0,
+                session_start_failures: 0,
+                log_lines: Vec::new(),
             },
             settings: SettingsViewModel {
                 plugin_rows: Vec::new(),
@@ -105,6 +114,7 @@ impl HostDesktopApp {
     pub fn with_runtime(config: HostRuntimeConfig) -> Self {
         let mut app = Self::new();
         app.startup = startup_from_plugin_paths(&config.plugin_paths);
+        app.diagnostics.record_startup_view(&app.startup);
         app.runtime_config = Some(config.clone());
         app.host_runtime =
             Some(HostRuntime::new(config).expect("host runtime should initialize successfully"));
@@ -148,22 +158,25 @@ impl HostDesktopApp {
     }
 
     pub fn apply_startup_view(&mut self, startup: StartupViewModel) {
+        self.diagnostics.record_startup_view(&startup);
         self.startup = startup;
     }
 
     pub fn apply_inventory_snapshot(&mut self, snapshot: InventorySnapshot) {
+        self.diagnostics.record_inventory_snapshot(&snapshot);
         self.inventory_snapshot = snapshot;
         self.sync_from_inventory_and_runtime();
     }
 
     fn refresh_inventory(&mut self) {
         let Some(config) = self.runtime_config.as_ref() else {
-            self.inventory_snapshot = InventorySnapshot::default();
-            self.sync_from_inventory_and_runtime();
+            self.apply_inventory_snapshot(InventorySnapshot::default());
             return;
         };
-        self.inventory_snapshot = collect_inventory_snapshot(&config.plugin_paths, &self.preferences);
-        self.sync_from_inventory_and_runtime();
+        self.apply_inventory_snapshot(collect_inventory_snapshot(
+            &config.plugin_paths,
+            &self.preferences,
+        ));
     }
 
     fn persist_preferences(&mut self) {
@@ -179,6 +192,7 @@ impl HostDesktopApp {
         device_id: &str,
         device_name: &str,
         source_id: Option<String>,
+        stable_id: Option<String>,
     ) {
         if let Some(existing) = self
             .preferences
@@ -188,13 +202,16 @@ impl HostDesktopApp {
         {
             existing.display_name = device_name.into();
             existing.last_source_id = source_id;
+            if stable_id.is_some() {
+                existing.stable_id = stable_id;
+            }
             return;
         }
 
         self.preferences.known_devices.push(KnownDevicePreference {
             known_device_id: device_id.into(),
             display_name: device_name.into(),
-            stable_id: None,
+            stable_id,
             last_source_id: source_id,
         });
     }
@@ -237,6 +254,10 @@ impl HostDesktopApp {
             self.diagnostics.host_error = Some(message.into());
             self.diagnostics.control_summary = "control blocked".into();
             self.diagnostics.grounding_summary = "grounding blocked".into();
+            self.diagnostics.record_session_start_failure(
+                self.selected_device_id.as_deref(),
+                message,
+            );
             return;
         }
 
@@ -246,6 +267,8 @@ impl HostDesktopApp {
             .or_else(|| self.available_device_ids.first().cloned())
         else {
             self.session = SessionViewModel::error("No device selected");
+            self.diagnostics
+                .record_session_start_failure(None, "No device selected");
             return;
         };
 
@@ -294,6 +317,14 @@ impl HostDesktopApp {
             .clone()
             .or(restored_source.clone())
             .or(inferred_source);
+        self.diagnostics
+            .record_session_start_attempt(&device_id, selected_source_id.as_deref());
+        let selected_device_stable_id = self
+            .inventory_snapshot
+            .devices
+            .iter()
+            .find(|device| device.inventory_id == device_id)
+            .and_then(|device| device.stable_id.clone());
         self.selected_device_id = Some(device_id.clone());
         self.session = SessionViewModel::starting();
         self.diagnostics.host_error = None;
@@ -317,6 +348,11 @@ impl HostDesktopApp {
                         &device_id,
                         &snapshot.workspace.summary.device_name,
                         snapshot.workspace.selected_source_id.clone(),
+                        selected_device_stable_id.clone(),
+                    );
+                    self.diagnostics.record_session_start_success(
+                        &device_id,
+                        snapshot.workspace.selected_source_id.as_deref(),
                     );
                     self.apply_runtime_snapshot(snapshot);
                     self.clear_restored_source_preference_for_device(&device_id);
@@ -343,9 +379,11 @@ impl HostDesktopApp {
                         continue;
                     }
                     self.session = SessionViewModel::error(&message);
-                    self.diagnostics.host_error = Some(message);
+                    self.diagnostics.host_error = Some(message.clone());
                     self.diagnostics.control_summary = "control blocked".into();
                     self.diagnostics.grounding_summary = "grounding blocked".into();
+                    self.diagnostics
+                        .record_session_start_failure(Some(&device_id), &message);
                     return;
                 }
             }
@@ -382,6 +420,11 @@ impl HostDesktopApp {
 
         self.device_detail.active_source_id = Some(source.source_id.clone());
         self.session.selected_source = Some(source.clone());
+        self.session.start_enabled = !matches!(
+            self.session.ui_state,
+            crate::view_models::session::SessionUiState::Streaming
+                | crate::view_models::session::SessionUiState::Starting
+        );
         self.manual_source_selection_device_id = self.selected_device_id.clone();
         if let Some(device_id) = self.selected_device_id.clone() {
             self.clear_restored_source_preference_for_device(device_id.as_str());
@@ -567,13 +610,23 @@ impl HostDesktopApp {
     }
 
     fn apply_inventory_detail(&mut self, device: InventoryDevice) {
+        let capture_sources = self.capture_sources_for_device(&device);
         let selected_source = device
             .mirror_source_id
             .as_ref()
-            .map(|source_id| CaptureSourceOption::new(source_id, &device.display_name));
+            .and_then(|source_id| capture_sources.iter().find(|source| source.source_id == *source_id))
+            .cloned()
+            .or_else(|| {
+                self.device_detail
+                    .active_source_id
+                    .as_ref()
+                    .and_then(|source_id| capture_sources.iter().find(|source| source.source_id == *source_id))
+                    .cloned()
+            });
         self.device_detail.device_name = device.display_name.clone();
-        self.device_detail.capture_sources = selected_source.clone().into_iter().collect();
-        self.device_detail.active_source_id = device.mirror_source_id.clone();
+        self.device_detail.capture_sources = capture_sources;
+        self.device_detail.active_source_id =
+            selected_source.as_ref().map(|source| source.source_id.clone());
         self.device_detail.control_checklist = ControlSetupChecklist {
             items: device.reasons.clone(),
         };
@@ -605,6 +658,37 @@ impl HostDesktopApp {
                 selected_source,
             ),
         };
+    }
+
+    fn capture_sources_for_device(&self, device: &InventoryDevice) -> Vec<CaptureSourceOption> {
+        if let Some(source_id) = device.mirror_source_id.as_ref() {
+            return vec![self.capture_source_option(source_id, &device.display_name)];
+        }
+
+        let mut seen = std::collections::BTreeSet::new();
+        self.inventory_snapshot
+            .devices
+            .iter()
+            .filter(|candidate| candidate.live)
+            .filter_map(|candidate| {
+                candidate
+                    .mirror_source_id
+                    .as_ref()
+                    .filter(|source_id| seen.insert((**source_id).to_string()))
+                    .map(|source_id| self.capture_source_option(source_id, &candidate.display_name))
+            })
+            .collect()
+    }
+
+    fn capture_source_option(&self, source_id: &str, fallback_name: &str) -> CaptureSourceOption {
+        let display_name = self
+            .inventory_snapshot
+            .devices
+            .iter()
+            .find(|candidate| candidate.mirror_source_id.as_deref() == Some(source_id))
+            .map(|candidate| candidate.display_name.as_str())
+            .unwrap_or(fallback_name);
+        CaptureSourceOption::new(source_id, display_name)
     }
 
     fn poll_inventory_refresh_if_due(&mut self, now: Instant) {
@@ -797,6 +881,8 @@ impl eframe::App for HostDesktopApp {
             };
             diagnostics::render(ui, &diagnostic_message);
             diagnostics::render_control_diagnostics(ui, &self.diagnostics.control_summary);
+            diagnostics::render_host_metrics(ui, &self.diagnostics.metric_lines());
+            diagnostics::render_host_logs(ui, &self.diagnostics.log_lines);
             ui.separator();
             settings::render_rows(ui, &self.settings.plugin_rows);
             ui.separator();

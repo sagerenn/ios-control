@@ -29,3 +29,17 @@ pub fn render_control_diagnostics(ui: &mut Ui, message: &str) {
     ui.heading("Control Diagnostics");
     ui.label(message);
 }
+
+pub fn render_host_metrics(ui: &mut Ui, metrics: &[String]) {
+    ui.heading("Host Metrics");
+    for metric in metrics {
+        ui.label(metric);
+    }
+}
+
+pub fn render_host_logs(ui: &mut Ui, logs: &[String]) {
+    ui.heading("Host Logs");
+    for log in logs {
+        ui.label(log);
+    }
+}

@@ -21,6 +21,12 @@ impl EnvVarGuard {
         std::env::set_var(key, value);
         Self { key, original }
     }
+
+    pub fn remove(key: &'static str) -> Self {
+        let original = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, original }
+    }
 }
 
 pub struct EnvVarGuards {

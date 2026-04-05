@@ -239,6 +239,35 @@ fn partially_discovered_inventory() -> host_desktop::inventory::model::Inventory
     }])
 }
 
+fn bluetooth_and_unlinked_mirror_inventory() -> host_desktop::inventory::model::InventorySnapshot {
+    aggregate_inventory(vec![
+        DeviceObservation {
+            provider: InventoryEvidenceSource::Bluetooth,
+            stable_id: Some("bt:AA-BB".into()),
+            known_device_id: None,
+            display_name: "Alice iPhone".into(),
+            mirror_source_id: None,
+            live: true,
+            capture_state: CapabilityState::Unavailable,
+            preferred_control_state: CapabilityState::Ready,
+            fallback_control_state: CapabilityState::Unavailable,
+            reasons: vec!["paired over bluetooth".into(), "no capture path observed".into()],
+        },
+        DeviceObservation {
+            provider: InventoryEvidenceSource::Mirror,
+            stable_id: None,
+            known_device_id: None,
+            display_name: "Operator Mirror".into(),
+            mirror_source_id: Some("window-helper-1".into()),
+            live: true,
+            capture_state: CapabilityState::Ready,
+            preferred_control_state: CapabilityState::Unavailable,
+            fallback_control_state: CapabilityState::Ready,
+            reasons: vec![],
+        },
+    ])
+}
+
 #[test]
 fn host_app_boots_without_inventing_a_mock_device() {
     let app = HostDesktopApp::new();
@@ -303,6 +332,76 @@ fn host_app_displays_partially_discovered_inventory_rows() {
         .iter()
         .any(|note| note.contains("paired over bluetooth")));
     assert_eq!(app.session.ui_state, SessionUiState::Error("No capture path observed".into()));
+}
+
+#[test]
+fn host_app_surfaces_observed_capture_sources_for_bluetooth_only_rows() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
+    app.select_device("bt:AA-BB");
+
+    assert_eq!(
+        app.device_detail.capture_sources,
+        vec![CaptureSourceOption::new("window-helper-1", "Operator Mirror")]
+    );
+}
+
+#[test]
+fn host_app_can_link_bluetooth_row_to_observed_capture_source_and_persist_identity() {
+    let mut fixture = host_app_with_runtime_and_preferences("{}");
+    fixture
+        .app
+        .apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
+    fixture.app.select_device("bt:AA-BB");
+    fixture.app.select_capture_source("window-helper-1");
+
+    assert!(fixture.app.session.can_start());
+
+    fixture.app.request_start_session();
+
+    let prefs_path = fixture.preferences_path.as_ref().unwrap();
+    let prefs = HostPreferencesStore::new(prefs_path.clone()).load().unwrap();
+    let linked = prefs
+        .known_devices
+        .iter()
+        .find(|device| device.known_device_id == "bt:AA-BB")
+        .expect("expected linked bluetooth device preference");
+    assert_eq!(linked.stable_id.as_deref(), Some("bt:AA-BB"));
+    assert_eq!(linked.last_source_id.as_deref(), Some("window-helper-1"));
+}
+
+#[test]
+fn host_app_records_inventory_diagnostic_metrics_and_logs() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
+
+    let diagnostics = format!("{:?}", app.diagnostics);
+    assert!(diagnostics.contains("inventory_refreshes: 1"), "{diagnostics}");
+    assert!(diagnostics.contains("inventory_rows: 2"), "{diagnostics}");
+    assert!(diagnostics.contains("inventory_startable_rows: 1"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("inventory snapshot total=2 startable=1 blocked=1"),
+        "{diagnostics}"
+    );
+}
+
+#[test]
+fn host_app_records_session_start_diagnostic_metrics_and_logs() {
+    let mut fixture = host_app_with_runtime_and_preferences("{}");
+    fixture
+        .app
+        .apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
+    fixture.app.select_device("bt:AA-BB");
+    fixture.app.select_capture_source("window-helper-1");
+    fixture.app.request_start_session();
+
+    let diagnostics = format!("{:?}", fixture.app.diagnostics);
+    assert!(diagnostics.contains("session_start_attempts: 1"), "{diagnostics}");
+    assert!(diagnostics.contains("session_start_successes: 1"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("session start succeeded device=bt:AA-BB source=window-helper-1"),
+        "{diagnostics}"
+    );
 }
 
 #[test]

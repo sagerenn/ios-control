@@ -21,7 +21,7 @@ impl WindowHelperConfig {
 
     pub fn from_env() -> Option<Self> {
         Self::from_parts(
-            std::env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER").map(PathBuf::from),
+            resolve_window_capture_helper(),
             std::env::var("IOS_CONTROL_WINDOW_CAPTURE_NAME").ok(),
         )
     }
@@ -51,4 +51,40 @@ impl WindowHelperConfig {
             kind: SourceKind::Window,
         }]
     }
+}
+
+pub fn resolve_window_capture_helper() -> Option<PathBuf> {
+    std::env::var_os("IOS_CONTROL_WINDOW_CAPTURE_HELPER")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(resolve_packaged_window_capture_helper)
+}
+
+fn resolve_packaged_window_capture_helper() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok()?;
+    let exe_dir = current_exe.parent()?;
+
+    let sibling = exe_dir.join(format!(
+        "window-capture-helper{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+
+    let bundle_helper = exe_dir.parent().map(|root| {
+        root.join("helpers")
+            .join(format!("window-capture-helper{}", std::env::consts::EXE_SUFFIX))
+    });
+    if let Some(path) = bundle_helper.filter(|path| path.is_file()) {
+        return Some(path);
+    }
+
+    let self_helper = current_exe
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| matches!(*stem, "plugin-capture-window" | "window-capture-helper"))
+        .is_some()
+        && current_exe.is_file();
+    self_helper.then_some(current_exe)
 }

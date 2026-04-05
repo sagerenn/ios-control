@@ -12,10 +12,40 @@ pub fn find_helper() -> Option<PathBuf> {
     std::env::var_os("IOS_CONTROL_WINDOW_INPUT_HELPER")
         .map(PathBuf::from)
         .filter(|path| path.is_file())
+        .or_else(resolve_packaged_helper)
 }
 
 pub fn helper_available(path: Option<PathBuf>) -> bool {
     path.as_ref().is_some_and(|path| helper_is_executable(path))
+}
+
+fn resolve_packaged_helper() -> Option<PathBuf> {
+    let current_exe = env::current_exe().ok()?;
+    let exe_dir = current_exe.parent()?;
+
+    let sibling = exe_dir.join(format!(
+        "window-input-helper{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+
+    let bundle_helper = exe_dir.parent().map(|root| {
+        root.join("helpers")
+            .join(format!("window-input-helper{}", std::env::consts::EXE_SUFFIX))
+    });
+    if let Some(path) = bundle_helper.filter(|path| path.is_file()) {
+        return Some(path);
+    }
+
+    let self_helper = current_exe
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| matches!(*stem, "plugin-control-window-bridge" | "window-input-helper"))
+        .is_some()
+        && helper_is_executable(&current_exe);
+    self_helper.then_some(current_exe)
 }
 
 pub fn helper_is_executable(path: &Path) -> bool {
