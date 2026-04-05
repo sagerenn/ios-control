@@ -17,6 +17,12 @@ use crate::view_models::fleet::FleetViewModel;
 use crate::view_models::session::SessionViewModel;
 use crate::view_models::settings::SettingsViewModel;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RestoredSourcePreference {
+    device_id: String,
+    source_id: String,
+}
+
 pub struct HostDesktopApp {
     pub available_device_ids: Vec<String>,
     pub selected_device_id: Option<String>,
@@ -26,6 +32,8 @@ pub struct HostDesktopApp {
     runtime_workspace: Option<RuntimeWorkspaceState>,
     preferences_store: Option<HostPreferencesStore>,
     preferences: HostPreferences,
+    restored_source_preference: Option<RestoredSourcePreference>,
+    manual_source_selection_device_id: Option<String>,
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
@@ -49,6 +57,8 @@ impl HostDesktopApp {
             runtime_workspace: None,
             preferences_store: None,
             preferences: HostPreferences::default(),
+            restored_source_preference: None,
+            manual_source_selection_device_id: None,
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
             preview_texture: None,
@@ -98,8 +108,17 @@ impl HostDesktopApp {
     ) -> Self {
         let mut app = Self::with_runtime(config);
         let preferences = store.load().unwrap_or_default();
+        let restored_source_preference = preferences
+            .selected_device_id
+            .as_ref()
+            .zip(preferences.selected_source_id.as_ref())
+            .map(|(device_id, source_id)| RestoredSourcePreference {
+                device_id: device_id.clone(),
+                source_id: source_id.clone(),
+            });
         app.selected_device_id = preferences.selected_device_id.clone();
         app.preferences = preferences;
+        app.restored_source_preference = restored_source_preference;
         app.preferences_store = Some(store);
         app
     }
@@ -114,7 +133,19 @@ impl HostDesktopApp {
 
     fn persist_preferences(&mut self) {
         if let Some(store) = self.preferences_store.as_ref() {
-            let _ = store.save(&self.preferences);
+            if let Err(error) = store.save(&self.preferences) {
+                eprintln!("warning: failed to save host preferences: {error}");
+            }
+        }
+    }
+
+    fn clear_restored_source_preference_for_device(&mut self, device_id: &str) {
+        if self
+            .restored_source_preference
+            .as_ref()
+            .is_some_and(|pref| pref.device_id == device_id)
+        {
+            self.restored_source_preference = None;
         }
     }
 
@@ -124,6 +155,8 @@ impl HostDesktopApp {
         if device_changed {
             self.preferences.selected_device_id = Some(device_id.into());
             self.preferences.selected_source_id = None;
+            self.clear_restored_source_preference_for_device(device_id);
+            self.manual_source_selection_device_id = None;
             self.persist_preferences();
         }
         self.next_runtime_refresh_at = None;
@@ -156,15 +189,36 @@ impl HostDesktopApp {
             return;
         };
 
-        let explicit_source = self.device_detail.active_source_id.clone();
-        let persisted_source = if explicit_source.is_none()
-            && self.preferences.selected_device_id.as_deref() == Some(device_id.as_str())
+        let manual_source = if self.manual_source_selection_device_id.as_deref()
+            == Some(device_id.as_str())
         {
-            self.preferences.selected_source_id.clone()
+            self.device_detail.active_source_id.clone()
         } else {
             None
         };
-        let mut selected_source_id = explicit_source.clone().or(persisted_source.clone());
+        let workspace_source = self
+            .runtime_workspace
+            .as_ref()
+            .filter(|workspace| workspace.device_id == device_id)
+            .and_then(|workspace| workspace.selected_source_id.clone());
+        let explicit_source = manual_source.or(workspace_source);
+        let restored_source = if explicit_source.is_none() {
+            self.restored_source_preference
+                .as_ref()
+                .filter(|pref| pref.device_id == device_id)
+                .map(|pref| pref.source_id.clone())
+        } else {
+            None
+        };
+        let inferred_source = if explicit_source.is_none() && restored_source.is_none() {
+            self.device_detail.active_source_id.clone()
+        } else {
+            None
+        };
+        let mut selected_source_id = explicit_source
+            .clone()
+            .or(restored_source.clone())
+            .or(inferred_source);
         self.selected_device_id = Some(device_id.clone());
         self.session = SessionViewModel::starting();
         self.diagnostics.host_error = None;
@@ -185,24 +239,28 @@ impl HostDesktopApp {
             match start_result {
                 Ok(snapshot) => {
                     self.apply_runtime_snapshot(snapshot);
+                    self.clear_restored_source_preference_for_device(&device_id);
                     self.preferences.selected_device_id = self.selected_device_id.clone();
                     self.preferences.selected_source_id =
                         self.device_detail.active_source_id.clone();
                     self.persist_preferences();
                     return;
                 }
-                Err(error)
-                    if attempt == 0
-                        && explicit_source.is_none()
-                        && persisted_source.is_some()
-                        && error.to_string().contains("requested capture source") =>
-                {
-                    self.preferences.selected_source_id = None;
-                    self.persist_preferences();
-                    selected_source_id = None;
-                }
                 Err(error) => {
                     let message = error.to_string();
+                    let stale_restored_source = restored_source.as_deref().is_some_and(|source_id| {
+                        attempt == 0
+                            && message.contains("requested capture source")
+                            && message.contains(source_id)
+                            && message.contains("unavailable")
+                    });
+                    if stale_restored_source {
+                        self.clear_restored_source_preference_for_device(&device_id);
+                        self.preferences.selected_source_id = None;
+                        self.persist_preferences();
+                        selected_source_id = None;
+                        continue;
+                    }
                     self.session = SessionViewModel::error(&message);
                     self.diagnostics.host_error = Some(message);
                     self.diagnostics.control_summary = "control blocked".into();
@@ -235,6 +293,8 @@ impl HostDesktopApp {
         };
         self.settings.plugin_rows.clear();
         self.device_detail.active_source_id = None;
+        self.restored_source_preference = None;
+        self.manual_source_selection_device_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control not started".into();
@@ -248,6 +308,10 @@ impl HostDesktopApp {
 
         self.device_detail.active_source_id = Some(source.source_id.clone());
         self.session.selected_source = Some(source.clone());
+        self.manual_source_selection_device_id = self.selected_device_id.clone();
+        if let Some(device_id) = self.selected_device_id.clone() {
+            self.clear_restored_source_preference_for_device(device_id.as_str());
+        }
         self.preferences.selected_device_id = self.selected_device_id.clone();
         self.preferences.selected_source_id = Some(source.source_id);
         self.persist_preferences();
@@ -300,13 +364,14 @@ impl HostDesktopApp {
     }
 
     fn sync_selected_workspace(&mut self) {
-        let Some(selected_device_id) = self.selected_device_id.as_deref() else {
+        let Some(selected_device_id) = self.selected_device_id.clone() else {
             return;
         };
         let Some(status) = self
             .runtime_statuses
             .iter()
             .find(|status| status.summary().device_id == selected_device_id)
+            .cloned()
         else {
             return;
         };
@@ -315,6 +380,7 @@ impl HostDesktopApp {
             .runtime_workspace
             .as_ref()
             .filter(|workspace| workspace.device_id == selected_device_id)
+            .cloned()
         {
             self.device_detail.device_name = workspace.summary.device_name.clone();
             self.device_detail.capture_sources = workspace
@@ -323,6 +389,7 @@ impl HostDesktopApp {
                 .map(|source| CaptureSourceOption::new(&source.source_id, &source.display_name))
                 .collect();
             self.device_detail.active_source_id = workspace.selected_source_id.clone();
+            self.clear_restored_source_preference_for_device(selected_device_id.as_str());
             self.device_detail.control_checklist = ControlSetupChecklist {
                 items: workspace.control_checklist.items.clone(),
             };

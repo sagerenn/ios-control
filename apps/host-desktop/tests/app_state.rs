@@ -1,5 +1,6 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
+use host_desktop::preferences::HostPreferencesStore;
 use host_desktop::runtime::{HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
 use host_desktop::view_models::session::SessionUiState;
 use ios_control_contracts::control::ControlSessionPhase;
@@ -8,6 +9,7 @@ use ios_control_contracts::session::{
     BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase, SessionSubstate,
 };
 use ios_control_session_orchestrator::SessionDiagnostics;
+use std::path::PathBuf;
 
 mod support;
 use support::{
@@ -18,6 +20,7 @@ use support::{
 struct RuntimeAppFixture {
     _lock: std::sync::MutexGuard<'static, ()>,
     _guards: EnvVarGuards,
+    preferences_path: Option<PathBuf>,
     app: HostDesktopApp,
 }
 
@@ -33,6 +36,7 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        preferences_path: None,
         app,
     }
 }
@@ -47,12 +51,13 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
         HostRuntimeConfig {
             plugin_paths: host_plugin_paths(&root),
         },
-        host_desktop::preferences::HostPreferencesStore::new(prefs_path),
+        host_desktop::preferences::HostPreferencesStore::new(prefs_path.clone()),
     );
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        preferences_path: Some(prefs_path),
         app,
     }
 }
@@ -354,7 +359,15 @@ fn host_app_uses_persisted_source_preference_when_starting_session() {
     let mut fixture = host_app_with_runtime_and_preferences(
         r#"{"selected_device_id":"device-1","selected_source_id":"missing-source"}"#,
     );
-    fixture.app.select_device("device-1");
+    fixture.app.replace_runtime_statuses(vec![status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::ControlReady,
+        "capture.direct.fake",
+        "control.window-bridge",
+        None,
+    )]);
 
     fixture.app.request_start_session();
 
@@ -362,10 +375,46 @@ fn host_app_uses_persisted_source_preference_when_starting_session() {
         fixture.app.session.ui_state,
         SessionUiState::Streaming | SessionUiState::Error(_)
     ));
-    assert_ne!(
-        fixture.app.diagnostics.host_error.as_deref(),
-        Some("requested capture source `missing-source` is unavailable for capture.window")
+    let prefs_path = fixture
+        .preferences_path
+        .as_ref()
+        .expect("preferences path should be captured");
+    let saved = HostPreferencesStore::new(prefs_path.clone())
+        .load()
+        .expect("preferences should load");
+    assert_ne!(saved.selected_source_id.as_deref(), Some("missing-source"));
+}
+
+#[test]
+fn host_app_manual_capture_source_selection_overrides_restored_source_on_start() {
+    let mut fixture = host_app_with_runtime_and_preferences(
+        r#"{"selected_device_id":"device-1","selected_source_id":"missing-source"}"#,
     );
+    fixture.app.replace_runtime_statuses(vec![status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::ControlReady,
+        "capture.window.helper",
+        "control.window-bridge",
+        None,
+    )]);
+    fixture.app.select_capture_source("window-helper-1");
+
+    fixture.app.request_start_session();
+
+    assert!(matches!(
+        fixture.app.session.ui_state,
+        SessionUiState::Streaming | SessionUiState::Error(_)
+    ));
+    let prefs_path = fixture
+        .preferences_path
+        .as_ref()
+        .expect("preferences path should be captured");
+    let saved = HostPreferencesStore::new(prefs_path.clone())
+        .load()
+        .expect("preferences should load");
+    assert_eq!(saved.selected_source_id.as_deref(), Some("window-helper-1"));
 }
 
 #[test]
