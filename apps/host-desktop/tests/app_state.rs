@@ -214,34 +214,50 @@ fn host_app_from_runtime_snapshot(snapshot: HostRuntimeSnapshot) -> HostDesktopA
 }
 
 #[test]
-fn host_app_boots_into_an_honest_idle_session_shell() {
+fn host_app_boots_without_inventing_a_mock_device() {
     let app = HostDesktopApp::new();
 
-    assert_eq!(app.dashboard.total_devices, 1);
+    assert_eq!(app.dashboard.total_devices, 0);
     assert_eq!(app.dashboard.degraded_devices, 0);
-    assert_eq!(app.device_detail.device_name, "Mock iPhone");
-    assert_eq!(
-        app.device_detail.control_checklist,
-        ControlSetupChecklist::for_pointer_mode()
-    );
-    assert_eq!(
-        app.device_detail.capture_sources,
-        vec![CaptureSourceOption::new(
-            "window:mock",
-            "Mock iPhone Mirror"
-        )]
-    );
+    assert!(app.available_device_ids.is_empty());
+    assert!(app.selected_device_id.is_none());
+    assert_eq!(app.device_detail.device_name, "No device selected");
+    assert!(app.device_detail.capture_sources.is_empty());
+    assert_eq!(app.device_detail.control_checklist.items, Vec::<String>::new());
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
     assert!(app.session.selected_source.is_none());
     assert!(app.session.latest_frame.is_none());
     assert_eq!(app.diagnostics.host_error, None);
     assert_eq!(app.diagnostics.control_summary, "control not started");
     assert_eq!(app.diagnostics.grounding_summary, "grounding idle");
-    assert!(app
-        .settings
-        .plugin_rows
+    assert_eq!(app.startup.readiness, host_desktop::view_models::startup::StartupReadiness::Blocked);
+    assert!(app.startup.summary.contains("Blocked"));
+}
+
+#[test]
+fn host_app_with_missing_runtime_components_starts_blocked_without_fake_device() {
+    let fixture = host_app_with_missing_runtime_plugins_and_preferences("{}");
+
+    assert_eq!(fixture.app.dashboard.total_devices, 0);
+    assert!(fixture.app.available_device_ids.is_empty());
+    assert!(fixture.app.selected_device_id.is_none());
+    assert_eq!(fixture.app.session.ui_state, SessionUiState::Idle);
+    assert_eq!(
+        fixture.app.startup.readiness,
+        host_desktop::view_models::startup::StartupReadiness::Blocked
+    );
+    assert!(fixture
+        .app
+        .startup
+        .items
         .iter()
-        .any(|row| row.contains("control.ble")));
+        .any(|item| item.detail.contains("missing-capture-plugin")));
+    assert!(fixture
+        .app
+        .startup
+        .items
+        .iter()
+        .any(|item| item.detail.contains("missing-control-ble-plugin")));
 }
 
 #[test]

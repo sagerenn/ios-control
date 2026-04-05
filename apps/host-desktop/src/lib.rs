@@ -9,6 +9,7 @@ pub mod panels {
     pub mod diagnostics;
     pub mod session_view;
     pub mod settings;
+    pub mod startup;
 }
 pub mod view_models {
     pub mod dashboard;
@@ -17,4 +18,5 @@ pub mod view_models {
     pub mod fleet;
     pub mod session;
     pub mod settings;
+    pub mod startup;
 }
