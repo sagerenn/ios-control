@@ -12,7 +12,7 @@ fn main() -> eframe::Result<()> {
         Box::new(move |_cc| {
             let mut app = host_desktop::app::HostDesktopApp::with_runtime(runtime_config.clone());
             if let Ok(device_id) = std::env::var("IOS_CONTROL_PENDING_START_DEVICE") {
-                app.enable_runtime_start(&device_id);
+                app.select_device(&device_id);
             }
             app.start_runtime_session_on_launch();
             Ok(Box::new(app))

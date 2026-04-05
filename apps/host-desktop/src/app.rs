@@ -8,7 +8,7 @@ use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
 use crate::preview::color_image_from_slot;
 use crate::runtime::{
-    HostRuntime, HostRuntimeBridge, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
+    HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
 };
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
@@ -21,7 +21,7 @@ pub struct HostDesktopApp {
     pub available_device_ids: Vec<String>,
     pub selected_device_id: Option<String>,
     pub fleet: FleetViewModel,
-    pub runtime: HostRuntimeBridge,
+    runtime_statuses: Vec<DeviceSessionStatus>,
     host_runtime: Option<HostRuntime>,
     runtime_workspace: Option<RuntimeWorkspaceState>,
     preview_texture: Option<egui::TextureHandle>,
@@ -30,7 +30,6 @@ pub struct HostDesktopApp {
     pub session: SessionViewModel,
     pub diagnostics: DiagnosticsViewModel,
     pub settings: SettingsViewModel,
-    pending_session_start: Option<u8>,
 }
 
 impl HostDesktopApp {
@@ -39,7 +38,7 @@ impl HostDesktopApp {
             available_device_ids: Vec::new(),
             selected_device_id: None,
             fleet: FleetViewModel { rows: Vec::new() },
-            runtime: HostRuntimeBridge::default(),
+            runtime_statuses: Vec::new(),
             host_runtime: None,
             runtime_workspace: None,
             preview_texture: None,
@@ -69,7 +68,6 @@ impl HostDesktopApp {
                     "grounding.core".into(),
                 ],
             },
-            pending_session_start: None,
         }
     }
 
@@ -86,7 +84,7 @@ impl HostDesktopApp {
 
     pub fn replace_runtime_statuses(&mut self, statuses: Vec<DeviceSessionStatus>) {
         self.runtime_workspace = None;
-        self.runtime.replace_statuses(statuses);
+        self.runtime_statuses = statuses;
         self.sync_from_runtime();
     }
 
@@ -97,91 +95,54 @@ impl HostDesktopApp {
 
     pub fn enable_runtime_start(&mut self, device_id: &str) {
         self.selected_device_id = Some(device_id.into());
-        self.runtime.queue_start(device_id.into());
     }
 
     pub fn start_runtime_session_on_launch(&mut self) {
-        if self.runtime.has_pending_start() {
-            if self.host_runtime.is_some() {
-                self.request_start_session();
-            } else {
-                self.request_start_session();
-                self.finish_pending_session_start();
-            }
+        if self.selected_device_id.is_some() {
+            self.request_start_session();
         }
     }
 
     pub fn request_start_session(&mut self) {
-        if let Some(host_runtime) = self.host_runtime.as_mut() {
-            let Some(device_id) = self
-                .selected_device_id
-                .clone()
-                .or_else(|| self.runtime.take_pending_start())
-                .or_else(|| self.available_device_ids.first().cloned())
-            else {
-                self.session = SessionViewModel::error("No device selected");
-                return;
-            };
-
-            self.selected_device_id = Some(device_id.clone());
-            self.session = SessionViewModel::starting();
-            self.device_detail.active_source_id = None;
-            self.diagnostics.host_error = None;
-            self.diagnostics.control_summary = "control bootstrapping".into();
-            self.diagnostics.grounding_summary = "grounding bootstrapping".into();
-
-            match host_runtime.start_session(
-                &device_id,
-                &self.device_detail.device_name,
-                self.device_detail.active_source_id.clone(),
-            ) {
-                Ok(snapshot) => {
-                    self.apply_runtime_snapshot(snapshot);
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    self.session = SessionViewModel::error(&message);
-                    self.diagnostics.host_error = Some(message);
-                    self.diagnostics.control_summary = "control blocked".into();
-                    self.diagnostics.grounding_summary = "grounding blocked".into();
-                }
-            }
-            return;
-        }
-
-        self.session = SessionViewModel::starting();
-        self.device_detail.active_source_id = None;
-        self.diagnostics.host_error = None;
-        self.diagnostics.control_summary = "control bootstrapping".into();
-        self.diagnostics.grounding_summary = "grounding bootstrapping".into();
-        self.pending_session_start = Some(1);
-    }
-
-    pub fn finish_pending_session_start(&mut self) {
-        self.pending_session_start = None;
-
-        if let Some(device_id) = self.runtime.take_pending_start() {
-            self.select_device(&device_id);
-            return;
-        }
-
-        let Some(source) = self.device_detail.capture_sources.first().cloned() else {
-            let message = "No capture sources available";
+        let Some(host_runtime) = self.host_runtime.as_mut() else {
+            let message = "Host runtime unavailable";
             self.session = SessionViewModel::error(message);
-            self.device_detail.active_source_id = None;
             self.diagnostics.host_error = Some(message.into());
             self.diagnostics.control_summary = "control blocked".into();
             self.diagnostics.grounding_summary = "grounding blocked".into();
             return;
         };
 
-        let _ = source;
-        let message = "Session bootstrap is not wired to the runtime yet";
-        self.device_detail.active_source_id = None;
-        self.session = SessionViewModel::error(message);
-        self.diagnostics.host_error = Some(message.into());
-        self.diagnostics.control_summary = "control blocked".into();
-        self.diagnostics.grounding_summary = "grounding blocked".into();
+        let Some(device_id) = self
+            .selected_device_id
+            .clone()
+            .or_else(|| self.available_device_ids.first().cloned())
+        else {
+            self.session = SessionViewModel::error("No device selected");
+            return;
+        };
+
+        let selected_source_id = self.device_detail.active_source_id.clone();
+        self.selected_device_id = Some(device_id.clone());
+        self.session = SessionViewModel::starting();
+        self.diagnostics.host_error = None;
+        self.diagnostics.control_summary = "control bootstrapping".into();
+        self.diagnostics.grounding_summary = "grounding bootstrapping".into();
+
+        match host_runtime.start_session(
+            &device_id,
+            &self.device_detail.device_name,
+            selected_source_id,
+        ) {
+            Ok(snapshot) => self.apply_runtime_snapshot(snapshot),
+            Err(error) => {
+                let message = error.to_string();
+                self.session = SessionViewModel::error(&message);
+                self.diagnostics.host_error = Some(message);
+                self.diagnostics.control_summary = "control blocked".into();
+                self.diagnostics.grounding_summary = "grounding blocked".into();
+            }
+        }
     }
 
     pub fn stop_session(&mut self) {
@@ -189,7 +150,7 @@ impl HostDesktopApp {
             (self.host_runtime.as_mut(), self.selected_device_id.as_deref())
         {
             let _ = host_runtime.stop_session(device_id);
-            self.runtime.replace_statuses(Vec::new());
+            self.runtime_statuses.clear();
             self.runtime_workspace = None;
             self.preview_texture = None;
             self.available_device_ids.clear();
@@ -202,7 +163,6 @@ impl HostDesktopApp {
             self.settings.plugin_rows.clear();
         }
 
-        self.pending_session_start = None;
         self.device_detail.active_source_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
@@ -220,39 +180,14 @@ impl HostDesktopApp {
     }
 
     pub fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
-        let statuses = snapshot.statuses.clone();
+        self.runtime_statuses = snapshot.statuses.clone();
         self.runtime_workspace = Some(snapshot.workspace.clone());
         self.preview_texture = None;
-        self.runtime.replace_statuses(statuses.clone());
         self.sync_from_runtime();
-        self.available_device_ids = statuses
-            .iter()
-            .map(|status| status.summary().device_id.clone())
-            .collect();
-        self.selected_device_id = Some(snapshot.workspace.device_id);
-        self.device_detail.capture_sources = snapshot
-            .workspace
-            .capture_sources
-            .iter()
-            .map(|source| CaptureSourceOption::new(&source.source_id, &source.display_name))
-            .collect();
-        self.device_detail.active_source_id = snapshot.workspace.selected_source_id;
-        self.device_detail.control_checklist = ControlSetupChecklist {
-            items: snapshot.workspace.control_checklist.items,
-        };
-        self.diagnostics.control_summary = format!(
-            "{:?}: {}",
-            snapshot.workspace.control_phase, snapshot.workspace.diagnostics.control_summary
-        );
-        self.diagnostics.grounding_summary = snapshot
-            .workspace
-            .diagnostics
-            .grounding_summary
-            .unwrap_or_else(|| "grounding idle".into());
     }
 
     fn sync_from_runtime(&mut self) {
-        let statuses = self.runtime.statuses();
+        let statuses = &self.runtime_statuses;
         self.fleet = FleetViewModel::from_statuses(statuses);
         self.available_device_ids = self
             .fleet
@@ -296,8 +231,7 @@ impl HostDesktopApp {
             return;
         };
         let Some(status) = self
-            .runtime
-            .statuses()
+            .runtime_statuses
             .iter()
             .find(|status| status.summary().device_id == selected_device_id)
         else {
@@ -521,18 +455,6 @@ impl eframe::App for HostDesktopApp {
                 self.stop_session();
                 ctx.request_repaint();
             }
-        }
-
-        match self.pending_session_start {
-            Some(0) => {
-                self.finish_pending_session_start();
-                ctx.request_repaint();
-            }
-            Some(steps) => {
-                self.pending_session_start = Some(steps - 1);
-                ctx.request_repaint();
-            }
-            None => {}
         }
     }
 }

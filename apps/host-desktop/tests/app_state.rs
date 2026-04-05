@@ -116,25 +116,20 @@ fn host_app_boots_into_an_honest_idle_session_shell() {
 }
 
 #[test]
-fn host_app_transitions_from_starting_to_honest_bootstrap_error() {
+fn host_app_without_runtime_reports_runtime_unavailable() {
     let mut app = HostDesktopApp::new();
 
     app.request_start_session();
-    assert_eq!(app.session.ui_state, SessionUiState::Starting);
-    assert!(app.session.selected_source.is_none());
-    assert!(app.session.latest_frame.is_none());
-
-    app.finish_pending_session_start();
     assert_eq!(
         app.session.ui_state,
-        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+        SessionUiState::Error("Host runtime unavailable".into())
     );
     assert!(app.session.selected_source.is_none());
     assert!(app.session.latest_frame.is_none());
     assert_eq!(app.device_detail.active_source_id, None);
     assert_eq!(
         app.diagnostics.host_error.as_deref(),
-        Some("Session bootstrap is not wired to the runtime yet")
+        Some("Host runtime unavailable")
     );
     assert_eq!(app.diagnostics.control_summary, "control blocked");
     assert_eq!(app.diagnostics.grounding_summary, "grounding blocked");
@@ -154,33 +149,31 @@ fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
     app.device_detail.capture_sources.clear();
 
     app.request_start_session();
-    app.finish_pending_session_start();
 
     assert_eq!(
         app.session.ui_state,
-        SessionUiState::Error("No capture sources available".into())
+        SessionUiState::Error("Host runtime unavailable".into())
     );
     assert!(app.session.selected_source.is_none());
     assert!(app.session.latest_frame.is_none());
     assert_eq!(
         app.diagnostics.host_error.as_deref(),
-        Some("No capture sources available")
+        Some("Host runtime unavailable")
     );
     assert!(app.diagnostics.control_summary.contains("blocked"));
     assert!(app.diagnostics.grounding_summary.contains("blocked"));
 }
 
 #[test]
-fn start_session_uses_runtime_bridge_instead_of_bootstrap_error() {
+fn start_session_without_runtime_after_enable_runtime_start_reports_runtime_unavailable() {
     let mut app = HostDesktopApp::new();
     app.enable_runtime_start("device-1");
 
     app.request_start_session();
-    app.finish_pending_session_start();
 
-    assert_ne!(
+    assert_eq!(
         app.session.ui_state,
-        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+        SessionUiState::Error("Host runtime unavailable".into())
     );
 }
 
@@ -197,9 +190,29 @@ fn host_app_start_session_uses_real_runtime_snapshot() {
     ));
     assert_ne!(
         fixture.app.diagnostics.host_error.as_deref(),
-        Some("Session bootstrap is not wired to the runtime yet")
+        Some("Host runtime unavailable")
     );
     assert!(!fixture.app.device_detail.capture_sources.is_empty());
+}
+
+#[test]
+fn host_app_start_session_forwards_selected_source_to_runtime() {
+    let mut fixture = host_app_with_runtime();
+    fixture.app.select_device("device-1");
+    fixture.app.device_detail.capture_sources = vec![CaptureSourceOption::new(
+        "missing-source",
+        "Broken Source",
+    )];
+    fixture.app.device_detail.active_source_id = Some("missing-source".into());
+
+    fixture.app.request_start_session();
+
+    assert_eq!(
+        fixture.app.session.ui_state,
+        SessionUiState::Error(
+            "requested capture source `missing-source` is unavailable for capture.window".into()
+        )
+    );
 }
 
 #[test]
@@ -276,10 +289,9 @@ fn startup_runtime_queue_advances_start_path_on_launch() {
     app.start_runtime_session_on_launch();
 
     assert_eq!(app.selected_device_id.as_deref(), Some("device-1"));
-    assert_eq!(app.session.ui_state, SessionUiState::Starting);
-    assert_ne!(
+    assert_eq!(
         app.session.ui_state,
-        SessionUiState::Error("Session bootstrap is not wired to the runtime yet".into())
+        SessionUiState::Error("Host runtime unavailable".into())
     );
 }
 
