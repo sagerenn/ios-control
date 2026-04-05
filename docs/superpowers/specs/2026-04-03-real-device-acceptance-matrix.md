@@ -25,6 +25,7 @@ Use this checklist when validating a new real-device flow. Each item should be r
 7. Record host OS, helper used, device model, and exact verified outcome before changing any matrix row to `Verified`.
 8. Use `docs/validation/real-device-session-template.md` as the baseline log for each manual validation run.
 9. Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/` and link it from the matrix update.
+10. Every non-mock `Verified` row must include an inline `docs/validation/...` link to its matching dated validation record.
 
 When a non-mock row becomes `Verified`, include the matching `docs/validation/...` link in the row update so the evidence is visible from the matrix itself.
 

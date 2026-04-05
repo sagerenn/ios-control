@@ -40,6 +40,10 @@ class DocsStatusTests(unittest.TestCase):
         matrix = Path(
             "docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md"
         ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Every non-mock `Verified` row must include an inline `docs/validation/...` link to its matching dated validation record.",
+            matrix,
+        )
         for line in matrix.splitlines():
             if "| Verified |" in line and "Local mock flow" not in line:
                 self.assertIn("docs/validation/", line)
