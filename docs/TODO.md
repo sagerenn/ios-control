@@ -7,7 +7,7 @@ This document is meant to be a living checklist. It reflects the current codebas
 ## Current Reality
 
 - This repository is a Linux/Windows host workspace. There is no native iOS app target in this repo today.
-- `apps/host-desktop` is still a shell UI. It is not wired directly to the session orchestrator or plugin runtime yet.
+- `apps/host-desktop` now has an orchestrator-backed runtime path, but the app still mixes that real runtime with legacy shell/bootstrap state and synthetic session view data.
 - The capture and control plugins are helper-driven. The current capture paths still synthesize frame payloads instead of transporting real device pixels end to end.
 - Automated verification currently covers mock/plugin/contract flows. It does not cover a real iPhone/iPad end-to-end session.
 

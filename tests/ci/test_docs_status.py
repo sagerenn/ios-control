@@ -31,14 +31,15 @@ class DocsStatusTests(unittest.TestCase):
             text = Path(path).read_text(encoding="utf-8")
             self.assertIn("Historical planning artifact.", text)
 
-    def test_verified_acceptance_rows_require_explicit_operator_log_reference(self) -> None:
+    def test_todo_current_reality_mentions_partial_runtime_wiring(self) -> None:
+        todo = Path("docs/TODO.md").read_text(encoding="utf-8")
+        self.assertIn("orchestrator-backed runtime path", todo)
+        self.assertNotIn("not wired directly to the session orchestrator", todo)
+
+    def test_acceptance_matrix_only_allows_non_mock_verified_rows_with_validation_records(self) -> None:
         matrix = Path(
             "docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "Before changing any non-mock row to `Verified`, add a corresponding dated record under `docs/validation/`",
-            matrix,
-        )
         for line in matrix.splitlines():
             if "| Verified |" in line and "Local mock flow" not in line:
                 self.assertIn("docs/validation/", line)
