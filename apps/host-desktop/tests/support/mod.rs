@@ -147,3 +147,42 @@ pub fn write_preferences_json(json: &str) -> PathBuf {
     std::fs::write(&path, json).expect("preferences json should be written");
     path
 }
+
+pub struct StagedBundleLayout {
+    pub _tempdir: tempfile::TempDir,
+    pub root: PathBuf,
+    pub host_exe: PathBuf,
+    pub plugins_dir: PathBuf,
+}
+
+pub fn stage_bundle_layout() -> StagedBundleLayout {
+    let tempdir = tempfile::tempdir().expect("bundle tempdir should be created");
+    let root = tempdir.path().join("ios-control-x86_64-pc-windows-msvc");
+    let bin_dir = root.join("bin");
+    let plugins_dir = root.join("plugins");
+    std::fs::create_dir_all(&bin_dir).expect("bundle bin dir should exist");
+    std::fs::create_dir_all(&plugins_dir).expect("bundle plugins dir should exist");
+
+    let host_exe = bin_dir.join(format!("host-desktop{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&host_exe, b"host").expect("bundle host exe should be stubbed");
+
+    for name in [
+        "plugin-capture-window",
+        "plugin-control-ble",
+        "plugin-control-window-bridge",
+        "plugin-grounding-core",
+    ] {
+        std::fs::write(
+            plugins_dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)),
+            name.as_bytes(),
+        )
+        .expect("bundle plugin should be stubbed");
+    }
+
+    StagedBundleLayout {
+        _tempdir: tempdir,
+        root,
+        host_exe,
+        plugins_dir,
+    }
+}
