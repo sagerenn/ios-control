@@ -1,5 +1,6 @@
 use host_desktop::preferences::{HostPreferences, HostPreferencesStore};
 
+// Keep these names at crate-root so plan commands using `--exact` match real tests.
 #[test]
 fn host_preferences_roundtrip_json() {
     let prefs = HostPreferences {
