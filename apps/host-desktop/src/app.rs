@@ -190,7 +190,6 @@ impl HostDesktopApp {
     pub fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
         self.runtime_statuses = snapshot.statuses.clone();
         self.runtime_workspace = Some(snapshot.workspace.clone());
-        self.preview_texture = None;
         self.sync_from_runtime();
     }
 
@@ -506,6 +505,7 @@ mod tests {
         BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase,
     };
     use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
+    use egui::{Color32, ColorImage};
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -614,5 +614,25 @@ mod tests {
             .host_error
             .as_deref()
             .is_some_and(|error| error.contains("Runtime refresh failed")));
+    }
+
+    #[test]
+    fn apply_runtime_snapshot_preserves_existing_preview_texture() {
+        let mut app = HostDesktopApp::new();
+        let ctx = egui::Context::default();
+        let mut texture = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            texture = Some(ctx.load_texture(
+                "preserve-preview-texture",
+                ColorImage::new([1, 1], Color32::WHITE),
+                egui::TextureOptions::LINEAR,
+            ));
+        });
+        app.preview_texture = texture;
+        assert!(app.preview_texture.is_some());
+
+        app.apply_runtime_snapshot(streaming_snapshot_without_frame());
+
+        assert!(app.preview_texture.is_some());
     }
 }
