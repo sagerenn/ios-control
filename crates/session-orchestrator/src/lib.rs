@@ -180,13 +180,8 @@ impl SessionOrchestrator {
             let mut grounding = RunningPlugin::spawn(path).await?;
             let grounding_descriptor = grounding.handshake().await?;
             let plan = request_grounding_plan(&mut grounding).await?;
-            let (execution_result, latest_frame) = execute_grounding_plan(
-                &mut capture,
-                &mut control,
-                &plan,
-                &latest_frame,
-            )
-            .await?;
+            let (execution_result, latest_frame) =
+                execute_grounding_plan(&mut capture, &mut control, &plan, &latest_frame).await?;
             staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
             staged_telemetry.push(TelemetryEvent {
                 session_id: session_id.clone(),
@@ -307,6 +302,17 @@ impl SessionSupervisor {
 
     pub fn active_sessions(&self) -> &BTreeMap<String, ActiveSessionState> {
         &self.active
+    }
+
+    pub async fn refresh_session(&mut self, device_id: &str) -> Result<()> {
+        let active = self
+            .active
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow!("missing active session for {device_id}"))?;
+        active.refresh_capture_frame().await?;
+        let status = session_actor::status_snapshot(active)?;
+        self.sessions.insert(device_id.into(), status);
+        Ok(())
     }
 
     pub async fn stop_session(&mut self, device_id: &str) -> Result<()> {

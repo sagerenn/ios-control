@@ -34,3 +34,27 @@ fn runtime_start_session_returns_workspace_snapshot() {
     ));
     assert_eq!(snapshot.workspace.capture_sources.len(), 1);
 }
+
+#[test]
+fn runtime_refresh_session_updates_workspace_latest_frame() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let _guards = prepare_window_runtime_env(&root);
+
+    let mut runtime = HostRuntime::new(HostRuntimeConfig {
+        plugin_paths: host_plugin_paths(&root),
+    })
+    .unwrap();
+
+    let first = runtime
+        .start_session("device-1", "Mock iPhone", Some("window-helper-1".into()))
+        .unwrap()
+        .workspace
+        .latest_frame
+        .unwrap()
+        .frame_index;
+
+    let refreshed = runtime.refresh_session("device-1").unwrap();
+    assert!(refreshed.workspace.latest_frame.unwrap().frame_index > first);
+}

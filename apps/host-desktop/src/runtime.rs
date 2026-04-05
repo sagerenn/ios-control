@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoSource};
+use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource};
 use ios_control_contracts::control::{ControlSessionPhase, ControlSetupChecklist};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary};
 use ios_control_session_orchestrator::{
@@ -17,6 +17,7 @@ pub struct RuntimeWorkspaceState {
     pub summary: DeviceSessionSummary,
     pub capture_sources: Vec<VideoSource>,
     pub capture_stream: Option<CaptureStreamDescriptor>,
+    pub latest_frame: Option<VideoFrameDescriptor>,
     pub selected_source_id: Option<String>,
     pub control_checklist: ControlSetupChecklist,
     pub control_phase: ControlSessionPhase,
@@ -53,13 +54,15 @@ impl HostRuntime {
         device_name: &str,
         selected_source_id: Option<String>,
     ) -> Result<HostRuntimeSnapshot> {
-        self.tokio
-            .block_on(self.supervisor.start_or_replace_session(StartSessionRequest {
-                device_id: device_id.into(),
-                device_name: device_name.into(),
-                selected_source_id,
-                plugin_paths: self.config.plugin_paths.clone(),
-            }))?;
+        self.tokio.block_on(
+            self.supervisor
+                .start_or_replace_session(StartSessionRequest {
+                    device_id: device_id.into(),
+                    device_name: device_name.into(),
+                    selected_source_id,
+                    plugin_paths: self.config.plugin_paths.clone(),
+                }),
+        )?;
 
         self.snapshot(device_id)
     }
@@ -89,6 +92,7 @@ impl HostRuntime {
                 summary: status.summary().clone(),
                 capture_sources: active.capture_sources.clone(),
                 capture_stream: active.capture_stream.clone(),
+                latest_frame: active.latest_frame.clone(),
                 selected_source_id: active.selected_source_id.clone(),
                 control_checklist: active.control_checklist.clone(),
                 control_phase: active.diagnostics.control_phase,
@@ -103,5 +107,11 @@ impl HostRuntime {
 
     pub fn stop_session(&mut self, device_id: &str) -> Result<()> {
         self.tokio.block_on(self.supervisor.stop_session(device_id))
+    }
+
+    pub fn refresh_session(&mut self, device_id: &str) -> Result<HostRuntimeSnapshot> {
+        self.tokio
+            .block_on(self.supervisor.refresh_session(device_id))?;
+        self.snapshot(device_id)
     }
 }

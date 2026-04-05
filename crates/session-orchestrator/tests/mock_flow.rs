@@ -1,6 +1,8 @@
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::SessionPhase;
-use ios_control_session_orchestrator::{PluginPaths, SessionOrchestrator, StartSessionRequest};
+use ios_control_session_orchestrator::{
+    PluginPaths, SessionOrchestrator, SessionSupervisor, StartSessionRequest,
+};
 
 mod support;
 use support::{
@@ -48,7 +50,10 @@ async fn start_session_collects_mock_plugin_state() {
     assert_eq!(state.capture_sources.len(), 1);
     assert_eq!(state.capture_sources[0].source_id, "window-helper-1");
     assert!(state.capture_stream.is_some());
-    assert_eq!(state.latest_frame.as_ref().unwrap().source_id, "window-helper-1");
+    assert_eq!(
+        state.latest_frame.as_ref().unwrap().source_id,
+        "window-helper-1"
+    );
     assert!(state
         .diagnostics
         .grounding_summary
@@ -59,12 +64,12 @@ async fn start_session_collects_mock_plugin_state() {
     let execution = state.execution_result.as_ref().unwrap();
     assert!(!execution.applied);
     assert!(!execution.observed_change);
-    assert_eq!(execution.phase, ios_control_contracts::control::ExecutionPhase::Failed);
-    assert_eq!(execution.attempts, 1);
     assert_eq!(
-        execution.grounding_failure,
-        None
+        execution.phase,
+        ios_control_contracts::control::ExecutionPhase::Failed
     );
+    assert_eq!(execution.attempts, 1);
+    assert_eq!(execution.grounding_failure, None);
     assert!(execution.summary.contains("failure:"));
     assert!(execution.failure_reason.is_some());
 
@@ -174,4 +179,57 @@ async fn start_session_opens_capture_stream_and_refreshes_frames() {
     );
 
     state.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn supervisor_refresh_session_updates_active_latest_frame() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let _display_guard = prepare_window_runtime_env(&root);
+
+    let mut supervisor = SessionSupervisor::default();
+    supervisor
+        .start_or_replace_session(StartSessionRequest {
+            device_id: "device-supervisor-refresh".into(),
+            device_name: "Refresh Mock iPhone".into(),
+            selected_source_id: Some("window-helper-1".into()),
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap();
+
+    let first = supervisor
+        .active_sessions()
+        .get("device-supervisor-refresh")
+        .and_then(|session| session.latest_frame.as_ref())
+        .unwrap()
+        .frame_index;
+
+    supervisor
+        .refresh_session("device-supervisor-refresh")
+        .await
+        .unwrap();
+
+    let refreshed = supervisor
+        .active_sessions()
+        .get("device-supervisor-refresh")
+        .and_then(|session| session.latest_frame.as_ref())
+        .unwrap()
+        .frame_index;
+
+    assert!(refreshed > first);
+    assert!(supervisor
+        .session_statuses()
+        .contains_key("device-supervisor-refresh"));
+
+    supervisor
+        .stop_session("device-supervisor-refresh")
+        .await
+        .unwrap();
 }

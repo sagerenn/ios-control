@@ -7,14 +7,12 @@ use crate::panels::device_detail::{
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
 use crate::preview::color_image_from_slot;
-use crate::runtime::{
-    HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
-};
+use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
 use crate::view_models::fleet::FleetViewModel;
-use crate::view_models::session::SessionViewModel;
+use crate::view_models::session::{SessionUiState, SessionViewModel};
 use crate::view_models::settings::SettingsViewModel;
 
 pub struct HostDesktopApp {
@@ -142,9 +140,10 @@ impl HostDesktopApp {
     }
 
     pub fn stop_session(&mut self) {
-        if let (Some(host_runtime), Some(device_id)) =
-            (self.host_runtime.as_mut(), self.selected_device_id.as_deref())
-        {
+        if let (Some(host_runtime), Some(device_id)) = (
+            self.host_runtime.as_mut(),
+            self.selected_device_id.as_deref(),
+        ) {
             let _ = host_runtime.stop_session(device_id);
         }
 
@@ -250,12 +249,14 @@ impl HostDesktopApp {
                 items: workspace.control_checklist.items.clone(),
             };
 
-            let source = workspace
+            let Some(source) = workspace
                 .selected_source_id
                 .as_deref()
                 .and_then(|source_id| self.device_detail.capture_source(source_id))
-                .or_else(|| self.device_detail.capture_sources.first().cloned())
-                .unwrap_or_else(|| capture_source_for_backend(status.backends().capture_backend.as_str()));
+            else {
+                self.session = SessionViewModel::error("No runtime capture source selected");
+                return;
+            };
 
             self.diagnostics.host_error = status.operator_action().map(str::to_string);
             self.diagnostics.control_summary = format!(
@@ -270,30 +271,11 @@ impl HostDesktopApp {
 
             self.session = match status.substate() {
                 SessionSubstate::ControlReady | SessionSubstate::Streaming => {
-                    SessionViewModel::streaming(
-                        source,
-                        ios_control_contracts::capture::VideoFrameDescriptor {
-                            source_id: self
-                                .device_detail
-                                .active_source_id
-                                .clone()
-                                .unwrap_or_else(|| "window-helper-1".into()),
-                            source_kind: if status
-                                .backends()
-                                .capture_backend
-                                .starts_with("capture.window")
-                            {
-                                ios_control_contracts::capture::SourceKind::Window
-                            } else {
-                                ios_control_contracts::capture::SourceKind::DirectReceiver
-                            },
-                            width: 1280,
-                            height: 720,
-                            rotation_degrees: 0,
-                            frame_index: 1,
-                            health: ios_control_contracts::capture::FrameHealth::Healthy,
-                        },
-                    )
+                    if let Some(frame) = workspace.latest_frame.clone() {
+                        SessionViewModel::streaming(source, frame)
+                    } else {
+                        SessionViewModel::starting()
+                    }
                 }
                 SessionSubstate::Discovering
                 | SessionSubstate::StartingCapture
@@ -381,11 +363,8 @@ impl HostDesktopApp {
         if let Some(texture) = self.preview_texture.as_mut() {
             texture.set(image, egui::TextureOptions::LINEAR);
         } else {
-            self.preview_texture = Some(ctx.load_texture(
-                "session-preview",
-                image,
-                egui::TextureOptions::LINEAR,
-            ));
+            self.preview_texture =
+                Some(ctx.load_texture("session-preview", image, egui::TextureOptions::LINEAR));
         }
     }
 }
@@ -403,6 +382,21 @@ impl eframe::App for HostDesktopApp {
         let mut pending_action = SessionAction::None;
         let mut selected_device = None;
         let mut device_detail_action = DeviceDetailAction::None;
+
+        let runtime_snapshot = if matches!(self.session.ui_state, SessionUiState::Streaming) {
+            if let (Some(host_runtime), Some(device_id)) =
+                (self.host_runtime.as_mut(), self.selected_device_id.clone())
+            {
+                host_runtime.refresh_session(&device_id).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(snapshot) = runtime_snapshot {
+            self.apply_runtime_snapshot(snapshot);
+        }
 
         self.sync_preview_texture(ctx);
 

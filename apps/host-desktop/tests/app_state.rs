@@ -63,6 +63,7 @@ fn runtime_snapshot_with_control(
                 kind: ios_control_contracts::capture::SourceKind::Window,
             }],
             capture_stream: None,
+            latest_frame: None,
             selected_source_id: Some("window-helper-1".into()),
             control_checklist: ios_control_contracts::control::ControlSetupChecklist {
                 items: vec!["Pair the device".into()],
@@ -72,6 +73,46 @@ fn runtime_snapshot_with_control(
             diagnostics: SessionDiagnostics {
                 control_phase,
                 control_summary: control_summary.into(),
+                grounding_summary: Some("selected pointer plan".into()),
+            },
+        },
+    }
+}
+
+fn runtime_snapshot_with_frame(
+    frame: ios_control_contracts::capture::VideoFrameDescriptor,
+) -> HostRuntimeSnapshot {
+    let status = status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::Streaming,
+        "capture.window.helper",
+        "control.ble",
+        None,
+    );
+
+    HostRuntimeSnapshot {
+        statuses: vec![status.clone()],
+        workspace: RuntimeWorkspaceState {
+            device_id: "device-1".into(),
+            summary: status.summary().clone(),
+            capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                source_id: "window-helper-1".into(),
+                display_name: "Operator Mirror".into(),
+                kind: ios_control_contracts::capture::SourceKind::Window,
+            }],
+            capture_stream: None,
+            latest_frame: Some(frame),
+            selected_source_id: Some("window-helper-1".into()),
+            control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                items: vec!["Pair the device".into()],
+            },
+            control_phase: ControlSessionPhase::Connected,
+            execution_observed_change: Some(true),
+            diagnostics: SessionDiagnostics {
+                control_phase: ControlSessionPhase::Connected,
+                control_summary: "control ready".into(),
                 grounding_summary: Some("selected pointer plan".into()),
             },
         },
@@ -199,10 +240,8 @@ fn host_app_start_session_uses_real_runtime_snapshot() {
 fn host_app_start_session_forwards_selected_source_to_runtime() {
     let mut fixture = host_app_with_runtime();
     fixture.app.select_device("device-1");
-    fixture.app.device_detail.capture_sources = vec![CaptureSourceOption::new(
-        "missing-source",
-        "Broken Source",
-    )];
+    fixture.app.device_detail.capture_sources =
+        vec![CaptureSourceOption::new("missing-source", "Broken Source")];
     fixture.app.device_detail.active_source_id = Some("missing-source".into());
 
     fixture.app.request_start_session();
@@ -267,8 +306,38 @@ fn runtime_snapshot_preserves_control_phase_and_observed_change() {
         Some(true),
     );
 
-    assert_eq!(snapshot.workspace.control_phase, ControlSessionPhase::Advertising);
+    assert_eq!(
+        snapshot.workspace.control_phase,
+        ControlSessionPhase::Advertising
+    );
     assert_eq!(snapshot.workspace.execution_observed_change, Some(true));
+}
+
+#[test]
+fn host_app_uses_runtime_frame_metadata_for_streaming_state() {
+    let snapshot =
+        runtime_snapshot_with_frame(ios_control_contracts::capture::VideoFrameDescriptor {
+            source_id: "window-helper-1".into(),
+            source_kind: ios_control_contracts::capture::SourceKind::Window,
+            width: 640,
+            height: 360,
+            rotation_degrees: 90,
+            frame_index: 8,
+            health: ios_control_contracts::capture::FrameHealth::Occluded,
+        });
+
+    let app = host_app_from_runtime_snapshot(snapshot);
+
+    assert_eq!(app.session.latest_frame.as_ref().unwrap().width, 640);
+    assert_eq!(app.session.latest_frame.as_ref().unwrap().height, 360);
+    assert_eq!(
+        app.session.latest_frame.as_ref().unwrap().rotation_degrees,
+        90
+    );
+    assert_eq!(
+        app.session.latest_frame.as_ref().unwrap().health,
+        ios_control_contracts::capture::FrameHealth::Occluded
+    );
 }
 
 #[test]
@@ -279,7 +348,10 @@ fn host_app_surfaces_reconnect_guidance_for_degraded_control() {
         Some(false),
     ));
 
-    assert!(app.diagnostics.control_summary.contains("Reconnect BLE helper"));
+    assert!(app
+        .diagnostics
+        .control_summary
+        .contains("Reconnect BLE helper"));
 }
 
 #[test]

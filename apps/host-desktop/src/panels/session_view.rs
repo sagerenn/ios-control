@@ -61,7 +61,7 @@ pub fn render(
 
 fn render_frame_summary(ui: &mut Ui, frame: &VideoFrameDescriptor) {
     ui.label(format!(
-        "{}x{} frame {}",
-        frame.width, frame.height, frame.frame_index
+        "{}x{} | {}° | {:?} | frame {}",
+        frame.width, frame.height, frame.rotation_degrees, frame.health, frame.frame_index
     ));
 }
