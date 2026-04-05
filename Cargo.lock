@@ -1435,6 +1435,9 @@ dependencies = [
  "ios-control-contracts",
  "ios-control-frame-transport",
  "ios-control-session-orchestrator",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
