@@ -1,80 +1,71 @@
 # TODO
 
-Code-verified gap list for the current branch as of 2026-04-04.
+Code-verified gap list for the current branch as of 2026-04-05.
 
 This document is meant to be a living checklist. It reflects the current codebase, not the aspirational design docs under `docs/superpowers/`.
 
 ## Current Reality
 
 - This repository is a Linux/Windows host workspace. There is no native iOS app target in this repo today.
-- `apps/host-desktop` now has an orchestrator-backed runtime path, but the app still mixes that real runtime with legacy shell/bootstrap state and synthetic session view data.
-- The capture and control plugins are helper-driven. The current capture paths still synthesize frame payloads instead of transporting real device pixels end to end.
-- Automated verification currently covers mock/plugin/contract flows. It does not cover a real iPhone/iPad end-to-end session.
+- `apps/host-desktop` now starts, stops, and refreshes orchestrator-backed sessions locally.
+- The capture plugins now require RGBA helper payloads, propagate frame metadata, and the host renders runtime-backed preview state from frame slots locally.
+- The orchestrator now selects the actual control backend (`control.ble` when supported, otherwise `control.window-bridge`) and local/mock observed-change execution is reported as applied.
+- Automated verification currently covers workspace, mock/plugin, contract, and docs-status flows. It does not cover a real iPhone/iPad end-to-end session.
 
-## Product TODO
+## Remaining Work Checklist
 
 ### 1. Wire the desktop host to the real runtime
 
 Plan: `docs/superpowers/plans/2026-04-04-host-runtime-and-operator-workflow.md`
 
-- Add a real runtime layer to `apps/host-desktop` that owns session startup, status updates, and shutdown.
-- Replace the in-memory `HostRuntimeBridge` with a bridge that talks to `ios-control-session-orchestrator`.
-- Remove the fallback bootstrap error path and the simulated pending-start countdown from the host app.
-- Feed real session state, capture source selection, plugin health, and operator actions into the UI.
+- [ ] Decide whether persistent session/device state for reconnect and multi-device workflows is still in scope.
+- [ ] If persistence is still in scope, implement save/restore for the selected device, selected capture source, and enough session metadata to support reconnect cleanly.
+- [ ] If persistence is not in scope, narrow the reconnect/persistence claims in the top-level docs instead of leaving them implied.
 
 ### 2. Render a real live preview
 
 Plan: `docs/superpowers/plans/2026-04-04-live-preview-capture-transport.md`
 
-- Transport actual frame bytes through the capture helpers/plugins instead of writing repeated fill bytes into frame slots.
-- Consume frame-slot pixel data in the desktop host and render it as an image instead of a text-only frame summary.
-- Support frame refresh, resize, rotation, and degraded/stalled capture states in the UI.
-- Validate both capture paths separately:
-  - window capture against a real mirrored window
-  - direct receiver against a real iPhone/iPad screen-mirroring session
+- [ ] Update `README.md` so the local mock/runtime-backed flow matches the current branch:
+  - `host-desktop` is runtime-backed, not just a demo shell
+  - the local mock E2E now reaches `SessionPhase::Streaming`
+  - the local mock control plugin is currently `control.window-bridge`
+  - the local mock execution result currently reports `applied == true` and `observed_change == true`
+- [ ] Update `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md` so the Local mock row matches the current branch’s local mock control path and verified behavior.
 
 ### 3. Complete real control execution
 
 Plan: `docs/superpowers/plans/2026-04-04-control-execution-and-observation.md`
 
-- Decide the supported production control path:
-  - native BLE HID transport
-  - helper-backed BLE transport with a stable helper contract
-  - window-input fallback for mirrored-window operation
-- Replace probe-only platform checks with a complete execution path that can be validated on real hardware.
-- Surface control setup, advertising, pairing, failure, and reconnect states in the desktop UI.
-- Verify that applied plans produce observable on-device effects, not just execution summaries.
+- [ ] Add a telemetry/diagnostic breadcrumb when BLE startup/probe fails and the orchestrator falls back to `control.window-bridge`, so fallback does not silently hide BLE initialization failures.
+- [ ] Validate the supported real-device control path on physical hardware instead of relying on local/mock observed-change semantics alone.
 
 ### 4. Close the host/operator workflow gaps
 
 Plan: `docs/superpowers/plans/2026-04-04-host-runtime-and-operator-workflow.md`
 
-- Let the operator choose devices and capture sources from real runtime data.
-- Start and stop sessions from the UI with actual runtime side effects.
-- Show actionable recovery guidance for degraded capture/control states.
-- Persist enough session/device state to support reconnect and multi-device workflows cleanly.
+- [ ] Re-check `README.md`, this file, and the acceptance matrix together after each remaining validation update so the top-level status docs stay aligned with the merged branch.
 
 ### 5. Add real-device validation
 
 Plan: `docs/superpowers/plans/2026-04-04-real-device-validation-and-doc-alignment.md`
 
-- Record each manual validation run with `docs/validation/real-device-session-template.md`.
-- Run and record manual validation for:
+- [ ] Record each manual validation run with `docs/validation/real-device-session-template.md`.
+- [ ] Run and record manual validation for:
   - Linux + window capture + BLE HID
   - Linux + window capture + window-input fallback
   - Windows + window capture + BLE HID
   - Windows + window capture + window-input fallback
   - any direct-receiver path that is intended to be supported
-- Promote acceptance-matrix rows to `Verified` only after real operator validation.
-- Add the strongest practical automated smoke coverage for real-runtime startup without depending on physical hardware in CI.
+- [ ] Promote acceptance-matrix rows to `Verified` only after real operator validation.
+- [ ] Add the strongest practical automated smoke coverage for real-runtime startup without depending on physical hardware in CI.
 
 ### 6. Keep status docs aligned with code
 
 Plan: `docs/superpowers/plans/2026-04-04-real-device-validation-and-doc-alignment.md`
 
-- Keep `README.md`, this file, and `docs/superpowers/specs/2026-04-03-real-device-acceptance-matrix.md` aligned with the current branch.
-- Treat the design and plan docs in `docs/superpowers/` as historical planning artifacts unless the code and tests match them.
-- Update the top-level docs immediately when a TODO item moves from mock-only to real verified behavior.
+- [ ] Treat the design and plan docs in `docs/superpowers/` as historical planning artifacts unless the code and tests match them.
+- [ ] Update the top-level docs immediately when a remaining checklist item moves from local/mock-only behavior to real verified behavior.
 
 ## Exit Criteria For "Complete App"
 
