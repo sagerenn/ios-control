@@ -198,7 +198,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
 
-                let bytes = event.decode_rgba().map_err(Box::<dyn Error>::from)?;
+                let bytes = match event.decode_rgba() {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("failed to decode helper frame payload: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
                 if bytes.len() != state.slot.byte_len() {
                     let reply = PluginToHost::Error {
                         message: format!(
@@ -266,7 +275,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                     write_reply(&mut stdout, &reply)?;
                     continue;
                 }
-                let bytes = event.decode_rgba().map_err(Box::<dyn Error>::from)?;
+                let bytes = match event.decode_rgba() {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        let reply = PluginToHost::Error {
+                            message: format!("failed to decode helper frame payload: {}", err),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
                 if bytes.len() != SLOT_BYTES as usize {
                     let reply = PluginToHost::Error {
                         message: format!(

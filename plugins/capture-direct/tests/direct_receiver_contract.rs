@@ -223,6 +223,54 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+fn direct_read_frame_rejects_invalid_rgba_base64_without_crashing() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"supports_input_bridge":false}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":11,"width":1179,"height":2556,"rotation_degrees":0,"health":"Healthy","rgba_base64":"!!!"}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: "direct-1".into(),
+    });
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureStreamOpened { .. }
+    ));
+
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("failed to decode helper frame payload"),
+                "actual message: {message}"
+            );
+        }
+        other => panic!("unexpected read reply: {other:?}"),
+    }
+
+    plugin.send(HostToPlugin::CloseCaptureStream);
+    assert!(matches!(plugin.recv(), PluginToHost::Ack));
+}
+
+#[cfg(unix)]
+#[test]
 fn direct_helper_probe_times_out_when_helper_hangs() {
     let helper = write_helper_script(
         r#"#!/bin/sh
@@ -284,8 +332,9 @@ if [ "$1" = "probe" ]; then
   exit 0
 fi
 if [ "$1" = "stream" ]; then
-  payload="$(head -c 12054096 /dev/zero | tr '\0' '\11' | base64 | tr -d '\n')"
-  printf '{"frame_index":1,"width":1179,"height":2556,"rotation_degrees":0,"health":"Healthy","rgba_base64":"%s"}\n' "$payload"
+  printf '{"frame_index":1,"width":1179,"height":2556,"rotation_degrees":0,"health":"Healthy","rgba_base64":"'
+  head -c 12054096 /dev/zero | tr '\0' '\11' | base64 | tr -d '\n'
+  printf '"}\n'
   exit 0
 fi
 exit 2
@@ -443,4 +492,44 @@ exit 2
         }
         other => panic!("unexpected start capture reply: {other:?}"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn start_direct_capture_rejects_invalid_rgba_base64_without_crashing() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"supports_input_bridge":false}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":2,"width":1179,"height":2556,"rotation_degrees":0,"health":"Healthy","rgba_base64":"!!!"}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::StartDirectCapture);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("failed to decode helper frame payload"),
+                "unexpected message: {message}"
+            );
+        }
+        other => panic!("unexpected start capture reply: {other:?}"),
+    }
+
+    plugin.send(HostToPlugin::ProbeCapture);
+    assert!(matches!(plugin.recv(), PluginToHost::CaptureCapability { .. }));
 }

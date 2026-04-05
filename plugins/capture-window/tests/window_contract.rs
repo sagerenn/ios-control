@@ -333,6 +333,54 @@ exit 2
 
 #[cfg(unix)]
 #[test]
+fn window_read_frame_rejects_invalid_rgba_base64_without_crashing() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"display_name":"Operator Mirror","supports_input_bridge":true}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":9,"width":1280,"height":720,"rotation_degrees":0,"health":"Healthy","rgba_base64":"!!!"}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_WINDOW_CAPTURE_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: WINDOW_HELPER_SOURCE_ID.into(),
+    });
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureStreamOpened { .. }
+    ));
+
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("failed to decode helper frame payload"),
+                "actual message: {message}"
+            );
+        }
+        other => panic!("unexpected read reply: {other:?}"),
+    }
+
+    plugin.send(HostToPlugin::CloseCaptureStream);
+    assert!(matches!(plugin.recv(), PluginToHost::Ack));
+}
+
+#[cfg(unix)]
+#[test]
 fn window_helper_probe_times_out_when_helper_hangs() {
     let helper = write_helper_script(
         r#"#!/bin/sh
@@ -394,8 +442,9 @@ if [ "$1" = "probe" ]; then
   exit 0
 fi
 if [ "$1" = "stream" ]; then
-  payload="$(head -c 3686400 /dev/zero | tr '\0' '\7' | base64 | tr -d '\n')"
-  printf '{"frame_index":1,"width":1280,"height":720,"rotation_degrees":0,"health":"Healthy","rgba_base64":"%s"}\n' "$payload"
+  printf '{"frame_index":1,"width":1280,"height":720,"rotation_degrees":0,"health":"Healthy","rgba_base64":"'
+  head -c 3686400 /dev/zero | tr '\0' '\7' | base64 | tr -d '\n'
+  printf '"}\n'
   exit 0
 fi
 exit 2
