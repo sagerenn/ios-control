@@ -5,7 +5,7 @@ use ios_control_contracts::control::{
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
 use plugin_control_ble::helper_bridge::{
-    run_execute, run_prepare, BleHelperExecution, BleHelperPrepare,
+    run_execute, run_prepare, run_stop, BleHelperExecution, BleHelperPrepare,
 };
 use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
@@ -88,6 +88,9 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
 fn helper_prepare_to_session(prepare: BleHelperPrepare) -> ControlSession {
     let state = match prepare.phase.as_str() {
         "Advertising" => ControlSessionState::Advertising,
+        "Pairing" => ControlSessionState::Pairing,
+        "BondedIdle" => ControlSessionState::BondedIdle,
+        "ReconnectPending" => ControlSessionState::ReconnectPending,
         "Connected" => ControlSessionState::Connected,
         "ReadyToAdvertise" => ControlSessionState::Ready,
         "Unavailable" => ControlSessionState::Unsupported,
@@ -108,6 +111,9 @@ fn session_to_contract(session: &ControlSession) -> (ControlSessionPhase, Contro
         ControlSessionState::Unsupported => ControlSessionPhase::Unavailable,
         ControlSessionState::Ready => ControlSessionPhase::ReadyToAdvertise,
         ControlSessionState::Advertising => ControlSessionPhase::Advertising,
+        ControlSessionState::Pairing => ControlSessionPhase::Pairing,
+        ControlSessionState::BondedIdle => ControlSessionPhase::BondedIdle,
+        ControlSessionState::ReconnectPending => ControlSessionPhase::ReconnectPending,
         ControlSessionState::Connected => ControlSessionPhase::Connected,
         ControlSessionState::Error(_) => ControlSessionPhase::Error,
     };
@@ -173,6 +179,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::Stop => {
+                if let Some(helper) = find_ble_helper() {
+                    let _ = run_stop(&helper);
+                }
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
                 break;
             }

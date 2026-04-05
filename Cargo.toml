@@ -10,6 +10,7 @@ members = [
   "crates/telemetry-store",
   "crates/hid-report-engine",
   "apps/host-desktop",
+  "helpers/ble-helper",
   "plugins/control-ble",
   "plugins/control-window-bridge",
   "plugins/capture-window",
