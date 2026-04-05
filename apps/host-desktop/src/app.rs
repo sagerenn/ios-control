@@ -12,7 +12,7 @@ use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
 use crate::view_models::fleet::FleetViewModel;
-use crate::view_models::session::{SessionUiState, SessionViewModel};
+use crate::view_models::session::SessionViewModel;
 use crate::view_models::settings::SettingsViewModel;
 
 pub struct HostDesktopApp {
@@ -274,7 +274,7 @@ impl HostDesktopApp {
                     if let Some(frame) = workspace.latest_frame.clone() {
                         SessionViewModel::streaming(source, frame)
                     } else {
-                        SessionViewModel::starting()
+                        SessionViewModel::streaming_without_frame(source)
                     }
                 }
                 SessionSubstate::Discovering
@@ -344,6 +344,28 @@ impl HostDesktopApp {
                 Some(ctx.load_texture("session-preview", image, egui::TextureOptions::LINEAR));
         }
     }
+
+    fn selected_runtime_session_is_streaming(&self) -> bool {
+        let Some(device_id) = self.selected_device_id.as_deref() else {
+            return false;
+        };
+        let workspace_matches = self
+            .runtime_workspace
+            .as_ref()
+            .is_some_and(|workspace| workspace.device_id == device_id);
+        if !workspace_matches {
+            return false;
+        }
+        self.runtime_statuses
+            .iter()
+            .find(|status| status.summary().device_id == device_id)
+            .is_some_and(|status| {
+                matches!(
+                    status.substate(),
+                    SessionSubstate::ControlReady | SessionSubstate::Streaming
+                )
+            })
+    }
 }
 
 fn capture_source_for_backend(backend: &str) -> CaptureSourceOption {
@@ -360,7 +382,7 @@ impl eframe::App for HostDesktopApp {
         let mut selected_device = None;
         let mut device_detail_action = DeviceDetailAction::None;
 
-        let runtime_snapshot = if matches!(self.session.ui_state, SessionUiState::Streaming) {
+        let runtime_snapshot = if self.selected_runtime_session_is_streaming() {
             if let (Some(host_runtime), Some(device_id)) =
                 (self.host_runtime.as_mut(), self.selected_device_id.clone())
             {

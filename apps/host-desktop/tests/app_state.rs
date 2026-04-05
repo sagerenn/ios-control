@@ -119,6 +119,44 @@ fn runtime_snapshot_with_frame(
     }
 }
 
+fn runtime_snapshot_streaming_without_frame() -> HostRuntimeSnapshot {
+    let status = status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::Streaming,
+        "capture.window.helper",
+        "control.ble",
+        None,
+    );
+
+    HostRuntimeSnapshot {
+        statuses: vec![status.clone()],
+        workspace: RuntimeWorkspaceState {
+            device_id: "device-1".into(),
+            summary: status.summary().clone(),
+            capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                source_id: "window-helper-1".into(),
+                display_name: "Operator Mirror".into(),
+                kind: ios_control_contracts::capture::SourceKind::Window,
+            }],
+            capture_stream: None,
+            latest_frame: None,
+            selected_source_id: Some("window-helper-1".into()),
+            control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                items: vec!["Pair the device".into()],
+            },
+            control_phase: ControlSessionPhase::Connected,
+            execution_observed_change: Some(true),
+            diagnostics: SessionDiagnostics {
+                control_phase: ControlSessionPhase::Connected,
+                control_summary: "control ready".into(),
+                grounding_summary: Some("selected pointer plan".into()),
+            },
+        },
+    }
+}
+
 fn host_app_from_runtime_snapshot(snapshot: HostRuntimeSnapshot) -> HostDesktopApp {
     let mut app = HostDesktopApp::new();
     app.apply_runtime_snapshot(snapshot);
@@ -338,6 +376,14 @@ fn host_app_uses_runtime_frame_metadata_for_streaming_state() {
         app.session.latest_frame.as_ref().unwrap().health,
         ios_control_contracts::capture::FrameHealth::Occluded
     );
+}
+
+#[test]
+fn host_app_keeps_streaming_ui_state_when_runtime_frame_is_not_ready_yet() {
+    let app = host_app_from_runtime_snapshot(runtime_snapshot_streaming_without_frame());
+
+    assert_eq!(app.session.ui_state, SessionUiState::Streaming);
+    assert!(app.session.latest_frame.is_none());
 }
 
 #[test]
