@@ -57,7 +57,7 @@ fn ble_probe_reports_helper_backed_transport() {
 #[test]
 fn ble_helper_probe_requires_prepare_and_execute_support() {
     let probe: BleHelperProbe = serde_json::from_str(
-        r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true,"supports_status":true,"supports_stop":true,"supports_forget_bond":true}"#,
     )
     .unwrap();
 
@@ -100,7 +100,7 @@ fn ble_probe_times_out_when_helper_hangs() {
     env::set_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS", "50");
     let helper = write_test_helper_script(
         "ble-timeout",
-        "#!/bin/sh\nsleep 1\nprintf '%s\\n' '{\"supported\":true,\"supports_prepare\":true,\"supports_execute\":true}'\n",
+        "#!/bin/sh\nsleep 1\nprintf '%s\\n' '{\"supported\":true,\"supports_prepare\":true,\"supports_execute\":true,\"supports_status\":true,\"supports_stop\":true,\"supports_forget_bond\":true}'\n",
     );
 
     let capability = probe_ble_helper(Some(helper.clone()));
@@ -126,7 +126,7 @@ fn ble_probe_handles_chatty_helper_output_without_timeout() {
     env::set_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS", "2000");
     let helper = write_test_helper_script(
         "ble-chatty",
-        "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 20000 ]; do\n  printf 'noise-%s\\n' \"$i\" 1>&2\n  i=$((i + 1))\ndone\nprintf '%s\\n' '{\"supported\":true,\"supports_prepare\":true,\"supports_execute\":true}'\n",
+        "#!/bin/sh\ni=0\nwhile [ \"$i\" -lt 20000 ]; do\n  printf 'noise-%s\\n' \"$i\" 1>&2\n  i=$((i + 1))\ndone\nprintf '%s\\n' '{\"supported\":true,\"supports_prepare\":true,\"supports_execute\":true,\"supports_status\":true,\"supports_stop\":true,\"supports_forget_bond\":true}'\n",
     );
 
     let capability = probe_ble_helper(Some(helper.clone()));

@@ -9,6 +9,9 @@ pub enum ControlSessionState {
     Unsupported,
     Ready,
     Advertising,
+    Pairing,
+    BondedIdle,
+    ReconnectPending,
     Connected,
     Error(String),
 }

@@ -37,6 +37,9 @@ pub enum ControlSessionPhase {
     Unavailable,
     ReadyToAdvertise,
     Advertising,
+    Pairing,
+    BondedIdle,
+    ReconnectPending,
     Connected,
     Error,
 }

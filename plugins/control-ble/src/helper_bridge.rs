@@ -12,6 +12,12 @@ pub struct BleHelperProbe {
     pub supported: bool,
     pub supports_prepare: bool,
     pub supports_execute: bool,
+    #[serde(default)]
+    pub supports_status: bool,
+    #[serde(default)]
+    pub supports_stop: bool,
+    #[serde(default)]
+    pub supports_forget_bond: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -20,6 +26,30 @@ pub struct BleHelperPrepare {
     pub checklist: Vec<String>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub paired_device_id: Option<String>,
+    #[serde(default)]
+    pub paired_device_name: Option<String>,
+    #[serde(default)]
+    pub bonded: bool,
+    #[serde(default)]
+    pub execute_ready: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BleHelperStatus {
+    pub phase: String,
+    pub checklist: Vec<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    #[serde(default)]
+    pub paired_device_id: Option<String>,
+    #[serde(default)]
+    pub paired_device_name: Option<String>,
+    #[serde(default)]
+    pub bonded: bool,
+    #[serde(default)]
+    pub execute_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -30,6 +60,14 @@ pub struct BleHelperExecution {
     pub observed_change: bool,
     #[serde(default)]
     pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BleHelperAck {
+    #[serde(default)]
+    pub ok: bool,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;
@@ -141,6 +179,36 @@ pub fn run_execute(helper: &Path, plan_kind: &str) -> Result<BleHelperExecution>
     let output = run_for_output(command, "ble helper execute")?;
     if !output.status.success() {
         return Err(anyhow!("ble helper execute failed"));
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+pub fn run_status(helper: &Path) -> Result<BleHelperStatus> {
+    let mut command = helper_command(helper);
+    command.arg("status");
+    let output = run_for_output(command, "ble helper status")?;
+    if !output.status.success() {
+        return Err(anyhow!("ble helper status failed"));
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+pub fn run_stop(helper: &Path) -> Result<BleHelperAck> {
+    let mut command = helper_command(helper);
+    command.arg("stop");
+    let output = run_for_output(command, "ble helper stop")?;
+    if !output.status.success() {
+        return Err(anyhow!("ble helper stop failed"));
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+pub fn run_forget_bond(helper: &Path, device_id: &str) -> Result<BleHelperAck> {
+    let mut command = helper_command(helper);
+    command.args(["forget-bond", "--device", device_id]);
+    let output = run_for_output(command, "ble helper forget-bond")?;
+    if !output.status.success() {
+        return Err(anyhow!("ble helper forget-bond failed"));
     }
     Ok(serde_json::from_slice(&output.stdout)?)
 }

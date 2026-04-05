@@ -1,5 +1,6 @@
 use plugin_control_ble::helper_bridge::{
-    run_execute, run_prepare, run_probe, BleHelperExecution, BleHelperPrepare,
+    run_execute, run_forget_bond, run_prepare, run_probe, run_status, run_stop,
+    BleHelperAck, BleHelperExecution, BleHelperPrepare, BleHelperStatus,
 };
 use std::{
     env, fs,
@@ -16,6 +17,7 @@ static HELPER_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn write_ble_helper_with_mode(
     probe: &str,
     prepare: &str,
+    status: &str,
     execute: &str,
     executable: bool,
 ) -> PathBuf {
@@ -37,8 +39,17 @@ case "$1" in
   prepare)
     printf '%s\n' '{prepare}'
     ;;
+  status)
+    printf '%s\n' '{status}'
+    ;;
   execute)
     printf '%s\n' '{execute}'
+    ;;
+  stop)
+    printf '%s\n' '{{"ok":true,"message":"helper stopped"}}'
+    ;;
+  forget-bond)
+    printf '%s\n' '{{"ok":true,"message":"bond forgotten"}}'
     ;;
   *)
     exit 2
@@ -58,13 +69,14 @@ esac
 
 #[cfg(unix)]
 fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
-    write_ble_helper_with_mode(probe, prepare, execute, true)
+    write_ble_helper_with_mode(probe, prepare, prepare, execute, true)
 }
 
 #[test]
 fn ble_helper_probe_runs_shell_script_helpers() {
     let helper = write_ble_helper_with_mode(
         r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
+        r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":[]}"#,
         r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":[]}"#,
         r#"{"phase":"Succeeded","summary":"tap applied","observed_change":true}"#,
         false,
@@ -112,11 +124,11 @@ fn ble_helper_execute_exposes_observed_change() {
 #[test]
 fn ble_helper_prepare_roundtrips_json() {
     let prepare: BleHelperPrepare = serde_json::from_str(
-        r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":["Waiting for iPhone"]}"#,
+        r#"{"phase":"ReconnectPending","checklist":["Enable Bluetooth"],"notes":["Waiting for iPhone"]}"#,
     )
     .unwrap();
 
-    assert_eq!(prepare.phase, "Advertising");
+    assert_eq!(prepare.phase, "ReconnectPending");
     assert_eq!(prepare.checklist, vec!["Enable Bluetooth"]);
     assert_eq!(prepare.notes, vec!["Waiting for iPhone"]);
 }
@@ -131,4 +143,51 @@ fn ble_helper_execution_roundtrips_observed_change() {
     assert_eq!(execution.phase, "Succeeded");
     assert_eq!(execution.summary, "tap applied");
     assert!(execution.observed_change);
+}
+
+#[test]
+fn ble_helper_status_roundtrips_json() {
+    let status: BleHelperStatus = serde_json::from_str(
+        r#"{"phase":"BondedIdle","checklist":["Reconnect device"],"notes":["Stored bond available"],"paired_device_id":"device-1","paired_device_name":"Alice iPhone","bonded":true,"execute_ready":false}"#,
+    )
+    .unwrap();
+
+    assert_eq!(status.phase, "BondedIdle");
+    assert_eq!(status.paired_device_id.as_deref(), Some("device-1"));
+    assert_eq!(status.paired_device_name.as_deref(), Some("Alice iPhone"));
+    assert!(status.bonded);
+    assert!(!status.execute_ready);
+}
+
+#[cfg(unix)]
+#[test]
+fn ble_helper_status_stop_and_forget_bond_use_helper_commands() {
+    let helper = write_ble_helper(
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true,"supports_status":true,"supports_stop":true,"supports_forget_bond":true}"#,
+        r#"{"phase":"Connected","checklist":[],"notes":[]}"#,
+        r#"{"phase":"Succeeded","summary":"tap applied","observed_change":true}"#,
+    );
+
+    let status = run_status(&helper).unwrap();
+    assert_eq!(status.phase, "Connected");
+
+    let stop = run_stop(&helper).unwrap();
+    assert_eq!(
+        stop,
+        BleHelperAck {
+            ok: true,
+            message: Some("helper stopped".into())
+        }
+    );
+
+    let forget = run_forget_bond(&helper, "device-1").unwrap();
+    assert_eq!(
+        forget,
+        BleHelperAck {
+            ok: true,
+            message: Some("bond forgotten".into())
+        }
+    );
+
+    let _ = fs::remove_file(helper);
 }

@@ -21,6 +21,9 @@ PLUGIN_BINARIES = [
     "plugin-grounding-core",
     "plugin-mock-device",
 ]
+HELPER_BINARIES = [
+    "ble-helper",
+]
 
 
 def executable_name(binary_name: str, target: str) -> str:
@@ -154,6 +157,21 @@ def build_release_bundle(
                 bin_dir=bin_dir,
                 staged_path=plugin_root / "plugins" / plugin_filename,
                 binary_name=plugin,
+                target=target,
+            )
+
+        for helper in HELPER_BINARIES:
+            helper_filename = executable_name(helper, target)
+            _copy_binary(
+                bin_dir=bin_dir,
+                staged_path=bundle_root / "helpers" / helper_filename,
+                binary_name=helper,
+                target=target,
+            )
+            _copy_binary(
+                bin_dir=bin_dir,
+                staged_path=plugin_root / "helpers" / helper_filename,
+                binary_name=helper,
                 target=target,
             )
 
