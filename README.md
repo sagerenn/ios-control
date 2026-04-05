@@ -219,7 +219,8 @@ cargo build --release \
   --package plugin-capture-window \
   --package plugin-capture-direct \
   --package plugin-grounding-core \
-  --package plugin-mock-device
+  --package plugin-mock-device \
+  --package ble-helper
 
 python3 scripts/package_release.py \
   --target x86_64-unknown-linux-gnu \

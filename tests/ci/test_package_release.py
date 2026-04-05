@@ -27,6 +27,9 @@ EXPECTED_PLUGIN_BINARIES = [
     "plugin-grounding-core",
     "plugin-mock-device",
 ]
+EXPECTED_HELPER_BINARIES = [
+    "ble-helper",
+]
 
 
 class PackageReleaseTests(unittest.TestCase):
@@ -40,6 +43,11 @@ class PackageReleaseTests(unittest.TestCase):
             plugin_path = bin_dir / plugin_name
             plugin_path.write_text(plugin, encoding="utf-8")
             plugin_path.chmod(0o755)
+        for helper in EXPECTED_HELPER_BINARIES:
+            helper_name = package_release.executable_name(helper, target)
+            helper_path = bin_dir / helper_name
+            helper_path.write_text(helper, encoding="utf-8")
+            helper_path.chmod(0o755)
 
     def test_linux_bundle_and_plugin_archive(self) -> None:
         target = "x86_64-unknown-linux-gnu"
@@ -81,6 +89,13 @@ class PackageReleaseTests(unittest.TestCase):
                     )
                     plugin_member = bundle_tar.getmember(f"{bundle_root}/plugins/{plugin}")
                     self.assertEqual(stat.S_IMODE(plugin_member.mode), 0o755)
+                for helper in EXPECTED_HELPER_BINARIES:
+                    self.assertIn(
+                        f"{bundle_root}/helpers/{helper}",
+                        bundle_names,
+                    )
+                    helper_member = bundle_tar.getmember(f"{bundle_root}/helpers/{helper}")
+                    self.assertEqual(stat.S_IMODE(helper_member.mode), 0o755)
                 manifest = bundle_tar.extractfile(f"{bundle_root}/manifest.txt")
                 self.assertIsNotNone(manifest)
                 manifest_text = manifest.read().decode("utf-8")
@@ -93,6 +108,11 @@ class PackageReleaseTests(unittest.TestCase):
                 for plugin in EXPECTED_PLUGIN_BINARIES:
                     self.assertIn(
                         f"{plugin_root}/plugins/{plugin}",
+                        plugin_names,
+                    )
+                for helper in EXPECTED_HELPER_BINARIES:
+                    self.assertIn(
+                        f"{plugin_root}/helpers/{helper}",
                         plugin_names,
                     )
                 self.assertNotIn(
@@ -146,6 +166,13 @@ class PackageReleaseTests(unittest.TestCase):
                         (bundle_zip.getinfo(f"{bundle_root}/plugins/{plugin_exe}").external_attr >> 16) & 0o777,
                         0o755,
                     )
+                for helper in EXPECTED_HELPER_BINARIES:
+                    helper_exe = package_release.executable_name(helper, target)
+                    self.assertIn(f"{bundle_root}/helpers/{helper_exe}", bundle_names)
+                    self.assertEqual(
+                        (bundle_zip.getinfo(f"{bundle_root}/helpers/{helper_exe}").external_attr >> 16) & 0o777,
+                        0o755,
+                    )
                 self.assertIn(f"{bundle_root}/manifest.txt", bundle_names)
 
             with zipfile.ZipFile(result["plugin_archive"]) as plugin_zip:
@@ -153,6 +180,9 @@ class PackageReleaseTests(unittest.TestCase):
                 for plugin in EXPECTED_PLUGIN_BINARIES:
                     plugin_exe = package_release.executable_name(plugin, target)
                     self.assertIn(f"{plugin_root}/plugins/{plugin_exe}", plugin_names)
+                for helper in EXPECTED_HELPER_BINARIES:
+                    helper_exe = package_release.executable_name(helper, target)
+                    self.assertIn(f"{plugin_root}/helpers/{helper_exe}", plugin_names)
                 self.assertNotIn(f"{plugin_root}/bin/{host_exe}", plugin_names)
                 self.assertIn(f"{plugin_root}/manifest.txt", plugin_names)
 

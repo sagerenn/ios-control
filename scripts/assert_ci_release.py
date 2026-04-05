@@ -57,6 +57,7 @@ RELEASE_BUILD_SNIPPETS = [
     "--package plugin-capture-direct",
     "--package plugin-grounding-core",
     "--package plugin-mock-device",
+    "--package ble-helper",
     "--bin-dir target/${{ matrix.target }}/release",
     "--out-dir dist/${{ matrix.target }}",
     "--sha ${{ github.sha }}",
@@ -224,8 +225,8 @@ def assert_release_build_structure(text: str) -> None:
         text,
         [
             "name: Install Linux UI dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev",
-            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n        shell: bash\n        run: >\n          cargo build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device",
-            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n        shell: bash\n        run: >\n          cross build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device",
+            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n        shell: bash\n        run: >\n          cargo build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper",
+            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n        shell: bash\n        run: >\n          cross build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper",
         ],
         "release build step pairing",
     )

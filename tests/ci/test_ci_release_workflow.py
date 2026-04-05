@@ -85,6 +85,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--package plugin-capture-direct", workflow_text)
         self.assertIn("--package plugin-grounding-core", workflow_text)
         self.assertIn("--package plugin-mock-device", workflow_text)
+        self.assertIn("--package ble-helper", workflow_text)
         self.assertIn("--target ${{ matrix.target }}", workflow_text)
         self.assertIn("--bin-dir target/${{ matrix.target }}/release", workflow_text)
         self.assertIn("--out-dir dist/${{ matrix.target }}", workflow_text)
