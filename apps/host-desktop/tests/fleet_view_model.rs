@@ -1,3 +1,7 @@
+use host_desktop::inventory::aggregator::aggregate_inventory;
+use host_desktop::inventory::model::{
+    CapabilityState, DeviceObservation, InventoryEvidenceSource,
+};
 use host_desktop::view_models::fleet::FleetViewModel;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::{
@@ -48,4 +52,26 @@ fn fleet_view_model_preserves_operator_actions_per_device() {
     let fleet = FleetViewModel::from_statuses(&statuses);
     assert_eq!(fleet.rows.len(), 2);
     assert_eq!(fleet.rows[1].operator_action.as_deref(), Some("reconnect mirror helper"));
+}
+
+#[test]
+fn fleet_view_model_surfaces_inventory_badges_and_readiness() {
+    let inventory = aggregate_inventory(vec![DeviceObservation {
+        provider: InventoryEvidenceSource::Bluetooth,
+        stable_id: Some("bt:AA-BB".into()),
+        known_device_id: None,
+        display_name: "Alice iPhone".into(),
+        mirror_source_id: None,
+        live: true,
+        capture_state: CapabilityState::Unavailable,
+        preferred_control_state: CapabilityState::Discovered,
+        fallback_control_state: CapabilityState::Unavailable,
+        reasons: vec!["paired over bluetooth".into()],
+    }]);
+
+    let fleet = FleetViewModel::from_inventory(&inventory.devices, &[]);
+    assert_eq!(fleet.rows.len(), 1);
+    assert!(fleet.rows[0].evidence_badges.iter().any(|badge| badge == "Bluetooth"));
+    assert_eq!(fleet.rows[0].readiness_summary, "Not startable");
+    assert!(!fleet.rows[0].start_enabled);
 }

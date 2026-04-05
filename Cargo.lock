@@ -1434,6 +1434,8 @@ dependencies = [
  "egui",
  "ios-control-contracts",
  "ios-control-frame-transport",
+ "ios-control-plugin-protocol",
+ "ios-control-plugin-runtime",
  "ios-control-session-orchestrator",
  "serde",
  "serde_json",

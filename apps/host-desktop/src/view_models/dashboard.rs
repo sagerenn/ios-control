@@ -18,4 +18,11 @@ impl DashboardViewModel {
             degraded_devices,
         }
     }
+
+    pub fn from_inventory_rows(rows: usize, degraded_devices: usize) -> Self {
+        Self {
+            total_devices: rows,
+            degraded_devices,
+        }
+    }
 }

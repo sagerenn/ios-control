@@ -18,9 +18,14 @@ fn capture_source_option_labels_window_and_direct_sources() {
 fn session_view_model_actions_follow_ui_state() {
     let idle = SessionViewModel::idle();
     assert_eq!(idle.ui_state, SessionUiState::Idle);
-    assert!(idle.can_start());
+    assert!(!idle.can_start());
     assert!(!idle.can_stop());
     assert_eq!(idle.status_line(), "No active session");
+
+    let idle_startable = SessionViewModel::idle_startable(None);
+    assert_eq!(idle_startable.ui_state, SessionUiState::Idle);
+    assert!(idle_startable.can_start());
+    assert!(!idle_startable.can_stop());
 
     let starting = SessionViewModel::starting();
     assert_eq!(starting.ui_state, SessionUiState::Starting);
@@ -33,4 +38,12 @@ fn session_view_model_actions_follow_ui_state() {
     assert!(error.can_start());
     assert!(!error.can_stop());
     assert_eq!(error.status_line(), "Missing backend");
+
+    let blocked = SessionViewModel::blocked("No capture path observed", None);
+    assert_eq!(
+        blocked.ui_state,
+        SessionUiState::Error("No capture path observed".into())
+    );
+    assert!(!blocked.can_start());
+    assert!(!blocked.can_stop());
 }
