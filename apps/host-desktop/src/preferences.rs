@@ -130,6 +130,13 @@ impl HostPreferencesStore {
         }
     }
 
+    pub fn log_dir_for_preferences_path(path: &Path) -> PathBuf {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("logs")
+    }
+
     pub fn path_from_env(
         xdg_config_home: Option<&Path>,
         home: Option<&Path>,
@@ -146,6 +153,10 @@ impl HostPreferencesStore {
                 .join("ios-control")
                 .join("host-preferences.json")
         })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -212,6 +223,15 @@ mod tests {
             home.join(".config")
                 .join("ios-control")
                 .join("host-preferences.json")
+        );
+    }
+
+    #[test]
+    fn log_directory_is_sibling_to_preferences_file() {
+        let prefs = PathBuf::from("/tmp/app/ios-control/host-preferences.json");
+        assert_eq!(
+            HostPreferencesStore::log_dir_for_preferences_path(&prefs),
+            PathBuf::from("/tmp/app/ios-control/logs")
         );
     }
 

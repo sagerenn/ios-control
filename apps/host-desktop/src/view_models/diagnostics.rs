@@ -20,12 +20,18 @@ pub struct DiagnosticsViewModel {
 impl DiagnosticsViewModel {
     const MAX_LOG_LINES: usize = 12;
 
-    pub fn record_startup_view(&mut self, startup: &StartupViewModel) {
-        self.startup_probe_runs += 1;
-        self.push_log(format!("startup probe {}", startup.summary));
+    pub fn record_host_log_line(&mut self, message: impl Into<String>) -> String {
+        let message = message.into();
+        self.push_log(message.clone());
+        message
     }
 
-    pub fn record_inventory_snapshot(&mut self, snapshot: &InventorySnapshot) {
+    pub fn record_startup_view(&mut self, startup: &StartupViewModel) -> String {
+        self.startup_probe_runs += 1;
+        self.record_host_log_line(format!("startup probe {}", startup.summary))
+    }
+
+    pub fn record_inventory_snapshot(&mut self, snapshot: &InventorySnapshot) -> String {
         self.inventory_refreshes += 1;
         self.inventory_rows = snapshot.devices.len() as u64;
         self.inventory_startable_rows = snapshot
@@ -45,36 +51,48 @@ impl DiagnosticsViewModel {
                 matches!(device.sessionability, Sessionability::NotStartable | Sessionability::Unknown)
             })
             .count() as u64;
-        self.push_log(format!(
+        self.record_host_log_line(format!(
             "inventory snapshot total={} startable={} blocked={}",
             self.inventory_rows, self.inventory_startable_rows, self.inventory_blocked_rows
-        ));
+        ))
     }
 
-    pub fn record_session_start_attempt(&mut self, device_id: &str, source_id: Option<&str>) {
+    pub fn record_session_start_attempt(
+        &mut self,
+        device_id: &str,
+        source_id: Option<&str>,
+    ) -> String {
         self.session_start_attempts += 1;
-        self.push_log(format!(
+        self.record_host_log_line(format!(
             "session start requested device={} source={}",
             device_id,
             source_id.unwrap_or("auto")
-        ));
+        ))
     }
 
-    pub fn record_session_start_success(&mut self, device_id: &str, source_id: Option<&str>) {
+    pub fn record_session_start_success(
+        &mut self,
+        device_id: &str,
+        source_id: Option<&str>,
+    ) -> String {
         self.session_start_successes += 1;
-        self.push_log(format!(
+        self.record_host_log_line(format!(
             "session start succeeded device={} source={}",
             device_id,
             source_id.unwrap_or("auto")
-        ));
+        ))
     }
 
-    pub fn record_session_start_failure(&mut self, device_id: Option<&str>, error: &str) {
+    pub fn record_session_start_failure(
+        &mut self,
+        device_id: Option<&str>,
+        error: &str,
+    ) -> String {
         self.session_start_failures += 1;
-        self.push_log(format!(
+        self.record_host_log_line(format!(
             "session start failed device={} error={error}",
             device_id.unwrap_or("none")
-        ));
+        ))
     }
 
     pub fn metric_lines(&self) -> Vec<String> {

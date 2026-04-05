@@ -405,6 +405,43 @@ fn host_app_records_session_start_diagnostic_metrics_and_logs() {
 }
 
 #[test]
+fn host_app_writes_launch_logs_into_user_data_logs_folder() {
+    let mut fixture = host_app_with_runtime_and_preferences("{}");
+    fixture
+        .app
+        .apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
+    fixture.app.select_device("bt:AA-BB");
+    fixture.app.select_capture_source("window-helper-1");
+    fixture.app.request_start_session();
+
+    let prefs_path = fixture.preferences_path.as_ref().unwrap();
+    let logs_dir = HostPreferencesStore::log_dir_for_preferences_path(prefs_path);
+    let entries = std::fs::read_dir(&logs_dir)
+        .expect("logs dir should exist")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("logs dir entries should read");
+    let log_texts = entries
+        .into_iter()
+        .map(|entry| std::fs::read_to_string(entry.path()).expect("launch log should be readable"))
+        .collect::<Vec<_>>();
+    assert!(!log_texts.is_empty(), "expected at least one launch log file");
+    assert!(
+        log_texts.iter().any(|text| text.contains("startup probe")),
+        "{log_texts:?}"
+    );
+    assert!(
+        log_texts.iter().any(|text| text.contains("inventory snapshot")),
+        "{log_texts:?}"
+    );
+    assert!(
+        log_texts
+            .iter()
+            .any(|text| text.contains("session start succeeded device=bt:AA-BB source=window-helper-1")),
+        "{log_texts:?}"
+    );
+}
+
+#[test]
 fn host_app_merges_runtime_sessions_with_inventory_rows() {
     let mut app = HostDesktopApp::new();
     app.apply_inventory_snapshot(aggregate_inventory(vec![DeviceObservation {

@@ -7,6 +7,7 @@ use crate::panels::device_detail::{
 };
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings, startup};
+use crate::logging::HostLogWriter;
 use crate::preferences::{HostPreferences, HostPreferencesStore, KnownDevicePreference};
 use crate::preview::color_image_from_slot;
 use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
@@ -37,6 +38,7 @@ pub struct HostDesktopApp {
     runtime_config: Option<HostRuntimeConfig>,
     runtime_workspace: Option<RuntimeWorkspaceState>,
     preferences_store: Option<HostPreferencesStore>,
+    host_log_writer: Option<HostLogWriter>,
     preferences: HostPreferences,
     restored_source_preference: Option<RestoredSourcePreference>,
     manual_source_selection_device_id: Option<String>,
@@ -67,6 +69,7 @@ impl HostDesktopApp {
             runtime_config: None,
             runtime_workspace: None,
             preferences_store: None,
+            host_log_writer: None,
             preferences: HostPreferences::default(),
             restored_source_preference: None,
             manual_source_selection_device_id: None,
@@ -113,8 +116,9 @@ impl HostDesktopApp {
 
     pub fn with_runtime(config: HostRuntimeConfig) -> Self {
         let mut app = Self::new();
-        app.startup = startup_from_plugin_paths(&config.plugin_paths);
-        app.diagnostics.record_startup_view(&app.startup);
+        let startup = startup_from_plugin_paths(&config.plugin_paths);
+        app.record_startup_view(&startup);
+        app.startup = startup;
         app.runtime_config = Some(config.clone());
         app.host_runtime =
             Some(HostRuntime::new(config).expect("host runtime should initialize successfully"));
@@ -139,6 +143,7 @@ impl HostDesktopApp {
         app.selected_device_id = preferences.selected_device_id.clone();
         app.preferences = preferences;
         app.restored_source_preference = restored_source_preference;
+        app.install_log_writer_from_preferences_path(store.path());
         app.preferences_store = Some(store);
         app.refresh_inventory();
         if app.preferences.selected_device_id.is_some() {
@@ -158,12 +163,12 @@ impl HostDesktopApp {
     }
 
     pub fn apply_startup_view(&mut self, startup: StartupViewModel) {
-        self.diagnostics.record_startup_view(&startup);
+        self.record_startup_view(&startup);
         self.startup = startup;
     }
 
     pub fn apply_inventory_snapshot(&mut self, snapshot: InventorySnapshot) {
-        self.diagnostics.record_inventory_snapshot(&snapshot);
+        self.record_inventory_snapshot(&snapshot);
         self.inventory_snapshot = snapshot;
         self.sync_from_inventory_and_runtime();
     }
@@ -185,6 +190,66 @@ impl HostDesktopApp {
                 eprintln!("warning: failed to save host preferences: {error}");
             }
         }
+    }
+
+    fn install_log_writer_from_preferences_path(&mut self, preferences_path: &std::path::Path) {
+        match HostLogWriter::from_preferences_path(preferences_path) {
+            Ok(writer) => {
+                self.host_log_writer = Some(writer);
+                for line in self.diagnostics.log_lines.clone() {
+                    self.append_host_log_line(&line);
+                }
+            }
+            Err(error) => {
+                eprintln!("warning: failed to initialize host log writer: {error}");
+                self.diagnostics
+                    .record_host_log_line(format!("host log file unavailable: {error}"));
+            }
+        }
+    }
+
+    fn append_host_log_line(&mut self, line: &str) {
+        let Some(writer) = self.host_log_writer.as_ref() else {
+            return;
+        };
+
+        if let Err(error) = writer.append_line(line) {
+            eprintln!("warning: failed to append host log line: {error}");
+            self.host_log_writer = None;
+            self.diagnostics
+                .record_host_log_line(format!("host log append failed: {error}"));
+        }
+    }
+
+    fn record_startup_view(&mut self, startup: &StartupViewModel) {
+        let line = self.diagnostics.record_startup_view(startup);
+        self.append_host_log_line(&line);
+    }
+
+    fn record_inventory_snapshot(&mut self, snapshot: &InventorySnapshot) {
+        let line = self.diagnostics.record_inventory_snapshot(snapshot);
+        self.append_host_log_line(&line);
+    }
+
+    fn record_session_start_attempt(&mut self, device_id: &str, source_id: Option<&str>) {
+        let line = self
+            .diagnostics
+            .record_session_start_attempt(device_id, source_id);
+        self.append_host_log_line(&line);
+    }
+
+    fn record_session_start_success(&mut self, device_id: &str, source_id: Option<&str>) {
+        let line = self
+            .diagnostics
+            .record_session_start_success(device_id, source_id);
+        self.append_host_log_line(&line);
+    }
+
+    fn record_session_start_failure(&mut self, device_id: Option<&str>, error: &str) {
+        let line = self
+            .diagnostics
+            .record_session_start_failure(device_id, error);
+        self.append_host_log_line(&line);
     }
 
     fn remember_known_device(
@@ -250,14 +315,12 @@ impl HostDesktopApp {
     pub fn request_start_session(&mut self) {
         if self.host_runtime.is_none() {
             let message = "Host runtime unavailable";
+            let selected_device_id = self.selected_device_id.clone();
             self.session = SessionViewModel::error(message);
             self.diagnostics.host_error = Some(message.into());
             self.diagnostics.control_summary = "control blocked".into();
             self.diagnostics.grounding_summary = "grounding blocked".into();
-            self.diagnostics.record_session_start_failure(
-                self.selected_device_id.as_deref(),
-                message,
-            );
+            self.record_session_start_failure(selected_device_id.as_deref(), message);
             return;
         }
 
@@ -267,8 +330,7 @@ impl HostDesktopApp {
             .or_else(|| self.available_device_ids.first().cloned())
         else {
             self.session = SessionViewModel::error("No device selected");
-            self.diagnostics
-                .record_session_start_failure(None, "No device selected");
+            self.record_session_start_failure(None, "No device selected");
             return;
         };
 
@@ -317,8 +379,7 @@ impl HostDesktopApp {
             .clone()
             .or(restored_source.clone())
             .or(inferred_source);
-        self.diagnostics
-            .record_session_start_attempt(&device_id, selected_source_id.as_deref());
+        self.record_session_start_attempt(&device_id, selected_source_id.as_deref());
         let selected_device_stable_id = self
             .inventory_snapshot
             .devices
@@ -350,7 +411,7 @@ impl HostDesktopApp {
                         snapshot.workspace.selected_source_id.clone(),
                         selected_device_stable_id.clone(),
                     );
-                    self.diagnostics.record_session_start_success(
+                    self.record_session_start_success(
                         &device_id,
                         snapshot.workspace.selected_source_id.as_deref(),
                     );
@@ -382,8 +443,7 @@ impl HostDesktopApp {
                     self.diagnostics.host_error = Some(message.clone());
                     self.diagnostics.control_summary = "control blocked".into();
                     self.diagnostics.grounding_summary = "grounding blocked".into();
-                    self.diagnostics
-                        .record_session_start_failure(Some(&device_id), &message);
+                    self.record_session_start_failure(Some(&device_id), &message);
                     return;
                 }
             }
