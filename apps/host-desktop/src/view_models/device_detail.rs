@@ -6,6 +6,7 @@ pub struct DeviceDetailViewModel {
     pub capture_sources: Vec<CaptureSourceOption>,
     pub active_source_id: Option<String>,
     pub control_checklist: ControlSetupChecklist,
+    pub inventory_notes: Vec<String>,
 }
 
 impl DeviceDetailViewModel {

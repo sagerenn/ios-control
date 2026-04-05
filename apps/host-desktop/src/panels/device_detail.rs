@@ -59,6 +59,9 @@ pub fn render(ui: &mut Ui, view_model: &DeviceDetailViewModel) -> DeviceDetailAc
             action = DeviceDetailAction::SelectCaptureSource(source.source_id.clone());
         }
     }
+    for note in &view_model.inventory_notes {
+        ui.label(note);
+    }
     for item in &view_model.control_checklist.items {
         ui.label(item);
     }

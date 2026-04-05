@@ -18,10 +18,15 @@ pub fn render(
     for row in &fleet.rows {
         let mut label = format!(
             "{} | {} | {}",
-            row.device_name, row.capture_backend, row.control_backend
+            row.device_name,
+            row.evidence_badges.join(", "),
+            row.readiness_summary
         );
         if row.operator_action.is_some() {
             label.push_str(" | action required");
+        }
+        if row.active_session {
+            label.push_str(" | active");
         }
         if Some(row.device_id.as_str()) == selected_device_id {
             label.push_str(" | selected");

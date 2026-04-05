@@ -1,4 +1,8 @@
 use host_desktop::app::HostDesktopApp;
+use host_desktop::inventory::aggregator::aggregate_inventory;
+use host_desktop::inventory::model::{
+    CapabilityState, DeviceObservation, InventoryEvidenceSource,
+};
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use host_desktop::preferences::HostPreferencesStore;
 use host_desktop::runtime::{HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
@@ -39,6 +43,13 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
         preferences_path: None,
         app,
     }
+}
+
+fn first_discovered_device_id(app: &HostDesktopApp) -> String {
+    app.available_device_ids
+        .first()
+        .cloned()
+        .expect("at least one discovered device should exist")
 }
 
 fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFixture {
@@ -213,6 +224,21 @@ fn host_app_from_runtime_snapshot(snapshot: HostRuntimeSnapshot) -> HostDesktopA
     app
 }
 
+fn partially_discovered_inventory() -> host_desktop::inventory::model::InventorySnapshot {
+    aggregate_inventory(vec![DeviceObservation {
+        provider: InventoryEvidenceSource::Bluetooth,
+        stable_id: Some("bt:AA-BB".into()),
+        known_device_id: None,
+        display_name: "Alice iPhone".into(),
+        mirror_source_id: None,
+        live: true,
+        capture_state: CapabilityState::Unavailable,
+        preferred_control_state: CapabilityState::Discovered,
+        fallback_control_state: CapabilityState::Unavailable,
+        reasons: vec!["paired over bluetooth".into(), "no capture path observed".into()],
+    }])
+}
+
 #[test]
 fn host_app_boots_without_inventing_a_mock_device() {
     let app = HostDesktopApp::new();
@@ -258,6 +284,67 @@ fn host_app_with_missing_runtime_components_starts_blocked_without_fake_device()
         .items
         .iter()
         .any(|item| item.detail.contains("missing-control-ble-plugin")));
+}
+
+#[test]
+fn host_app_displays_partially_discovered_inventory_rows() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(partially_discovered_inventory());
+
+    assert_eq!(app.available_device_ids, vec!["bt:AA-BB"]);
+    assert_eq!(app.fleet.rows.len(), 1);
+    assert_eq!(app.fleet.rows[0].device_name, "Alice iPhone");
+    assert!(!app.fleet.rows[0].start_enabled);
+    assert_eq!(app.selected_device_id.as_deref(), Some("bt:AA-BB"));
+    assert_eq!(app.device_detail.device_name, "Alice iPhone");
+    assert!(app
+        .device_detail
+        .inventory_notes
+        .iter()
+        .any(|note| note.contains("paired over bluetooth")));
+    assert_eq!(app.session.ui_state, SessionUiState::Error("No capture path observed".into()));
+}
+
+#[test]
+fn host_app_merges_runtime_sessions_with_inventory_rows() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(aggregate_inventory(vec![DeviceObservation {
+        provider: InventoryEvidenceSource::Mirror,
+        stable_id: None,
+        known_device_id: Some("device-1".into()),
+        display_name: "Operator Mirror".into(),
+        mirror_source_id: Some("window-helper-1".into()),
+        live: true,
+        capture_state: CapabilityState::Ready,
+        preferred_control_state: CapabilityState::Unavailable,
+        fallback_control_state: CapabilityState::Ready,
+        reasons: vec![],
+    }]));
+    app.apply_runtime_snapshot(runtime_snapshot_streaming_without_frame());
+
+    assert_eq!(app.fleet.rows.len(), 1);
+    assert!(app.fleet.rows[0].active_session);
+    assert!(app
+        .fleet
+        .rows[0]
+        .evidence_badges
+        .iter()
+        .any(|badge| badge == "Active"));
+}
+
+#[test]
+fn successful_runtime_start_persists_known_device_history() {
+    let mut fixture = host_app_with_runtime_and_preferences("{}");
+    fixture.app.select_device("window-helper-1");
+
+    fixture.app.request_start_session();
+
+    let prefs_path = fixture.preferences_path.as_ref().unwrap();
+    let prefs = HostPreferencesStore::new(prefs_path.clone()).load().unwrap();
+    assert!(prefs
+        .known_devices
+        .iter()
+        .any(|device| device.known_device_id == "window-helper-1"));
 }
 
 #[test]
@@ -325,7 +412,8 @@ fn start_session_without_runtime_with_selected_device_reports_runtime_unavailabl
 #[test]
 fn host_app_start_session_uses_real_runtime_snapshot() {
     let mut fixture = host_app_with_runtime();
-    fixture.app.select_device("device-1");
+    let device_id = first_discovered_device_id(&fixture.app);
+    fixture.app.select_device(&device_id);
 
     fixture.app.request_start_session();
 
@@ -343,7 +431,8 @@ fn host_app_start_session_uses_real_runtime_snapshot() {
 #[test]
 fn host_app_start_session_forwards_selected_source_to_runtime() {
     let mut fixture = host_app_with_runtime();
-    fixture.app.select_device("device-1");
+    let device_id = first_discovered_device_id(&fixture.app);
+    fixture.app.select_device(&device_id);
     fixture.app.device_detail.capture_sources =
         vec![CaptureSourceOption::new("missing-source", "Broken Source")];
     fixture.app.device_detail.active_source_id = Some("missing-source".into());
@@ -489,19 +578,21 @@ fn host_app_preflight_clears_unavailable_restored_source_before_start_call() {
 #[test]
 fn host_app_stop_session_removes_runtime_status() {
     let mut fixture = host_app_with_runtime();
-    fixture.app.select_device("device-1");
+    let device_id = first_discovered_device_id(&fixture.app);
+    fixture.app.select_device(&device_id);
     fixture.app.request_start_session();
 
     fixture.app.stop_session();
 
-    assert!(fixture.app.available_device_ids.is_empty());
+    assert_eq!(fixture.app.available_device_ids, vec!["window-helper-1"]);
     assert_eq!(fixture.app.session.ui_state, SessionUiState::Idle);
 }
 
 #[test]
 fn selecting_a_capture_source_updates_device_detail_selection() {
     let mut fixture = host_app_with_runtime();
-    fixture.app.select_device("device-1");
+    let device_id = first_discovered_device_id(&fixture.app);
+    fixture.app.select_device(&device_id);
     fixture.app.request_start_session();
 
     fixture.app.select_capture_source("window-helper-1");
@@ -515,7 +606,8 @@ fn selecting_a_capture_source_updates_device_detail_selection() {
 #[test]
 fn runtime_snapshot_populates_control_checklist_and_operator_message() {
     let mut fixture = host_app_with_runtime();
-    fixture.app.select_device("device-1");
+    let device_id = first_discovered_device_id(&fixture.app);
+    fixture.app.select_device(&device_id);
     fixture.app.request_start_session();
 
     assert_ne!(

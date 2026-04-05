@@ -5,9 +5,21 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnownDevicePreference {
+    pub known_device_id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub stable_id: Option<String>,
+    #[serde(default)]
+    pub last_source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostPreferences {
     pub selected_device_id: Option<String>,
     pub selected_source_id: Option<String>,
+    #[serde(default)]
+    pub known_devices: Vec<KnownDevicePreference>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,6 +159,7 @@ mod tests {
         let prefs = HostPreferences {
             selected_device_id: Some("device-1".into()),
             selected_source_id: Some("window-helper-1".into()),
+            known_devices: Vec::new(),
         };
 
         let json = serde_json::to_string(&prefs).unwrap();
@@ -213,6 +226,7 @@ mod tests {
             let prefs = HostPreferences {
                 selected_device_id: Some("device-1".into()),
                 selected_source_id: Some("window-helper-1".into()),
+                known_devices: Vec::new(),
             };
             store.save(&prefs)?;
             Ok(())
