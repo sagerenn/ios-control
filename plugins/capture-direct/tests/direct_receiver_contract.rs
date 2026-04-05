@@ -407,3 +407,40 @@ exit 2
         other => panic!("unexpected start capture reply: {other:?}"),
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn start_direct_capture_rejects_helper_payload_size_mismatch() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let helper = write_helper_script(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{"available":true,"supports_input_bridge":false}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  echo '{"frame_index":2,"width":1179,"height":2556,"rotation_degrees":0,"health":"Healthy","rgba_base64":"AQIDBA=="}'
+  exit 0
+fi
+exit 2
+"#,
+    );
+    let _env_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper.path);
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::StartDirectCapture);
+    match plugin.recv() {
+        PluginToHost::Error { message } => {
+            assert!(
+                message.contains("helper frame payload size mismatch"),
+                "unexpected message: {message}"
+            );
+        }
+        other => panic!("unexpected start capture reply: {other:?}"),
+    }
+}

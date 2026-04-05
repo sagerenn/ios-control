@@ -266,6 +266,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                     write_reply(&mut stdout, &reply)?;
                     continue;
                 }
+                let bytes = event.decode_rgba().map_err(Box::<dyn Error>::from)?;
+                if bytes.len() != SLOT_BYTES as usize {
+                    let reply = PluginToHost::Error {
+                        message: format!(
+                            "helper frame payload size mismatch: expected {}, got {}",
+                            SLOT_BYTES,
+                            bytes.len()
+                        ),
+                    };
+                    write_reply(&mut stdout, &reply)?;
+                    continue;
+                }
 
                 let frame_index = if event.frame_index > legacy_frame_index {
                     event.frame_index
