@@ -31,9 +31,12 @@ async fn local_mock_e2e_builds_streaming_session() {
 
     // Keep this smoke test pinned to the developer flow documented in README,
     // and to the real-device acceptance matrix for current validation status.
-    assert_eq!(state.summary.phase, SessionPhase::Degraded);
+    assert_eq!(state.summary.phase, SessionPhase::Streaming);
     assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.window"));
-    assert_eq!(state.summary.control_plugin.as_deref(), Some("control.ble"));
+    assert_eq!(
+        state.summary.control_plugin.as_deref(),
+        Some("control.window-bridge")
+    );
     assert_eq!(
         state.summary.grounding_plugin.as_deref(),
         Some("grounding.core")
@@ -46,7 +49,8 @@ async fn local_mock_e2e_builds_streaming_session() {
         Some("selected pointer plan")
     );
     assert!(state.execution_result.is_some());
-    assert!(!state.execution_result.as_ref().unwrap().applied);
+    assert!(state.execution_result.as_ref().unwrap().applied);
+    assert!(state.execution_result.as_ref().unwrap().observed_change);
 
     state.shutdown().await.unwrap();
 }
