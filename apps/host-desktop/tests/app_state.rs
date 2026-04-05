@@ -229,7 +229,7 @@ fn host_app_stop_session_removes_runtime_status() {
 }
 
 #[test]
-fn selecting_a_capture_source_updates_runtime_selection() {
+fn selecting_a_capture_source_updates_device_detail_selection() {
     let mut fixture = host_app_with_runtime();
     fixture.app.select_device("device-1");
     fixture.app.request_start_session();
