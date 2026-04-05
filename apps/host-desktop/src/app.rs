@@ -306,30 +306,7 @@ impl HostDesktopApp {
 
         self.session = match status.substate() {
             SessionSubstate::ControlReady | SessionSubstate::Streaming => {
-                SessionViewModel::streaming(
-                    source,
-                    ios_control_contracts::capture::VideoFrameDescriptor {
-                        source_id: self
-                            .device_detail
-                            .active_source_id
-                            .clone()
-                            .unwrap_or_else(|| "window-helper-1".into()),
-                        source_kind: if status
-                            .backends()
-                            .capture_backend
-                            .starts_with("capture.window")
-                        {
-                            ios_control_contracts::capture::SourceKind::Window
-                        } else {
-                            ios_control_contracts::capture::SourceKind::DirectReceiver
-                        },
-                        width: 1280,
-                        height: 720,
-                        rotation_degrees: 0,
-                        frame_index: 1,
-                        health: ios_control_contracts::capture::FrameHealth::Healthy,
-                    },
-                )
+                SessionViewModel::streaming_without_frame(source)
             }
             SessionSubstate::Discovering
             | SessionSubstate::StartingCapture

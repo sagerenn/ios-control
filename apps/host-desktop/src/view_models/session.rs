@@ -44,6 +44,14 @@ impl SessionViewModel {
         }
     }
 
+    pub fn streaming_without_frame(selected_source: CaptureSourceOption) -> Self {
+        Self {
+            ui_state: SessionUiState::Streaming,
+            selected_source: Some(selected_source),
+            latest_frame: None,
+        }
+    }
+
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             ui_state: SessionUiState::Error(message.into()),
