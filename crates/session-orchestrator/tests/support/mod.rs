@@ -1,8 +1,15 @@
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static RUNTIME_ENV_LOCK: Mutex<()> = Mutex::new(());
+#[allow(dead_code)]
+static BLE_HELPER_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct EnvVarGuard {
     key: &'static str,
@@ -96,6 +103,47 @@ pub fn build_plugins(workspace_root: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[allow(dead_code)]
+pub fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let counter = BLE_HELPER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ios-control-session-orchestrator-ble-helper-{}-{nanos}-{counter}.sh",
+        std::process::id()
+    ));
+    let body = format!(
+        r#"#!/bin/sh
+case "$1" in
+  probe)
+    printf '%s\n' '{probe}'
+    ;;
+  prepare)
+    printf '%s\n' '{prepare}'
+    ;;
+  execute)
+    printf '%s\n' '{execute}'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+"#
+    );
+    fs::write(&path, body).expect("failed to write BLE helper script");
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(&path)
+            .expect("missing BLE helper metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).expect("failed to make BLE helper executable");
+    }
+    path
 }
 
 pub fn prepare_window_runtime_env(workspace_root: &Path) -> EnvVarGuards {

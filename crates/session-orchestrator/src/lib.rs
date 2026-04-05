@@ -156,9 +156,8 @@ impl SessionOrchestrator {
             message: format!("capture source selected: {selected_source_id}"),
         });
 
-        let mut control = RunningPlugin::spawn(&request.plugin_paths.control_ble).await?;
-        let control_descriptor = control.handshake().await?;
-        let control_capability = request_control_capability(&mut control).await?;
+        let (mut control, control_descriptor, control_capability) =
+            start_control_backend(&request.plugin_paths).await?;
         staged_capabilities.push((
             control_descriptor.plugin_id.clone(),
             control_capability.supported,
@@ -453,6 +452,23 @@ async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDes
     }
 }
 
+async fn start_control_backend(
+    paths: &PluginPaths,
+) -> Result<(RunningPlugin, PluginDescriptor, ControlCapability)> {
+    let mut ble = RunningPlugin::spawn(&paths.control_ble).await?;
+    let ble_descriptor = ble.handshake().await?;
+    let ble_capability = request_control_capability(&mut ble).await?;
+    if ble_capability.supported {
+        return Ok((ble, ble_descriptor, ble_capability));
+    }
+    ble.stop().await?;
+
+    let mut fallback = RunningPlugin::spawn(&paths.control_fallback).await?;
+    let fallback_descriptor = fallback.handshake().await?;
+    let fallback_capability = request_control_capability(&mut fallback).await?;
+    Ok((fallback, fallback_descriptor, fallback_capability))
+}
+
 async fn request_control_capability(control: &mut RunningPlugin) -> Result<ControlCapability> {
     match request_plugin(control, &HostToPlugin::ProbeControl).await? {
         PluginToHost::ControlCapability { capability } => Ok(capability),
@@ -565,16 +581,13 @@ async fn execute_grounding_plan(
                 let summary_text = format_execution_summary(&summary, true, attempts - 1);
                 return Ok((
                     ExecutionResult {
-                        applied: false,
+                        applied: summary.phase == ExecutionPhase::Succeeded,
                         observed_change: true,
                         phase: ExecutionPhase::Succeeded,
                         summary: summary_text,
                         attempts,
                         grounding_failure: None,
-                        failure_reason: Some(
-                            "frame advanced after execution, but action effect is not yet confirmed"
-                                .into(),
-                        ),
+                        failure_reason: None,
                     },
                     frame,
                 ));

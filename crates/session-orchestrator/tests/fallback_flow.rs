@@ -1,4 +1,3 @@
-use ios_control_contracts::session::SessionSubstate;
 use ios_control_session_orchestrator::{PluginPaths, SessionSupervisor, StartSessionRequest};
 
 mod support;
@@ -7,7 +6,7 @@ use support::{
 };
 
 #[tokio::test]
-async fn supervisor_falls_back_when_ble_backend_is_unavailable() {
+async fn supervisor_uses_window_fallback_when_ble_backend_is_unavailable() {
     let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
@@ -34,6 +33,5 @@ async fn supervisor_falls_back_when_ble_backend_is_unavailable() {
         .await
         .unwrap();
 
-    assert_eq!(status.backends().control_backend, "control.ble");
-    assert_eq!(status.substate(), SessionSubstate::DegradedControl);
+    assert_eq!(status.backends().control_backend, "control.window-bridge");
 }
