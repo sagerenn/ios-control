@@ -132,10 +132,21 @@ case "$1" in
 {prepare}
 {prepare_tag}
     ;;
+  status)
+    cat <<'{prepare_tag}'
+{prepare}
+{prepare_tag}
+    ;;
   execute)
     cat <<'{execute_tag}'
 {execute}
 {execute_tag}
+    ;;
+  stop)
+    printf '%s\n' '{{"ok":true,"message":"helper stopped"}}'
+    ;;
+  forget-bond)
+    printf '%s\n' '{{"ok":true,"message":"bond forgotten"}}'
     ;;
   *)
     exit 2
@@ -157,6 +168,9 @@ esac
 
 pub fn prepare_window_runtime_env(workspace_root: &Path) -> EnvVarGuards {
     EnvVarGuards::new(vec![
+        // Keep the window-mock tests on the fallback control path unless they
+        // explicitly install a helper for the BLE backend.
+        EnvVarGuard::set("IOS_CONTROL_BLE_HELPER_SUPPORTED", "0"),
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
             plugin_path(workspace_root, "plugin-capture-window"),

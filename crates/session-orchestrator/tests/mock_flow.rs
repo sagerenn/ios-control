@@ -124,7 +124,7 @@ async fn execution_result_marks_observed_change_as_applied() {
     build_plugins(&root);
     let _display_guard = prepare_window_runtime_env(&root);
     let helper = write_ble_helper(
-        r#"{"supported":true,"supports_prepare":true,"supports_execute":true}"#,
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true,"supports_status":true,"supports_stop":true,"supports_forget_bond":true}"#,
         r#"{"phase":"Connected","checklist":["Pair the device"],"notes":[]}"#,
         r#"{"phase":"Succeeded","summary":"tap's applied","observed_change":true}"#,
     );
@@ -146,6 +146,7 @@ async fn execution_result_marks_observed_change_as_applied() {
         .await
         .unwrap();
 
+    assert_eq!(state.summary.control_plugin.as_deref(), Some("control.ble"));
     let execution = state.execution_result.as_ref().unwrap();
     assert!(execution.applied);
     assert!(execution.observed_change);
