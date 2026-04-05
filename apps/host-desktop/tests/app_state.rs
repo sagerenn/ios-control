@@ -37,6 +37,26 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
     }
 }
 
+fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFixture {
+    let lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let guards = prepare_window_runtime_env(&root);
+    let prefs_path = support::write_preferences_json(preferences_json);
+    let app = HostDesktopApp::with_runtime_and_preferences(
+        HostRuntimeConfig {
+            plugin_paths: host_plugin_paths(&root),
+        },
+        host_desktop::preferences::HostPreferencesStore::new(prefs_path),
+    );
+
+    RuntimeAppFixture {
+        _lock: lock,
+        _guards: guards,
+        app,
+    }
+}
+
 fn runtime_snapshot_with_control(
     control_phase: ControlSessionPhase,
     control_summary: &str,
@@ -291,6 +311,61 @@ fn host_app_start_session_forwards_selected_source_to_runtime() {
         }
         other => panic!("expected runtime start failure, got {other:?}"),
     }
+}
+
+#[test]
+fn host_app_restores_selected_device_from_preferences_on_launch() {
+    let prefs_path = support::write_preferences_json(
+        r#"{"selected_device_id":"device-2","selected_source_id":"window-helper-1"}"#,
+    );
+    let mut app = HostDesktopApp::with_runtime_and_preferences(
+        HostRuntimeConfig {
+            plugin_paths: support::host_plugin_paths(&support::workspace_root()),
+        },
+        host_desktop::preferences::HostPreferencesStore::new(prefs_path),
+    );
+
+    app.replace_runtime_statuses(vec![
+        status(
+            "device-1",
+            "Alpha",
+            SessionPhase::Streaming,
+            SessionSubstate::ControlReady,
+            "capture.window.helper",
+            "control.window-bridge",
+            None,
+        ),
+        status(
+            "device-2",
+            "Beta",
+            SessionPhase::Streaming,
+            SessionSubstate::ControlReady,
+            "capture.window.helper",
+            "control.window-bridge",
+            None,
+        ),
+    ]);
+
+    assert_eq!(app.selected_device_id.as_deref(), Some("device-2"));
+}
+
+#[test]
+fn host_app_uses_persisted_source_preference_when_starting_session() {
+    let mut fixture = host_app_with_runtime_and_preferences(
+        r#"{"selected_device_id":"device-1","selected_source_id":"missing-source"}"#,
+    );
+    fixture.app.select_device("device-1");
+
+    fixture.app.request_start_session();
+
+    assert!(matches!(
+        fixture.app.session.ui_state,
+        SessionUiState::Streaming | SessionUiState::Error(_)
+    ));
+    assert_ne!(
+        fixture.app.diagnostics.host_error.as_deref(),
+        Some("requested capture source `missing-source` is unavailable for capture.window")
+    );
 }
 
 #[test]

@@ -1,20 +1,34 @@
 use std::path::{Path, PathBuf};
 
+use host_desktop::preferences::HostPreferencesStore;
 use host_desktop::runtime::HostRuntimeConfig;
 use ios_control_session_orchestrator::PluginPaths;
 
 fn main() -> eframe::Result<()> {
     let runtime_config = runtime_config();
+    let preferences_path = HostPreferencesStore::default_path();
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         "iOS Control Host",
         options,
         Box::new(move |_cc| {
-            let mut app = host_desktop::app::HostDesktopApp::with_runtime(runtime_config.clone());
+            let mut app = if let Some(path) = preferences_path.clone() {
+                host_desktop::app::HostDesktopApp::with_runtime_and_preferences(
+                    runtime_config.clone(),
+                    HostPreferencesStore::new(path),
+                )
+            } else {
+                host_desktop::app::HostDesktopApp::with_runtime(runtime_config.clone())
+            };
+
+            let mut should_start_on_launch = false;
             if let Ok(device_id) = std::env::var("IOS_CONTROL_PENDING_START_DEVICE") {
                 app.select_device(&device_id);
+                should_start_on_launch = true;
             }
-            app.start_runtime_session_on_launch();
+            if should_start_on_launch {
+                app.start_runtime_session_on_launch();
+            }
             Ok(Box::new(app))
         }),
     )

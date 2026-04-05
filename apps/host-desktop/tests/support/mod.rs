@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ios_control_frame_transport::FrameSlot;
 use ios_control_session_orchestrator::PluginPaths;
@@ -130,5 +131,19 @@ pub fn write_slot_bytes(bytes: &[u8]) -> String {
     slot.write(bytes).expect("slot bytes should be written");
     let path = slot.path().display().to_string();
     std::mem::forget(slot);
+    path
+}
+
+pub fn write_preferences_json(json: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "host-desktop-test-preferences-{}-{}.json",
+        std::process::id(),
+        nonce
+    ));
+    std::fs::write(&path, json).expect("preferences json should be written");
     path
 }

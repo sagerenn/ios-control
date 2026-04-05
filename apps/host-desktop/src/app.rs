@@ -7,6 +7,7 @@ use crate::panels::device_detail::{
 };
 use crate::panels::session_view::SessionAction;
 use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
+use crate::preferences::{HostPreferences, HostPreferencesStore};
 use crate::preview::color_image_from_slot;
 use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
 use crate::view_models::dashboard::DashboardViewModel;
@@ -23,6 +24,8 @@ pub struct HostDesktopApp {
     runtime_statuses: Vec<DeviceSessionStatus>,
     host_runtime: Option<HostRuntime>,
     runtime_workspace: Option<RuntimeWorkspaceState>,
+    preferences_store: Option<HostPreferencesStore>,
+    preferences: HostPreferences,
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
@@ -44,6 +47,8 @@ impl HostDesktopApp {
             runtime_statuses: Vec::new(),
             host_runtime: None,
             runtime_workspace: None,
+            preferences_store: None,
+            preferences: HostPreferences::default(),
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
             preview_texture: None,
@@ -87,6 +92,18 @@ impl HostDesktopApp {
         app
     }
 
+    pub fn with_runtime_and_preferences(
+        config: HostRuntimeConfig,
+        store: HostPreferencesStore,
+    ) -> Self {
+        let mut app = Self::with_runtime(config);
+        let preferences = store.load().unwrap_or_default();
+        app.selected_device_id = preferences.selected_device_id.clone();
+        app.preferences = preferences;
+        app.preferences_store = Some(store);
+        app
+    }
+
     pub fn replace_runtime_statuses(&mut self, statuses: Vec<DeviceSessionStatus>) {
         self.runtime_workspace = None;
         self.next_runtime_refresh_at = None;
@@ -95,8 +112,20 @@ impl HostDesktopApp {
         self.sync_from_runtime();
     }
 
+    fn persist_preferences(&mut self) {
+        if let Some(store) = self.preferences_store.as_ref() {
+            let _ = store.save(&self.preferences);
+        }
+    }
+
     pub fn select_device(&mut self, device_id: &str) {
+        let device_changed = self.selected_device_id.as_deref() != Some(device_id);
         self.selected_device_id = Some(device_id.into());
+        if device_changed {
+            self.preferences.selected_device_id = Some(device_id.into());
+            self.preferences.selected_source_id = None;
+            self.persist_preferences();
+        }
         self.next_runtime_refresh_at = None;
         self.runtime_refresh_device_id = None;
         self.sync_selected_workspace();
@@ -109,14 +138,14 @@ impl HostDesktopApp {
     }
 
     pub fn request_start_session(&mut self) {
-        let Some(host_runtime) = self.host_runtime.as_mut() else {
+        if self.host_runtime.is_none() {
             let message = "Host runtime unavailable";
             self.session = SessionViewModel::error(message);
             self.diagnostics.host_error = Some(message.into());
             self.diagnostics.control_summary = "control blocked".into();
             self.diagnostics.grounding_summary = "grounding blocked".into();
             return;
-        };
+        }
 
         let Some(device_id) = self
             .selected_device_id
@@ -127,25 +156,59 @@ impl HostDesktopApp {
             return;
         };
 
-        let selected_source_id = self.device_detail.active_source_id.clone();
+        let explicit_source = self.device_detail.active_source_id.clone();
+        let persisted_source = if explicit_source.is_none()
+            && self.preferences.selected_device_id.as_deref() == Some(device_id.as_str())
+        {
+            self.preferences.selected_source_id.clone()
+        } else {
+            None
+        };
+        let mut selected_source_id = explicit_source.clone().or(persisted_source.clone());
         self.selected_device_id = Some(device_id.clone());
         self.session = SessionViewModel::starting();
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control bootstrapping".into();
         self.diagnostics.grounding_summary = "grounding bootstrapping".into();
 
-        match host_runtime.start_session(
-            &device_id,
-            &self.device_detail.device_name,
-            selected_source_id,
-        ) {
-            Ok(snapshot) => self.apply_runtime_snapshot(snapshot),
-            Err(error) => {
-                let message = error.to_string();
-                self.session = SessionViewModel::error(&message);
-                self.diagnostics.host_error = Some(message);
-                self.diagnostics.control_summary = "control blocked".into();
-                self.diagnostics.grounding_summary = "grounding blocked".into();
+        for attempt in 0..2 {
+            let start_result = self
+                .host_runtime
+                .as_mut()
+                .expect("host runtime should be present")
+                .start_session(
+                    &device_id,
+                    &self.device_detail.device_name,
+                    selected_source_id.clone(),
+                );
+
+            match start_result {
+                Ok(snapshot) => {
+                    self.apply_runtime_snapshot(snapshot);
+                    self.preferences.selected_device_id = self.selected_device_id.clone();
+                    self.preferences.selected_source_id =
+                        self.device_detail.active_source_id.clone();
+                    self.persist_preferences();
+                    return;
+                }
+                Err(error)
+                    if attempt == 0
+                        && explicit_source.is_none()
+                        && persisted_source.is_some()
+                        && error.to_string().contains("requested capture source") =>
+                {
+                    self.preferences.selected_source_id = None;
+                    self.persist_preferences();
+                    selected_source_id = None;
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    self.session = SessionViewModel::error(&message);
+                    self.diagnostics.host_error = Some(message);
+                    self.diagnostics.control_summary = "control blocked".into();
+                    self.diagnostics.grounding_summary = "grounding blocked".into();
+                    return;
+                }
             }
         }
     }
@@ -184,7 +247,10 @@ impl HostDesktopApp {
         };
 
         self.device_detail.active_source_id = Some(source.source_id.clone());
-        self.session.selected_source = Some(source);
+        self.session.selected_source = Some(source.clone());
+        self.preferences.selected_device_id = self.selected_device_id.clone();
+        self.preferences.selected_source_id = Some(source.source_id);
+        self.persist_preferences();
     }
 
     pub fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
