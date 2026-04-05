@@ -107,9 +107,19 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             workflow_text,
         )
 
+    def test_publish_main_uses_idempotent_release_commands(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn('notes="Automated rolling release for the latest successful push to main."', workflow_text)
+        self.assertIn('gh api repos/$GH_REPO/git/refs/tags/$tag >/dev/null 2>&1', workflow_text)
+        self.assertIn('gh api --method PATCH repos/$GH_REPO/git/refs/tags/$tag -f sha="$GITHUB_SHA" -F force=true >/dev/null', workflow_text)
+        self.assertIn('gh api --method POST repos/$GH_REPO/git/refs -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null', workflow_text)
+        self.assertIn('gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1', workflow_text)
+        self.assertIn('gh release edit "$tag" --repo "$GH_REPO" --title "$tag" --notes "$notes" --prerelease', workflow_text)
+        self.assertIn('gh release create "$tag" upload/* --repo "$GH_REPO" --target "$GITHUB_SHA" --title "$tag" --notes "$notes" --prerelease', workflow_text)
+
     def test_full_workflow_rejects_missing_publish_invariants(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        without_prerelease = workflow_text.replace("prerelease: true\n", "", 1)
+        without_prerelease = workflow_text.replace("--prerelease\n", "\n", 1)
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(without_prerelease)
 
@@ -129,11 +139,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(without_tag_release_create)
 
-    def test_full_workflow_rejects_cleanup_with_blanket_or_true(self) -> None:
+    def test_full_workflow_rejects_softprops_in_publish_main(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "gh release delete rolling-main --yes --cleanup-tag",
-            "gh release delete rolling-main --yes --cleanup-tag || true",
+            '            gh release edit "$tag" --repo "$GH_REPO" --title "$tag" --notes "$notes" --prerelease\n',
+            "        uses: softprops/action-gh-release@v2\n",
             1,
         )
         with self.assertRaises(AssertionError):
@@ -155,10 +165,10 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
-    def test_full_workflow_rejects_missing_orphan_tag_delete_call(self) -> None:
+    def test_full_workflow_rejects_missing_publish_main_ref_patch(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "gh api -X DELETE repos/$GH_REPO/git/refs/tags/rolling-main\n",
+            '            gh api --method PATCH repos/$GH_REPO/git/refs/tags/$tag -f sha="$GITHUB_SHA" -F force=true >/dev/null\n',
             "",
             1,
         )
@@ -183,23 +193,27 @@ class CiReleaseWorkflowTests(unittest.TestCase):
 
     def test_full_workflow_rejects_missing_publish_release_identity(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        mutated = workflow_text.replace("tag_name: rolling-main\n", "tag_name: rolling\n", 1)
+        mutated = workflow_text.replace('          tag="rolling-main"\n', '          tag="rolling"\n', 1)
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
-    def test_full_workflow_rejects_missing_publish_release_delete(self) -> None:
+    def test_full_workflow_rejects_missing_publish_main_release_edit(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         mutated = workflow_text.replace(
-            "gh release delete rolling-main --yes --cleanup-tag --repo \"$GH_REPO\"\n",
+            '            gh release edit "$tag" --repo "$GH_REPO" --title "$tag" --notes "$notes" --prerelease\n',
             "",
             1,
         )
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 
-    def test_full_workflow_rejects_wrong_publish_main_release_name(self) -> None:
+    def test_full_workflow_rejects_wrong_publish_main_release_title(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        mutated = workflow_text.replace("          name: rolling-main\n", "          name: rolling\n", 1)
+        mutated = workflow_text.replace(
+            '            gh release create "$tag" upload/* --repo "$GH_REPO" --target "$GITHUB_SHA" --title "$tag" --notes "$notes" --prerelease\n',
+            '            gh release create "$tag" upload/* --repo "$GH_REPO" --target "$GITHUB_SHA" --title "rolling" --notes "$notes" --prerelease\n',
+            1,
+        )
         with self.assertRaises(AssertionError):
             assert_ci_release.assert_full_workflow(mutated)
 

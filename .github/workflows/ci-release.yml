@@ -166,50 +166,26 @@ jobs:
         run: |
           mkdir -p upload
           find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/
-      - name: Delete previous rolling release
+      - name: Publish rolling release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          release_output=""
-          release_status=0
-          release_output=$(gh api repos/$GH_REPO/releases/tags/rolling-main 2>&1) || release_status=$?
-          if [ $release_status -eq 0 ]; then
-            gh release delete rolling-main --yes --cleanup-tag --repo "$GH_REPO"
+          tag="rolling-main"
+          notes="Automated rolling release for the latest successful push to main."
+          if gh api repos/$GH_REPO/git/refs/tags/$tag >/dev/null 2>&1; then
+            gh api --method PATCH repos/$GH_REPO/git/refs/tags/$tag -f sha="$GITHUB_SHA" -F force=true >/dev/null
           else
-            if printf "%s" "$release_output" | grep -q "HTTP 404"; then
-              :
-            else
-              printf "%s\n" "$release_output" >&2
-              exit $release_status
-            fi
+            gh api --method POST repos/$GH_REPO/git/refs -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null
           fi
-
-          tag_output=""
-          tag_status=0
-          tag_output=$(gh api repos/$GH_REPO/git/refs/tags/rolling-main 2>&1) || tag_status=$?
-          if [ $tag_status -eq 0 ]; then
-            gh api -X DELETE repos/$GH_REPO/git/refs/tags/rolling-main
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GH_REPO" --title "$tag" --notes "$notes" --prerelease
+            gh release upload "$tag" upload/* --clobber --repo "$GH_REPO"
           else
-            if printf "%s" "$tag_output" | grep -q "HTTP 404"; then
-              :
-            else
-              printf "%s\n" "$tag_output" >&2
-              exit $tag_status
-            fi
+            gh release create "$tag" upload/* --repo "$GH_REPO" --target "$GITHUB_SHA" --title "$tag" --notes "$notes" --prerelease
           fi
-      - name: Publish rolling release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: rolling-main
-          name: rolling-main
-          prerelease: true
-          target_commitish: ${{ github.sha }}
-          files: upload/*
-          fail_on_unmatched_files: true
-          overwrite_files: true
 
   publish-tag:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

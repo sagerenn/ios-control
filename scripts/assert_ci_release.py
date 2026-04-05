@@ -83,7 +83,6 @@ PUBLISH_SNIPPETS = [
     "publish-main:",
     "publish-tag:",
     "actions/download-artifact@v5",
-    "softprops/action-gh-release@v2",
     "rolling-main",
     "startsWith(github.ref, 'refs/tags/v')",
     "contents: write",
@@ -254,24 +253,24 @@ def assert_full_workflow(text: str) -> None:
             "permissions:",
             "contents: write",
             "GH_REPO: ${{ github.repository }}",
+            "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
             "actions/download-artifact@v5",
             "mkdir -p upload",
             'find artifacts -type f -print0 | xargs -0 -I {} cp "{}" upload/',
             "upload/",
-            "gh release delete rolling-main --yes --cleanup-tag --repo \"$GH_REPO\"",
-            "softprops/action-gh-release@v2",
-            "tag_name: rolling-main",
-            "files: upload/*",
-            "fail_on_unmatched_files: true",
-            "overwrite_files: true",
-            "prerelease: true",
-            "target_commitish: ${{ github.sha }}",
-            "gh api -X DELETE repos/$GH_REPO/git/refs/tags/rolling-main",
+            'tag="rolling-main"',
+            'gh api repos/$GH_REPO/git/refs/tags/$tag >/dev/null 2>&1',
+            'gh api --method PATCH repos/$GH_REPO/git/refs/tags/$tag -f sha="$GITHUB_SHA" -F force=true >/dev/null',
+            'gh api --method POST repos/$GH_REPO/git/refs -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA" >/dev/null',
+            'gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1',
+            'gh release edit "$tag" --repo "$GH_REPO" --title "$tag" --notes "$notes" --prerelease',
+            'gh release upload "$tag" upload/* --clobber --repo "$GH_REPO"',
+            'gh release create "$tag" upload/* --repo "$GH_REPO" --target "$GITHUB_SHA" --title "$tag" --notes "$notes" --prerelease',
         ],
         "publish-main",
     )
-    if "|| true" in publish_main:
-        raise AssertionError("publish-main cleanup must not use '|| true'")
+    if "softprops/action-gh-release@v2" in publish_main:
+        raise AssertionError("publish-main must use gh release commands, not softprops/action-gh-release")
 
     _assert_snippets(
         publish_tag,
@@ -294,7 +293,8 @@ def assert_full_workflow(text: str) -> None:
         ],
         "publish-tag",
     )
-    _assert_line(publish_main, "name: rolling-main", "publish-main")
+    if 'tag="rolling-main"' not in publish_main:
+        raise AssertionError("publish-main must manage the rolling-main tag explicitly")
     if "softprops/action-gh-release@v2" in publish_tag:
         raise AssertionError("publish-tag must use gh release commands, not softprops/action-gh-release")
     _assert_snippets(text, PUBLISH_SNIPPETS, "publish")
