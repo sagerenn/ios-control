@@ -6,16 +6,18 @@ use crate::panels::device_detail::{
     CaptureSourceOption, ControlSetupChecklist, DeviceDetailAction,
 };
 use crate::panels::session_view::SessionAction;
-use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings};
+use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings, startup};
 use crate::preferences::{HostPreferences, HostPreferencesStore};
 use crate::preview::color_image_from_slot;
 use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
+use crate::bootstrap::capability_probe::startup_from_plugin_paths;
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
 use crate::view_models::fleet::FleetViewModel;
 use crate::view_models::session::SessionViewModel;
 use crate::view_models::settings::SettingsViewModel;
+use crate::view_models::startup::StartupViewModel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RestoredSourcePreference {
@@ -42,6 +44,7 @@ pub struct HostDesktopApp {
     pub session: SessionViewModel,
     pub diagnostics: DiagnosticsViewModel,
     pub settings: SettingsViewModel,
+    pub startup: StartupViewModel,
 }
 
 impl HostDesktopApp {
@@ -63,17 +66,14 @@ impl HostDesktopApp {
             runtime_refresh_device_id: None,
             preview_texture: None,
             dashboard: DashboardViewModel {
-                total_devices: 1,
+                total_devices: 0,
                 degraded_devices: 0,
             },
             device_detail: DeviceDetailViewModel {
-                device_name: "Mock iPhone".into(),
-                capture_sources: vec![CaptureSourceOption::new(
-                    "window:mock",
-                    "Mock iPhone Mirror",
-                )],
+                device_name: "No device selected".into(),
+                capture_sources: Vec::new(),
                 active_source_id: None,
-                control_checklist: ControlSetupChecklist::for_pointer_mode(),
+                control_checklist: ControlSetupChecklist { items: Vec::new() },
             },
             session: SessionViewModel::idle(),
             diagnostics: DiagnosticsViewModel {
@@ -82,12 +82,9 @@ impl HostDesktopApp {
                 grounding_summary: "grounding idle".into(),
             },
             settings: SettingsViewModel {
-                plugin_rows: vec![
-                    "capture.window".into(),
-                    "control.ble".into(),
-                    "grounding.core".into(),
-                ],
+                plugin_rows: Vec::new(),
             },
+            startup: StartupViewModel::blocked("Blocked: no usable device path yet"),
         }
     }
 
@@ -97,6 +94,7 @@ impl HostDesktopApp {
 
     pub fn with_runtime(config: HostRuntimeConfig) -> Self {
         let mut app = Self::new();
+        app.startup = startup_from_plugin_paths(&config.plugin_paths);
         app.host_runtime =
             Some(HostRuntime::new(config).expect("host runtime should initialize successfully"));
         app
@@ -129,6 +127,10 @@ impl HostDesktopApp {
         self.runtime_refresh_device_id = None;
         self.runtime_statuses = statuses;
         self.sync_from_runtime();
+    }
+
+    pub fn apply_startup_view(&mut self, startup: StartupViewModel) {
+        self.startup = startup;
     }
 
     fn persist_preferences(&mut self) {
@@ -615,6 +617,8 @@ impl eframe::App for HostDesktopApp {
             diagnostics::render_control_diagnostics(ui, &self.diagnostics.control_summary);
             ui.separator();
             settings::render_rows(ui, &self.settings.plugin_rows);
+            ui.separator();
+            startup::render(ui, &self.startup);
         });
 
         if let Some(device_id) = selected_device {
