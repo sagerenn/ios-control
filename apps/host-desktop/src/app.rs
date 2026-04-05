@@ -1,5 +1,6 @@
 use eframe::egui;
 use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
+use std::time::{Duration, Instant};
 
 use crate::panels::device_detail::{
     CaptureSourceOption, ControlSetupChecklist, DeviceDetailAction,
@@ -22,6 +23,8 @@ pub struct HostDesktopApp {
     runtime_statuses: Vec<DeviceSessionStatus>,
     host_runtime: Option<HostRuntime>,
     runtime_workspace: Option<RuntimeWorkspaceState>,
+    next_runtime_refresh_at: Option<Instant>,
+    runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
@@ -31,6 +34,8 @@ pub struct HostDesktopApp {
 }
 
 impl HostDesktopApp {
+    const RUNTIME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
     pub fn new() -> Self {
         Self {
             available_device_ids: Vec::new(),
@@ -39,6 +44,8 @@ impl HostDesktopApp {
             runtime_statuses: Vec::new(),
             host_runtime: None,
             runtime_workspace: None,
+            next_runtime_refresh_at: None,
+            runtime_refresh_device_id: None,
             preview_texture: None,
             dashboard: DashboardViewModel {
                 total_devices: 1,
@@ -82,12 +89,16 @@ impl HostDesktopApp {
 
     pub fn replace_runtime_statuses(&mut self, statuses: Vec<DeviceSessionStatus>) {
         self.runtime_workspace = None;
+        self.next_runtime_refresh_at = None;
+        self.runtime_refresh_device_id = None;
         self.runtime_statuses = statuses;
         self.sync_from_runtime();
     }
 
     pub fn select_device(&mut self, device_id: &str) {
         self.selected_device_id = Some(device_id.into());
+        self.next_runtime_refresh_at = None;
+        self.runtime_refresh_device_id = None;
         self.sync_selected_workspace();
     }
 
@@ -149,6 +160,8 @@ impl HostDesktopApp {
 
         self.runtime_statuses.clear();
         self.runtime_workspace = None;
+        self.next_runtime_refresh_at = None;
+        self.runtime_refresh_device_id = None;
         self.preview_texture = None;
         self.available_device_ids.clear();
         self.selected_device_id = None;
@@ -346,17 +359,22 @@ impl HostDesktopApp {
     }
 
     fn selected_runtime_session_is_streaming(&self) -> bool {
+        self.selected_runtime_streaming_device_id().is_some()
+    }
+
+    fn selected_runtime_streaming_device_id(&self) -> Option<&str> {
         let Some(device_id) = self.selected_device_id.as_deref() else {
-            return false;
+            return None;
         };
         let workspace_matches = self
             .runtime_workspace
             .as_ref()
             .is_some_and(|workspace| workspace.device_id == device_id);
         if !workspace_matches {
-            return false;
+            return None;
         }
-        self.runtime_statuses
+        let streaming = self
+            .runtime_statuses
             .iter()
             .find(|status| status.summary().device_id == device_id)
             .is_some_and(|status| {
@@ -364,7 +382,48 @@ impl HostDesktopApp {
                     status.substate(),
                     SessionSubstate::ControlReady | SessionSubstate::Streaming
                 )
-            })
+            });
+        if streaming {
+            Some(device_id)
+        } else {
+            None
+        }
+    }
+
+    fn poll_runtime_refresh_if_due(&mut self, now: Instant) {
+        let Some(device_id) = self
+            .selected_runtime_streaming_device_id()
+            .map(str::to_string)
+        else {
+            self.next_runtime_refresh_at = None;
+            self.runtime_refresh_device_id = None;
+            return;
+        };
+
+        if self.runtime_refresh_device_id.as_deref() != Some(device_id.as_str()) {
+            self.runtime_refresh_device_id = Some(device_id.clone());
+            self.next_runtime_refresh_at = None;
+        }
+
+        if self.next_runtime_refresh_at.is_some_and(|next| now < next) {
+            return;
+        }
+        self.next_runtime_refresh_at = Some(now + Self::RUNTIME_REFRESH_POLL_INTERVAL);
+
+        let Some(host_runtime) = self.host_runtime.as_mut() else {
+            self.diagnostics.host_error = Some(format!(
+                "Runtime refresh failed for {device_id}: host runtime unavailable"
+            ));
+            return;
+        };
+
+        match host_runtime.refresh_session(&device_id) {
+            Ok(snapshot) => self.apply_runtime_snapshot(snapshot),
+            Err(error) => {
+                self.diagnostics.host_error =
+                    Some(format!("Runtime refresh failed for {device_id}: {error}"));
+            }
+        }
     }
 }
 
@@ -382,20 +441,10 @@ impl eframe::App for HostDesktopApp {
         let mut selected_device = None;
         let mut device_detail_action = DeviceDetailAction::None;
 
-        let runtime_snapshot = if self.selected_runtime_session_is_streaming() {
-            if let (Some(host_runtime), Some(device_id)) =
-                (self.host_runtime.as_mut(), self.selected_device_id.clone())
-            {
-                host_runtime.refresh_session(&device_id).ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if let Some(snapshot) = runtime_snapshot {
-            self.apply_runtime_snapshot(snapshot);
+        if self.selected_runtime_session_is_streaming() {
+            ctx.request_repaint_after(Self::RUNTIME_REFRESH_POLL_INTERVAL);
         }
+        self.poll_runtime_refresh_if_due(Instant::now());
 
         self.sync_preview_texture(ctx);
 
@@ -445,5 +494,125 @@ impl eframe::App for HostDesktopApp {
                 ctx.request_repaint();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ios_control_contracts::control::ControlSessionPhase;
+    use ios_control_contracts::plugin::PluginHealth;
+    use ios_control_contracts::session::{
+        BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase,
+    };
+    use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    fn app_with_runtime_without_active_session() -> HostDesktopApp {
+        HostDesktopApp::with_runtime(HostRuntimeConfig {
+            plugin_paths: PluginPaths {
+                capture: PathBuf::from("missing-capture-plugin"),
+                control_ble: PathBuf::from("missing-control-ble-plugin"),
+                control_fallback: PathBuf::from("missing-control-fallback-plugin"),
+                grounding: None,
+            },
+        })
+    }
+
+    fn streaming_snapshot_without_frame() -> HostRuntimeSnapshot {
+        let status = DeviceSessionStatus::new(
+            DeviceSessionSummary {
+                device_id: "device-1".into(),
+                device_name: "Alpha".into(),
+                phase: SessionPhase::Streaming,
+                plugin_health: PluginHealth::Healthy,
+                capture_plugin: Some("capture.window.helper".into()),
+                control_plugin: Some("control.ble".into()),
+                grounding_plugin: Some("grounding.core".into()),
+            },
+            SessionSubstate::Streaming,
+            BackendSelection {
+                capture_backend: "capture.window.helper".into(),
+                control_backend: "control.ble".into(),
+            },
+            None,
+        )
+        .expect("valid session status");
+
+        HostRuntimeSnapshot {
+            statuses: vec![status.clone()],
+            workspace: RuntimeWorkspaceState {
+                device_id: "device-1".into(),
+                summary: status.summary().clone(),
+                capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                    source_id: "window-helper-1".into(),
+                    display_name: "Operator Mirror".into(),
+                    kind: ios_control_contracts::capture::SourceKind::Window,
+                }],
+                capture_stream: None,
+                latest_frame: None,
+                selected_source_id: Some("window-helper-1".into()),
+                control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                    items: vec!["Pair the device".into()],
+                },
+                control_phase: ControlSessionPhase::Connected,
+                execution_observed_change: Some(true),
+                diagnostics: SessionDiagnostics {
+                    control_phase: ControlSessionPhase::Connected,
+                    control_summary: "control ready".into(),
+                    grounding_summary: Some("selected pointer plan".into()),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn update_requests_polling_repaint_and_surfaces_refresh_errors() {
+        let mut app = app_with_runtime_without_active_session();
+        app.apply_runtime_snapshot(streaming_snapshot_without_frame());
+        let mut frame = eframe::Frame::_new_kittest();
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            eframe::App::update(&mut app, ctx, &mut frame);
+        });
+
+        assert!(app
+            .diagnostics
+            .host_error
+            .as_deref()
+            .is_some_and(|error| error.contains("Runtime refresh failed")));
+        let root = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .expect("root viewport output");
+        assert!(root.repaint_delay <= HostDesktopApp::RUNTIME_REFRESH_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn runtime_refresh_attempts_are_throttled_to_poll_interval() {
+        let mut app = app_with_runtime_without_active_session();
+        app.apply_runtime_snapshot(streaming_snapshot_without_frame());
+
+        let start = Instant::now();
+        app.poll_runtime_refresh_if_due(start);
+        assert!(app
+            .diagnostics
+            .host_error
+            .as_deref()
+            .is_some_and(|error| error.contains("Runtime refresh failed")));
+
+        app.diagnostics.host_error = None;
+        app.poll_runtime_refresh_if_due(start + Duration::from_millis(10));
+        assert_eq!(app.diagnostics.host_error, None);
+
+        app.poll_runtime_refresh_if_due(
+            start + HostDesktopApp::RUNTIME_REFRESH_POLL_INTERVAL + Duration::from_millis(1),
+        );
+        assert!(app
+            .diagnostics
+            .host_error
+            .as_deref()
+            .is_some_and(|error| error.contains("Runtime refresh failed")));
     }
 }
