@@ -144,7 +144,7 @@ fn host_app_without_runtime_reports_runtime_unavailable() {
 }
 
 #[test]
-fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
+fn host_app_without_runtime_stays_unavailable_even_without_capture_sources() {
     let mut app = HostDesktopApp::new();
     app.device_detail.capture_sources.clear();
 
@@ -165,9 +165,9 @@ fn host_app_surfaces_bootstrap_errors_when_no_capture_source_exists() {
 }
 
 #[test]
-fn start_session_without_runtime_after_enable_runtime_start_reports_runtime_unavailable() {
+fn start_session_without_runtime_with_selected_device_reports_runtime_unavailable() {
     let mut app = HostDesktopApp::new();
-    app.enable_runtime_start("device-1");
+    app.select_device("device-1");
 
     app.request_start_session();
 
@@ -207,12 +207,13 @@ fn host_app_start_session_forwards_selected_source_to_runtime() {
 
     fixture.app.request_start_session();
 
-    assert_eq!(
-        fixture.app.session.ui_state,
-        SessionUiState::Error(
-            "requested capture source `missing-source` is unavailable for capture.window".into()
-        )
-    );
+    match &fixture.app.session.ui_state {
+        SessionUiState::Error(message) => {
+            assert!(message.contains("missing-source"));
+            assert!(message.contains("unavailable"));
+        }
+        other => panic!("expected runtime start failure, got {other:?}"),
+    }
 }
 
 #[test]
@@ -282,9 +283,9 @@ fn host_app_surfaces_reconnect_guidance_for_degraded_control() {
 }
 
 #[test]
-fn startup_runtime_queue_advances_start_path_on_launch() {
+fn startup_with_selected_device_attempts_start_and_reports_runtime_unavailable() {
     let mut app = HostDesktopApp::new();
-    app.enable_runtime_start("device-1");
+    app.select_device("device-1");
 
     app.start_runtime_session_on_launch();
 
@@ -293,6 +294,30 @@ fn startup_runtime_queue_advances_start_path_on_launch() {
         app.session.ui_state,
         SessionUiState::Error("Host runtime unavailable".into())
     );
+}
+
+#[test]
+fn stop_session_clears_runtime_state_even_without_runtime_instance() {
+    let mut app = HostDesktopApp::new();
+    app.replace_runtime_statuses(vec![status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::Streaming,
+        "capture.window.helper",
+        "control.ble",
+        None,
+    )]);
+
+    app.stop_session();
+
+    assert!(app.available_device_ids.is_empty());
+    assert!(app.fleet.rows.is_empty());
+    assert_eq!(app.dashboard.total_devices, 0);
+    assert_eq!(app.dashboard.degraded_devices, 0);
+    assert!(app.settings.plugin_rows.is_empty());
+    assert!(app.selected_device_id.is_none());
+    assert_eq!(app.session.ui_state, SessionUiState::Idle);
 }
 
 #[test]

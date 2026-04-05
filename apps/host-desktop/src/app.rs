@@ -93,10 +93,6 @@ impl HostDesktopApp {
         self.sync_selected_workspace();
     }
 
-    pub fn enable_runtime_start(&mut self, device_id: &str) {
-        self.selected_device_id = Some(device_id.into());
-    }
-
     pub fn start_runtime_session_on_launch(&mut self) {
         if self.selected_device_id.is_some() {
             self.request_start_session();
@@ -150,19 +146,19 @@ impl HostDesktopApp {
             (self.host_runtime.as_mut(), self.selected_device_id.as_deref())
         {
             let _ = host_runtime.stop_session(device_id);
-            self.runtime_statuses.clear();
-            self.runtime_workspace = None;
-            self.preview_texture = None;
-            self.available_device_ids.clear();
-            self.selected_device_id = None;
-            self.fleet = FleetViewModel { rows: Vec::new() };
-            self.dashboard = DashboardViewModel {
-                total_devices: 0,
-                degraded_devices: 0,
-            };
-            self.settings.plugin_rows.clear();
         }
 
+        self.runtime_statuses.clear();
+        self.runtime_workspace = None;
+        self.preview_texture = None;
+        self.available_device_ids.clear();
+        self.selected_device_id = None;
+        self.fleet = FleetViewModel { rows: Vec::new() };
+        self.dashboard = DashboardViewModel {
+            total_devices: 0,
+            degraded_devices: 0,
+        };
+        self.settings.plugin_rows.clear();
         self.device_detail.active_source_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
