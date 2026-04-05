@@ -8,7 +8,7 @@ use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::{
     BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase, SessionSubstate,
 };
-use ios_control_session_orchestrator::SessionDiagnostics;
+use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
 use std::path::PathBuf;
 
 mod support;
@@ -57,6 +57,31 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        preferences_path: Some(prefs_path),
+        app,
+    }
+}
+
+fn host_app_with_missing_runtime_plugins_and_preferences(
+    preferences_json: &str,
+) -> RuntimeAppFixture {
+    let lock = runtime_env_lock();
+    let prefs_path = support::write_preferences_json(preferences_json);
+    let app = HostDesktopApp::with_runtime_and_preferences(
+        HostRuntimeConfig {
+            plugin_paths: PluginPaths {
+                capture: PathBuf::from("missing-capture-plugin"),
+                control_ble: PathBuf::from("missing-control-ble-plugin"),
+                control_fallback: PathBuf::from("missing-control-fallback-plugin"),
+                grounding: None,
+            },
+        },
+        host_desktop::preferences::HostPreferencesStore::new(prefs_path.clone()),
+    );
+
+    RuntimeAppFixture {
+        _lock: lock,
+        _guards: EnvVarGuards::new(vec![]),
         preferences_path: Some(prefs_path),
         app,
     }
@@ -415,6 +440,34 @@ fn host_app_manual_capture_source_selection_overrides_restored_source_on_start()
         .load()
         .expect("preferences should load");
     assert_eq!(saved.selected_source_id.as_deref(), Some("window-helper-1"));
+}
+
+#[test]
+fn host_app_preflight_clears_unavailable_restored_source_before_start_call() {
+    let mut fixture = host_app_with_missing_runtime_plugins_and_preferences(
+        r#"{"selected_device_id":"device-1","selected_source_id":"missing-source"}"#,
+    );
+    fixture.app.replace_runtime_statuses(vec![status(
+        "device-1",
+        "Alpha",
+        SessionPhase::Streaming,
+        SessionSubstate::ControlReady,
+        "capture.direct.fake",
+        "control.window-bridge",
+        None,
+    )]);
+    assert_eq!(fixture.app.device_detail.active_source_id.as_deref(), Some("direct-1"));
+
+    fixture.app.request_start_session();
+
+    let prefs_path = fixture
+        .preferences_path
+        .as_ref()
+        .expect("preferences path should be captured");
+    let saved = HostPreferencesStore::new(prefs_path.clone())
+        .load()
+        .expect("preferences should load");
+    assert_eq!(saved.selected_source_id, None);
 }
 
 #[test]

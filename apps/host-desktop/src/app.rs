@@ -202,7 +202,7 @@ impl HostDesktopApp {
             .filter(|workspace| workspace.device_id == device_id)
             .and_then(|workspace| workspace.selected_source_id.clone());
         let explicit_source = manual_source.or(workspace_source);
-        let restored_source = if explicit_source.is_none() {
+        let mut restored_source = if explicit_source.is_none() {
             self.restored_source_preference
                 .as_ref()
                 .filter(|pref| pref.device_id == device_id)
@@ -210,6 +210,21 @@ impl HostDesktopApp {
         } else {
             None
         };
+        if let Some(restored_source_id) = restored_source.as_ref() {
+            let source_known_unavailable = !self.device_detail.capture_sources.is_empty()
+                && !self
+                    .device_detail
+                    .capture_sources
+                    .iter()
+                    .any(|source| source.source_id == *restored_source_id);
+            if source_known_unavailable {
+                self.clear_restored_source_preference_for_device(&device_id);
+                self.preferences.selected_device_id = Some(device_id.clone());
+                self.preferences.selected_source_id = None;
+                self.persist_preferences();
+                restored_source = None;
+            }
+        }
         let inferred_source = if explicit_source.is_none() && restored_source.is_none() {
             self.device_detail.active_source_id.clone()
         } else {
