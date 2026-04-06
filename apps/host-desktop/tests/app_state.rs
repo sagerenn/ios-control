@@ -14,11 +14,12 @@ use ios_control_contracts::session::{
 };
 use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 use support::{
     build_plugins, host_plugin_paths, plugin_path, prepare_window_runtime_env, runtime_env_lock,
-    workspace_root, write_direct_helper, EnvVarGuards,
+    workspace_root, EnvVarGuard, EnvVarGuards,
 };
 
 struct RuntimeAppFixture {
@@ -49,29 +50,34 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let guards = prepare_window_runtime_env(&root);
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
-    let helper = write_direct_helper(&format!(
-        r#"#!/bin/sh
-state_file="${{TMPDIR:-/tmp}}/host-desktop-direct-wait-{}.state"
-if [ "$1" = "probe" ]; then
-  echo '{{"available":true,"supports_input_bridge":false}}'
-  exit 0
-fi
-if [ "$1" = "stream" ]; then
-  if [ ! -f "$state_file" ]; then
-    touch "$state_file"
-    sleep 3
-    exit 0
-  fi
-fi
-exec "{}" "$@"
-"#,
+    let state_file = std::env::temp_dir().join(format!(
+        "host-desktop-direct-wait-{}-{}.state",
         std::process::id(),
-        direct_plugin.display()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     ));
+    let _ = std::fs::remove_file(&state_file);
+    let guard_values = vec![
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+            plugin_path(&root, "plugin-capture-window"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_INPUT_HELPER",
+            plugin_path(&root, "plugin-control-window-bridge"),
+        ),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200"),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
+            state_file.as_os_str(),
+        ),
+    ];
+    let guards = EnvVarGuards::new(guard_values);
     let mut plugin_paths = host_plugin_paths(&root);
-    plugin_paths.capture_direct = helper;
+    plugin_paths.capture_direct = direct_plugin;
     let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
 
     RuntimeAppFixture {

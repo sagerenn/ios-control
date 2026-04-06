@@ -3,6 +3,7 @@ use ios_control_frame_transport::FrameSlot;
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
 
 use plugin_capture_direct::backend::{allocate_mock_slot, mock_frame, DIRECT_HEIGHT, DIRECT_WIDTH};
 use plugin_capture_direct::helper_launcher::{
@@ -341,6 +342,7 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
         "stream" => {
             let _ = args.next();
             let _ = args.next();
+            maybe_delay_first_stream_once()?;
             let rgba = encode_base64_bytes(&vec![64_u8; SLOT_BYTES as usize]);
             let payload = serde_json::json!({
                 "frame_index": 1_u64,
@@ -355,4 +357,32 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
         }
         _ => Ok(false),
     }
+}
+
+fn maybe_delay_first_stream_once() -> Result<(), Box<dyn Error>> {
+    let Some(delay_ms) = std::env::var_os("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS") else {
+        return Ok(());
+    };
+    let delay_ms = delay_ms
+        .to_string_lossy()
+        .parse::<u64>()
+        .map_err(|err| format!("invalid IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS: {err}"))?;
+    let state_path = std::env::var_os("IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!(
+                "ios-control-direct-helper-delay-{}.state",
+                std::process::id()
+            ))
+        });
+
+    if !state_path.exists() {
+        if let Some(parent) = state_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&state_path, b"first-stream-delayed")?;
+        std::thread::sleep(Duration::from_millis(delay_ms));
+    }
+
+    Ok(())
 }
