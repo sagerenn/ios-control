@@ -1238,6 +1238,7 @@ mod tests {
             plugin_paths: PluginPaths {
                 capture: PathBuf::from("missing-capture-plugin"),
                 capture_direct: PathBuf::from("missing-direct-capture-plugin"),
+                capture_direct_runtime_root: None,
                 control_ble: PathBuf::from("missing-control-ble-plugin"),
                 control_fallback: PathBuf::from("missing-control-fallback-plugin"),
                 grounding: None,
@@ -1276,6 +1277,7 @@ mod tests {
                     kind: ios_control_contracts::capture::SourceKind::Window,
                 }],
                 capture_stream: None,
+                capture_status: None,
                 latest_frame: None,
                 selected_source_id: Some("window-helper-1".into()),
                 control_checklist: ios_control_contracts::control::ControlSetupChecklist {

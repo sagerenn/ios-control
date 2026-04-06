@@ -74,6 +74,17 @@ fn locator_resolves_direct_capture_plugin_for_bundle_and_workspace_layouts() {
             .plugins_dir
             .join(format!("plugin-capture-direct{}", std::env::consts::EXE_SUFFIX))
     );
+    assert_eq!(
+        bundle
+            .helper_paths
+            .get("direct_runtime_root")
+            .expect("bundle direct runtime root should be recorded"),
+        &staged
+            .root
+            .join("runtime")
+            .join("uxplay")
+            .join("x86_64-pc-windows-msvc")
+    );
 
     let root = workspace_root();
     let exe = target_dir(&root).join(format!("debug/host-desktop{}", std::env::consts::EXE_SUFFIX));
@@ -91,5 +102,16 @@ fn locator_resolves_direct_capture_plugin_for_bundle_and_workspace_layouts() {
             "debug/plugin-capture-direct{}",
             std::env::consts::EXE_SUFFIX
         ))
+    );
+    assert_eq!(
+        workspace
+            .helper_paths
+            .get("direct_runtime_root")
+            .expect("workspace direct runtime root should be recorded"),
+        workspace
+            .plugin_paths
+            .capture_direct_runtime_root
+            .as_ref()
+            .expect("workspace plugin paths should carry direct runtime root")
     );
 }

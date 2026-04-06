@@ -93,6 +93,7 @@ pub fn host_plugin_paths(workspace_root: &Path) -> PluginPaths {
     PluginPaths {
         capture: plugin_path(workspace_root, "plugin-capture-window"),
         capture_direct: plugin_path(workspace_root, "plugin-capture-direct"),
+        capture_direct_runtime_root: None,
         control_ble: plugin_path(workspace_root, "plugin-control-ble"),
         control_fallback: plugin_path(workspace_root, "plugin-control-window-bridge"),
         grounding: Some(plugin_path(workspace_root, "plugin-grounding-core")),
@@ -191,13 +192,20 @@ pub struct StagedBundleLayout {
     pub plugins_dir: PathBuf,
 }
 
+pub struct DirectRuntimeFixture {
+    _tempdir: tempfile::TempDir,
+    pub root: PathBuf,
+}
+
 pub fn stage_bundle_layout() -> StagedBundleLayout {
     let tempdir = tempfile::tempdir().expect("bundle tempdir should be created");
     let root = tempdir.path().join("ios-control-x86_64-pc-windows-msvc");
     let bin_dir = root.join("bin");
     let plugins_dir = root.join("plugins");
+    let runtime_dir = root.join("runtime").join("uxplay").join("x86_64-pc-windows-msvc");
     std::fs::create_dir_all(&bin_dir).expect("bundle bin dir should exist");
     std::fs::create_dir_all(&plugins_dir).expect("bundle plugins dir should exist");
+    std::fs::create_dir_all(&runtime_dir).expect("bundle runtime dir should exist");
 
     let host_exe = bin_dir.join(format!("host-desktop{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&host_exe, b"host").expect("bundle host exe should be stubbed");
@@ -216,10 +224,55 @@ pub fn stage_bundle_layout() -> StagedBundleLayout {
         .expect("bundle plugin should be stubbed");
     }
 
+    std::fs::write(
+        runtime_dir.join(format!("uxplay{}", std::env::consts::EXE_SUFFIX)),
+        b"uxplay",
+    )
+    .expect("bundle uxplay should be stubbed");
+    std::fs::write(runtime_dir.join("manifest.json"), b"{}")
+        .expect("bundle runtime manifest should be stubbed");
+
     StagedBundleLayout {
         _tempdir: tempdir,
         root,
         host_exe,
         plugins_dir,
+    }
+}
+
+fn default_runtime_target() -> &'static str {
+    match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
+        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
+        ("x86_64", "windows") => "x86_64-pc-windows-msvc",
+        ("aarch64", "windows") => "aarch64-pc-windows-msvc",
+        _ => "unknown-target",
+    }
+}
+
+pub fn write_direct_runtime_fixture() -> DirectRuntimeFixture {
+    let tempdir = tempfile::tempdir().expect("direct runtime tempdir should be created");
+    let root = tempdir.path().to_path_buf();
+    std::fs::write(root.join("manifest.json"), b"{}")
+        .expect("direct runtime manifest should be written");
+    let uxplay = root.join(format!("uxplay{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(
+        &uxplay,
+        b"#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nexit 0\n",
+    )
+    .expect("direct runtime uxplay should be written");
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&uxplay)
+            .expect("direct runtime uxplay metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&uxplay, perms)
+            .expect("direct runtime uxplay should be executable");
+    }
+
+    DirectRuntimeFixture {
+        _tempdir: tempdir,
+        root,
     }
 }

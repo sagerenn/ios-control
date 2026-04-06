@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use host_desktop::runtime::{HostRuntime, HostRuntimeConfig};
+use ios_control_contracts::capture::CaptureStreamPhase;
 use ios_control_contracts::session::SessionPhase;
 use ios_control_session_orchestrator::CaptureBackend;
 
@@ -71,6 +72,37 @@ fn runtime_refresh_session_updates_workspace_latest_frame() {
 
     let refreshed = runtime.refresh_session("device-1").unwrap();
     assert!(refreshed.workspace.latest_frame.unwrap().frame_index > first);
+}
+
+#[test]
+fn runtime_snapshot_exposes_capture_status_for_direct_sessions() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let _guards = EnvVarGuards::new(vec![EnvVarGuard::set(
+        "IOS_CONTROL_DIRECT_RECEIVER_HELPER",
+        support::plugin_path(&root, "plugin-capture-direct"),
+    )]);
+
+    let mut runtime = HostRuntime::new(HostRuntimeConfig {
+        plugin_paths: host_plugin_paths(&root),
+    })
+    .unwrap();
+
+    let snapshot = runtime
+        .start_session(
+            "device-1",
+            "Mock iPhone",
+            Some("direct-1".into()),
+            CaptureBackend::Direct,
+        )
+        .unwrap();
+
+    let capture_status = snapshot
+        .workspace
+        .capture_status
+        .expect("direct runtime should expose capture status");
+    assert_eq!(capture_status.video_phase, CaptureStreamPhase::Streaming);
 }
 
 #[test]

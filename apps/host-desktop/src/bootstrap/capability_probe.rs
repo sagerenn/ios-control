@@ -15,7 +15,10 @@ use crate::view_models::startup::{
 
 pub fn startup_from_plugin_paths(plugin_paths: &PluginPaths) -> StartupViewModel {
     let window_capture = probe_capture_item("Window Capture", &plugin_paths.capture);
-    let direct_receiver = probe_direct_receiver(&plugin_paths.capture_direct);
+    let direct_receiver = probe_direct_receiver(
+        &plugin_paths.capture_direct,
+        plugin_paths.capture_direct_runtime_root.as_deref(),
+    );
     let mut items = vec![
         window_capture,
         probe_control_item("BLE Control", &plugin_paths.control_ble),
@@ -134,7 +137,7 @@ fn item_for_path(label: &str, path: &std::path::Path) -> StartupItem {
     }
 }
 
-fn probe_direct_receiver(path: &Path) -> DirectReceiverViewModel {
+fn probe_direct_receiver(path: &Path, runtime_root: Option<&Path>) -> DirectReceiverViewModel {
     if !path.is_file() {
         return DirectReceiverViewModel {
             available: false,
@@ -143,7 +146,7 @@ fn probe_direct_receiver(path: &Path) -> DirectReceiverViewModel {
         };
     }
 
-    match probe_direct_capture_capability(path) {
+    match probe_direct_capture_capability(path, runtime_root) {
         Ok(capability) if capability.available => DirectReceiverViewModel {
             available: true,
             status: "Ready".into(),
@@ -164,16 +167,23 @@ fn probe_direct_receiver(path: &Path) -> DirectReceiverViewModel {
     }
 }
 
-fn probe_direct_capture_capability(path: &Path) -> anyhow::Result<CaptureCapability> {
+ fn probe_direct_capture_capability(
+    path: &Path,
+    runtime_root: Option<&Path>,
+ ) -> anyhow::Result<CaptureCapability> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async move {
-        let mut plugin = RunningPlugin::spawn_with_env(
-            path,
-            [("IOS_CONTROL_DIRECT_RECEIVER_HELPER", path.as_os_str())],
-        )
-        .await?;
+        let envs = runtime_root
+            .map(|root| {
+                vec![(
+                    "IOS_CONTROL_DIRECT_RUNTIME_ROOT".to_string(),
+                    root.as_os_str().to_owned(),
+                )]
+            })
+            .unwrap_or_default();
+        let mut plugin = RunningPlugin::spawn_with_env(path, envs).await?;
         plugin.handshake().await?;
         plugin.send(&HostToPlugin::ProbeCapture).await?;
         let reply = plugin.read().await?;

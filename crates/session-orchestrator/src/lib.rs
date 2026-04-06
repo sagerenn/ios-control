@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use ios_control_capability_registry::CapabilityRegistry;
 use ios_control_contracts::capture::{
-    CaptureStreamDescriptor, SourceKind, VideoFrameDescriptor, VideoSource,
+    CaptureStatus, CaptureStreamDescriptor, SourceKind, VideoFrameDescriptor, VideoSource,
 };
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
@@ -34,6 +34,7 @@ pub struct RequestedPlugins {
 pub struct PluginPaths {
     pub capture: PathBuf,
     pub capture_direct: PathBuf,
+    pub capture_direct_runtime_root: Option<PathBuf>,
     pub control_ble: PathBuf,
     pub control_fallback: PathBuf,
     pub grounding: Option<PathBuf>,
@@ -77,6 +78,7 @@ pub struct ActiveSessionState {
     pub selected_source_id: Option<String>,
     pub capture_sources: Vec<VideoSource>,
     pub capture_stream: Option<CaptureStreamDescriptor>,
+    pub capture_status: Option<CaptureStatus>,
     pub latest_frame: Option<VideoFrameDescriptor>,
     pub control_checklist: ControlSetupChecklist,
     pub diagnostics: SessionDiagnostics,
@@ -93,6 +95,7 @@ impl std::fmt::Debug for ActiveSessionState {
             .field("selected_source_id", &self.selected_source_id)
             .field("capture_sources", &self.capture_sources)
             .field("capture_stream", &self.capture_stream)
+            .field("capture_status", &self.capture_status)
             .field("latest_frame", &self.latest_frame)
             .field("control_checklist", &self.control_checklist)
             .field("diagnostics", &self.diagnostics)
@@ -168,6 +171,8 @@ impl SessionOrchestrator {
             }
             Err(error) => return Err(error),
         };
+        let capture_status =
+            request_capture_status_if_supported(&mut capture, &capture_descriptor).await?;
         staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("capture source selected: {selected_source_id}"),
@@ -293,6 +298,7 @@ impl SessionOrchestrator {
             selected_source_id: Some(selected_source_id),
             capture_sources,
             capture_stream,
+            capture_status,
             latest_frame,
             control_checklist,
             diagnostics: SessionDiagnostics {
@@ -368,6 +374,9 @@ impl ActiveSessionState {
                 if self.summary.phase == SessionPhase::Connecting {
                     self.summary.phase = SessionPhase::Streaming;
                 }
+                if self.summary.capture_plugin.as_deref() == Some("capture.direct") {
+                    self.capture_status = Some(request_capture_status(capture).await?);
+                }
                 Ok(Some(frame))
             }
             Err(error)
@@ -375,6 +384,7 @@ impl ActiveSessionState {
                     && self.latest_frame.is_none()
                     && waiting_for_direct_frame(&error) =>
             {
+                self.capture_status = Some(request_capture_status(capture).await?);
                 Ok(None)
             }
             Err(error) => Err(error),
@@ -495,6 +505,23 @@ async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDes
     }
 }
 
+async fn request_capture_status_if_supported(
+    capture: &mut RunningPlugin,
+    descriptor: &PluginDescriptor,
+) -> Result<Option<CaptureStatus>> {
+    if descriptor.plugin_id != "capture.direct" {
+        return Ok(None);
+    }
+    request_capture_status(capture).await.map(Some)
+}
+
+async fn request_capture_status(capture: &mut RunningPlugin) -> Result<CaptureStatus> {
+    match request_plugin(capture, &HostToPlugin::GetCaptureStatus).await? {
+        PluginToHost::CaptureStatus { status } => Ok(status),
+        other => Err(anyhow!("unexpected capture status response: {other:?}")),
+    }
+}
+
 fn waiting_for_direct_frame(error: &anyhow::Error) -> bool {
     error
         .to_string()
@@ -505,12 +532,18 @@ async fn start_capture_backend(request: &StartSessionRequest) -> Result<RunningP
     match request.capture_backend {
         CaptureBackend::Window => RunningPlugin::spawn(&request.plugin_paths.capture).await,
         CaptureBackend::Direct => {
-            let helper_path = request.plugin_paths.capture_direct.as_os_str();
-            RunningPlugin::spawn_with_env(
-                &request.plugin_paths.capture_direct,
-                [("IOS_CONTROL_DIRECT_RECEIVER_HELPER", helper_path)],
-            )
-            .await
+            let envs = request
+                .plugin_paths
+                .capture_direct_runtime_root
+                .as_ref()
+                .map(|runtime_root| {
+                    vec![(
+                        "IOS_CONTROL_DIRECT_RUNTIME_ROOT".to_string(),
+                        runtime_root.as_os_str().to_owned(),
+                    )]
+                })
+                .unwrap_or_default();
+            RunningPlugin::spawn_with_env(&request.plugin_paths.capture_direct, envs).await
         }
     }
 }

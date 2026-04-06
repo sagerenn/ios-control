@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
-use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource};
+use ios_control_contracts::capture::{
+    CaptureStatus, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
+};
 use ios_control_contracts::control::{ControlSessionPhase, ControlSetupChecklist};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary};
 use ios_control_session_orchestrator::{
@@ -17,6 +19,7 @@ pub struct RuntimeWorkspaceState {
     pub summary: DeviceSessionSummary,
     pub capture_sources: Vec<VideoSource>,
     pub capture_stream: Option<CaptureStreamDescriptor>,
+    pub capture_status: Option<CaptureStatus>,
     pub latest_frame: Option<VideoFrameDescriptor>,
     pub selected_source_id: Option<String>,
     pub control_checklist: ControlSetupChecklist,
@@ -94,6 +97,7 @@ impl HostRuntime {
                 summary: status.summary().clone(),
                 capture_sources: active.capture_sources.clone(),
                 capture_stream: active.capture_stream.clone(),
+                capture_status: active.capture_status.clone(),
                 latest_frame: active.latest_frame.clone(),
                 selected_source_id: active.selected_source_id.clone(),
                 control_checklist: active.control_checklist.clone(),

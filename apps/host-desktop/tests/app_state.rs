@@ -18,13 +18,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 use support::{
-    build_plugins, host_plugin_paths, plugin_path, prepare_window_runtime_env, runtime_env_lock,
-    workspace_root, EnvVarGuard, EnvVarGuards,
+    build_plugins, host_plugin_paths, plugin_path, runtime_env_lock, workspace_root,
+    DirectRuntimeFixture, EnvVarGuard, EnvVarGuards, write_direct_runtime_fixture,
 };
 
 struct RuntimeAppFixture {
     _lock: std::sync::MutexGuard<'static, ()>,
     _guards: EnvVarGuards,
+    _direct_runtime: Option<DirectRuntimeFixture>,
     preferences_path: Option<PathBuf>,
     app: HostDesktopApp,
 }
@@ -33,14 +34,29 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let guards = prepare_window_runtime_env(&root);
-    let app = HostDesktopApp::with_runtime(HostRuntimeConfig {
-        plugin_paths: host_plugin_paths(&root),
-    });
+    let direct_runtime = write_direct_runtime_fixture();
+    let guards = EnvVarGuards::new(vec![
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+            plugin_path(&root, "plugin-capture-window"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_INPUT_HELPER",
+            plugin_path(&root, "plugin-control-window-bridge"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_RECEIVER_HELPER",
+            plugin_path(&root, "plugin-capture-direct"),
+        ),
+    ]);
+    let mut plugin_paths = host_plugin_paths(&root);
+    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
+    let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        _direct_runtime: Some(direct_runtime),
         preferences_path: None,
         app,
     }
@@ -50,6 +66,7 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
+    let direct_runtime = write_direct_runtime_fixture();
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
     let state_file = std::env::temp_dir().join(format!(
         "host-desktop-direct-wait-{}-{}.state",
@@ -74,15 +91,18 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
             "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
             state_file.as_os_str(),
         ),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", direct_plugin.as_os_str()),
     ];
     let guards = EnvVarGuards::new(guard_values);
     let mut plugin_paths = host_plugin_paths(&root);
     plugin_paths.capture_direct = direct_plugin;
+    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
     let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        _direct_runtime: Some(direct_runtime),
         preferences_path: None,
         app,
     }
@@ -99,18 +119,33 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let guards = prepare_window_runtime_env(&root);
+    let direct_runtime = write_direct_runtime_fixture();
+    let guards = EnvVarGuards::new(vec![
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
+            plugin_path(&root, "plugin-capture-window"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_WINDOW_INPUT_HELPER",
+            plugin_path(&root, "plugin-control-window-bridge"),
+        ),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_RECEIVER_HELPER",
+            plugin_path(&root, "plugin-capture-direct"),
+        ),
+    ]);
     let prefs_path = support::write_preferences_json(preferences_json);
+    let mut plugin_paths = host_plugin_paths(&root);
+    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
     let app = HostDesktopApp::with_runtime_and_preferences(
-        HostRuntimeConfig {
-            plugin_paths: host_plugin_paths(&root),
-        },
+        HostRuntimeConfig { plugin_paths },
         host_desktop::preferences::HostPreferencesStore::new(prefs_path.clone()),
     );
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
+        _direct_runtime: Some(direct_runtime),
         preferences_path: Some(prefs_path),
         app,
     }
@@ -126,6 +161,7 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
             plugin_paths: PluginPaths {
                 capture: PathBuf::from("missing-capture-plugin"),
                 capture_direct: PathBuf::from("missing-direct-capture-plugin"),
+                capture_direct_runtime_root: None,
                 control_ble: PathBuf::from("missing-control-ble-plugin"),
                 control_fallback: PathBuf::from("missing-control-fallback-plugin"),
                 grounding: None,
@@ -137,6 +173,7 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
     RuntimeAppFixture {
         _lock: lock,
         _guards: EnvVarGuards::new(vec![]),
+        _direct_runtime: None,
         preferences_path: Some(prefs_path),
         app,
     }
@@ -168,6 +205,7 @@ fn runtime_snapshot_with_control(
                 kind: ios_control_contracts::capture::SourceKind::Window,
             }],
             capture_stream: None,
+            capture_status: None,
             latest_frame: None,
             selected_source_id: Some("window-helper-1".into()),
             control_checklist: ios_control_contracts::control::ControlSetupChecklist {
@@ -208,6 +246,7 @@ fn runtime_snapshot_with_frame(
                 kind: ios_control_contracts::capture::SourceKind::Window,
             }],
             capture_stream: None,
+            capture_status: None,
             latest_frame: Some(frame),
             selected_source_id: Some("window-helper-1".into()),
             control_checklist: ios_control_contracts::control::ControlSetupChecklist {
@@ -246,6 +285,7 @@ fn runtime_snapshot_streaming_without_frame() -> HostRuntimeSnapshot {
                 kind: ios_control_contracts::capture::SourceKind::Window,
             }],
             capture_stream: None,
+            capture_status: None,
             latest_frame: None,
             selected_source_id: Some("window-helper-1".into()),
             control_checklist: ios_control_contracts::control::ControlSetupChecklist {
@@ -284,6 +324,7 @@ fn direct_streaming_snapshot(device_id: &str, device_name: &str) -> HostRuntimeS
                 kind: ios_control_contracts::capture::SourceKind::DirectReceiver,
             }],
             capture_stream: None,
+            capture_status: None,
             latest_frame: Some(ios_control_contracts::capture::VideoFrameDescriptor {
                 source_id: "direct-1".into(),
                 source_kind: ios_control_contracts::capture::SourceKind::DirectReceiver,

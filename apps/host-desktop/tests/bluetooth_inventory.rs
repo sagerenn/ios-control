@@ -32,6 +32,7 @@ fn plugin_paths() -> PluginPaths {
     PluginPaths {
         capture: PathBuf::from("/nonexistent/capture"),
         capture_direct: PathBuf::from("/nonexistent/capture-direct"),
+        capture_direct_runtime_root: None,
         control_ble: PathBuf::from("/nonexistent/control-ble"),
         control_fallback: PathBuf::from("/nonexistent/control-fallback"),
         grounding: None,
