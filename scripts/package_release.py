@@ -67,6 +67,12 @@ def _archive_mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def _copy_tree(*, source: Path, staged_path: Path) -> None:
+    if not source.exists():
+        return
+    shutil.copytree(source, staged_path, dirs_exist_ok=True)
+
+
 def _write_archive(*, source_dir: Path, archive_path: Path, target: str) -> None:
     if archive_path.exists():
         archive_path.unlink()
@@ -107,6 +113,7 @@ def build_release_bundle(
     target: str,
     bin_dir: Path,
     out_dir: Path,
+    runtime_dir: Path | None = None,
     sha: str,
     ref_name: str,
     run_number: str,
@@ -175,6 +182,10 @@ def build_release_bundle(
                 target=target,
             )
 
+        if runtime_dir is not None:
+            _copy_tree(source=Path(runtime_dir), staged_path=bundle_root / "runtime")
+            _copy_tree(source=Path(runtime_dir), staged_path=plugin_root / "runtime")
+
         manifest = manifest_text(
             sha=sha,
             ref_name=ref_name,
@@ -220,6 +231,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--target", required=True)
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--runtime-dir", required=False, type=Path)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--ref-name", required=True)
     parser.add_argument("--run-number", required=True)
@@ -233,6 +245,7 @@ def main() -> None:
         target=args.target,
         bin_dir=args.bin_dir,
         out_dir=args.out_dir,
+        runtime_dir=args.runtime_dir,
         sha=args.sha,
         ref_name=args.ref_name,
         run_number=args.run_number,

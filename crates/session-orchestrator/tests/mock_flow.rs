@@ -28,6 +28,7 @@ async fn start_session_collects_mock_plugin_state() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -143,6 +144,7 @@ async fn execution_result_marks_observed_change_as_applied() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -178,6 +180,7 @@ async fn start_session_failure_does_not_persist_partial_state() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -211,6 +214,7 @@ async fn start_session_opens_capture_stream_and_refreshes_frames() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -248,6 +252,7 @@ async fn supervisor_refresh_session_updates_active_latest_frame() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -291,6 +296,11 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
     let _lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
+    let direct_plugin = plugin_path(&root, "plugin-capture-direct");
+    let _env = EnvVarGuards::new(vec![EnvVarGuard::set(
+        "IOS_CONTROL_DIRECT_RECEIVER_HELPER",
+        &direct_plugin,
+    )]);
 
     let mut orchestrator = SessionOrchestrator::default();
     let state = orchestrator
@@ -301,7 +311,8 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
             capture_backend: CaptureBackend::Direct,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
-                capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct: direct_plugin,
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -351,6 +362,7 @@ async fn start_session_with_direct_backend_can_wait_for_first_frame() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: direct_plugin,
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),

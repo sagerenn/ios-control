@@ -186,6 +186,44 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertNotIn(f"{plugin_root}/bin/{host_exe}", plugin_names)
                 self.assertIn(f"{plugin_root}/manifest.txt", plugin_names)
 
+    def test_linux_bundle_includes_direct_runtime_tree(self) -> None:
+        target = "x86_64-unknown-linux-gnu"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            out_dir = root / "out"
+            runtime_dir = root / "runtime"
+            direct_runtime = runtime_dir / "uxplay" / target
+            bin_dir.mkdir()
+            out_dir.mkdir()
+            direct_runtime.mkdir(parents=True)
+            self._write_fake_binaries(bin_dir, target)
+            (direct_runtime / "manifest.json").write_text("{}", encoding="utf-8")
+            uxplay = direct_runtime / "uxplay"
+            uxplay.write_text("uxplay", encoding="utf-8")
+            uxplay.chmod(0o755)
+
+            result = package_release.build_release_bundle(
+                target=target,
+                bin_dir=bin_dir,
+                out_dir=out_dir,
+                runtime_dir=runtime_dir,
+                sha="abc123",
+                ref_name="refs/tags/v1.2.3",
+                run_number="77",
+                timestamp="2026-04-02T00:00:00Z",
+            )
+
+            bundle_root = f"ios-control-{target}"
+            plugin_root = f"ios-control-plugins-{target}"
+            runtime_manifest = f"runtime/uxplay/{target}/manifest.json"
+
+            with tarfile.open(result["bundle_archive"], "r:gz") as bundle_tar:
+                self.assertIn(f"{bundle_root}/{runtime_manifest}", bundle_tar.getnames())
+
+            with tarfile.open(result["plugin_archive"], "r:gz") as plugin_tar:
+                self.assertIn(f"{plugin_root}/{runtime_manifest}", plugin_tar.getnames())
+
     def test_missing_binary_raises_file_not_found_error(self) -> None:
         target = "x86_64-unknown-linux-gnu"
         with tempfile.TemporaryDirectory() as tmp:

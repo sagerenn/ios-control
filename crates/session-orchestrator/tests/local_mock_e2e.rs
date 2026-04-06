@@ -25,6 +25,7 @@ async fn local_mock_e2e_builds_streaming_session() {
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
                 capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                capture_direct_runtime_root: None,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
