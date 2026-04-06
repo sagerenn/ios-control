@@ -159,6 +159,12 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(f"{package}:arm64", workflow_text)
 
+    def test_linux_runtime_build_reconfigures_apt_sources_for_arm64_packages(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("ports.ubuntu.com/ubuntu-ports", workflow_text)
+        self.assertIn("Architectures: amd64", workflow_text)
+        self.assertIn("Architectures: arm64", workflow_text)
+
     def test_linux_runtime_build_script_sets_cross_pkg_config_for_aarch64(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
         self.assertIn("export PKG_CONFIG_ALLOW_CROSS=1", script_text)
@@ -187,6 +193,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("gstreamer-1.0-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
         self.assertIn("gstreamer-1.0-devel-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
         self.assertNotIn("merge-modules.zip", script_text)
+
+    def test_windows_runtime_build_script_escapes_colons_after_interpolated_variables(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('throw "failed to download $Uri: received HTML instead of a binary payload"', script_text)
+        self.assertIn('throw "failed to download ${Uri}: received HTML instead of a binary payload"', script_text)
 
     def test_windows_runtime_build_script_exports_pkg_config_and_prefix_paths(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")

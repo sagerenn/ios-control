@@ -108,10 +108,56 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+      - name: Configure Ubuntu multiarch package sources
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture arm64
+          sudo python3 - <<'PY'
+          from pathlib import Path
+
+          ubuntu_source_tokens = (
+              "apt-mirrors.txt",
+              "archive.ubuntu.com/ubuntu",
+              "azure.archive.ubuntu.com/ubuntu",
+              "security.ubuntu.com/ubuntu",
+          )
+
+          for source_path in Path("/etc/apt/sources.list.d").glob("*.sources"):
+              text = source_path.read_text(encoding="utf-8")
+              stanzas = [stanza.strip() for stanza in text.split("\n\n") if stanza.strip()]
+              updated_stanzas = []
+              changed = False
+              for stanza in stanzas:
+                  lines = stanza.splitlines()
+                  uris = [line.partition(":")[2].strip() for line in lines if line.startswith("URIs:")]
+                  if not any(token in uri for uri in uris for token in ubuntu_source_tokens):
+                      updated_stanzas.append(stanza)
+                      continue
+                  if any(line.startswith("Architectures:") for line in lines):
+                      lines = [
+                          "Architectures: amd64" if line.startswith("Architectures:") else line
+                          for line in lines
+                      ]
+                  else:
+                      lines.append("Architectures: amd64")
+                  updated_stanzas.append("\n".join(lines))
+                  changed = True
+              if changed:
+                  source_path.write_text("\n\n".join(updated_stanzas) + "\n", encoding="utf-8")
+          PY
+          sudo tee /etc/apt/sources.list.d/ubuntu-arm64.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://ports.ubuntu.com/ubuntu-ports/
+          Suites: noble noble-updates noble-backports noble-security
+          Components: main restricted universe multiverse
+          Architectures: arm64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
       - name: Install Linux direct runtime build dependencies
         if: runner.os == 'Linux'
         run: >
-          sudo dpkg --add-architecture arm64 &&
           sudo apt-get update &&
           sudo apt-get install -y
           build-essential

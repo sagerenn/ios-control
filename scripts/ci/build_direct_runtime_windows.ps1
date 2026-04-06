@@ -170,7 +170,7 @@ function Invoke-DownloadFile {
             continue
         }
 
-        throw "failed to download $Uri: received HTML instead of a binary payload"
+        throw "failed to download ${Uri}: received HTML instead of a binary payload"
     }
 
     throw "failed to download $Uri after following anti-bot redirects"
