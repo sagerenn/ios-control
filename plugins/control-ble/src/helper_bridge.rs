@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct BleHelperProbe {
     pub supported: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
     pub supports_prepare: bool,
     pub supports_execute: bool,
     #[serde(default)]
