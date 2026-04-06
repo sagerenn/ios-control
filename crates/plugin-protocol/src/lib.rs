@@ -1,7 +1,7 @@
 pub use ios_control_contracts::plugin::{PluginDescriptor, PluginKind};
 
 use ios_control_contracts::capture::{
-    CaptureCapability, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
+    CaptureCapability, CaptureStatus, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
 };
 use ios_control_contracts::control::{
     ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
@@ -20,6 +20,7 @@ pub enum HostToPlugin {
     ReadCaptureFrame,
     CloseCaptureStream,
     GetCaptureFrame { source_id: String },
+    GetCaptureStatus,
     StartDirectCapture,
     PlanGrounding { request: GroundingRequest },
     ExecutePlan { plan: GroundingPlan },
@@ -49,6 +50,9 @@ pub enum PluginToHost {
     },
     CaptureFrame {
         frame: VideoFrameDescriptor,
+    },
+    CaptureStatus {
+        status: CaptureStatus,
     },
     ExecutionSummary {
         summary: ExecutionSummary,

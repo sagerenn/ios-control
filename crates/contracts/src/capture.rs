@@ -23,6 +23,36 @@ pub enum CaptureStreamPhase {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioStreamPhase {
+    Idle,
+    Waiting,
+    Streaming,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioRoute {
+    None,
+    LocalPlayback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioStreamStatus {
+    pub phase: AudioStreamPhase,
+    pub route: AudioRoute,
+    pub active: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureStatus {
+    pub video_phase: CaptureStreamPhase,
+    pub video_health: FrameHealth,
+    pub audio: AudioStreamStatus,
+    pub detail: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VideoSource {
     pub source_id: String,

@@ -1,5 +1,6 @@
 use ios_control_contracts::capture::{
-    CaptureCapability, CaptureStreamDescriptor, VideoFrameDescriptor,
+    AudioRoute, AudioStreamPhase, AudioStreamStatus, CaptureCapability, CaptureStatus,
+    CaptureStreamDescriptor, CaptureStreamPhase, FrameHealth, VideoFrameDescriptor,
 };
 use ios_control_contracts::control::{ExecutionPhase, ExecutionSummary};
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest, PlanKind, TargetInput};
@@ -131,6 +132,31 @@ fn capture_probe_messages_roundtrip() {
             reason: None,
             backend_id: "capture.window".into(),
             supports_input_bridge: true,
+        },
+    };
+    let response_json = serde_json::to_string(&response).unwrap();
+    let decoded_response: PluginToHost = serde_json::from_str(&response_json).unwrap();
+    assert_eq!(decoded_response, response);
+}
+
+#[test]
+fn capture_status_messages_roundtrip() {
+    let request = HostToPlugin::GetCaptureStatus;
+    let json = serde_json::to_string(&request).unwrap();
+    let decoded: HostToPlugin = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, request);
+
+    let response = PluginToHost::CaptureStatus {
+        status: CaptureStatus {
+            video_phase: CaptureStreamPhase::Streaming,
+            video_health: FrameHealth::Healthy,
+            audio: AudioStreamStatus {
+                phase: AudioStreamPhase::Streaming,
+                route: AudioRoute::LocalPlayback,
+                active: true,
+                detail: None,
+            },
+            detail: None,
         },
     };
     let response_json = serde_json::to_string(&response).unwrap();
