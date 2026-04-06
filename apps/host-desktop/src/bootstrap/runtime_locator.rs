@@ -62,6 +62,10 @@ pub fn locate_runtime_layout(input: RuntimeLocatorInput) -> Result<RuntimeLayout
 fn plugin_paths_for_dir(dir: &Path) -> PluginPaths {
     PluginPaths {
         capture: dir.join(format!("plugin-capture-window{}", std::env::consts::EXE_SUFFIX)),
+        capture_direct: dir.join(format!(
+            "plugin-capture-direct{}",
+            std::env::consts::EXE_SUFFIX
+        )),
         control_ble: dir.join(format!("plugin-control-ble{}", std::env::consts::EXE_SUFFIX)),
         control_fallback: dir.join(format!(
             "plugin-control-window-bridge{}",

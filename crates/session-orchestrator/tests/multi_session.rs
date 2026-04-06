@@ -1,4 +1,6 @@
-use ios_control_session_orchestrator::{PluginPaths, SessionSupervisor, StartSessionRequest};
+use ios_control_session_orchestrator::{
+    CaptureBackend, PluginPaths, SessionSupervisor, StartSessionRequest,
+};
 
 mod support;
 use support::{
@@ -18,8 +20,10 @@ async fn supervisor_keeps_sessions_isolated_across_multiple_devices() {
             device_id: "device-1".into(),
             device_name: "Device 1".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -32,8 +36,10 @@ async fn supervisor_keeps_sessions_isolated_across_multiple_devices() {
             device_id: "device-2".into(),
             device_name: "Device 2".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -61,8 +67,10 @@ async fn supervisor_retains_active_sessions_after_status_reads() {
             device_id: "device-1".into(),
             device_name: "Device 1".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -91,8 +99,10 @@ async fn supervisor_stop_session_clears_active_and_status_entries() {
             device_id: "device-stop".into(),
             device_name: "Device Stop".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),

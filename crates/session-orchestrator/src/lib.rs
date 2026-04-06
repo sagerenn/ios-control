@@ -33,9 +33,16 @@ pub struct RequestedPlugins {
 #[derive(Debug, Clone)]
 pub struct PluginPaths {
     pub capture: PathBuf,
+    pub capture_direct: PathBuf,
     pub control_ble: PathBuf,
     pub control_fallback: PathBuf,
     pub grounding: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureBackend {
+    Window,
+    Direct,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +50,7 @@ pub struct StartSessionRequest {
     pub device_id: String,
     pub device_name: String,
     pub selected_source_id: Option<String>,
+    pub capture_backend: CaptureBackend,
     pub plugin_paths: PluginPaths,
 }
 
@@ -135,7 +143,7 @@ impl SessionOrchestrator {
         let mut staged_capabilities = Vec::new();
         let mut staged_telemetry = Vec::new();
 
-        let mut capture = RunningPlugin::spawn(&request.plugin_paths.capture).await?;
+        let mut capture = start_capture_backend(&request).await?;
         let capture_descriptor = capture.handshake().await?;
         staged_capabilities.push((capture_descriptor.plugin_id.clone(), true, None));
         staged_telemetry.push(TelemetryEvent {
@@ -175,7 +183,9 @@ impl SessionOrchestrator {
             grounding_plugin,
             execution_result,
             latest_frame,
-        ) = if let Some(path) = request.plugin_paths.grounding.as_ref() {
+        ) = if request.capture_backend == CaptureBackend::Direct {
+            (None, None, None, None, Some(latest_frame))
+        } else if let Some(path) = request.plugin_paths.grounding.as_ref() {
             let mut grounding = RunningPlugin::spawn(path).await?;
             let grounding_descriptor = grounding.handshake().await?;
             let plan = request_grounding_plan(&mut grounding).await?;
@@ -449,6 +459,20 @@ async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDes
     match request_plugin(capture, &HostToPlugin::ReadCaptureFrame).await? {
         PluginToHost::CaptureFrame { frame } => Ok(frame),
         other => Err(anyhow!("unexpected capture frame response: {other:?}")),
+    }
+}
+
+async fn start_capture_backend(request: &StartSessionRequest) -> Result<RunningPlugin> {
+    match request.capture_backend {
+        CaptureBackend::Window => RunningPlugin::spawn(&request.plugin_paths.capture).await,
+        CaptureBackend::Direct => {
+            let helper_path = request.plugin_paths.capture_direct.as_os_str();
+            RunningPlugin::spawn_with_env(
+                &request.plugin_paths.capture_direct,
+                [("IOS_CONTROL_DIRECT_RECEIVER_HELPER", helper_path)],
+            )
+            .await
+        }
     }
 }
 

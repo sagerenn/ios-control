@@ -87,6 +87,8 @@ pub fn build_plugins(workspace_root: &Path) {
             "-p",
             "plugin-capture-window",
             "-p",
+            "plugin-capture-direct",
+            "-p",
             "plugin-control-ble",
             "-p",
             "plugin-control-window-bridge",

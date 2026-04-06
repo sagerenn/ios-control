@@ -3,7 +3,7 @@ use ios_control_contracts::capture::{CaptureStreamDescriptor, VideoFrameDescript
 use ios_control_contracts::control::{ControlSessionPhase, ControlSetupChecklist};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary};
 use ios_control_session_orchestrator::{
-    PluginPaths, SessionDiagnostics, SessionSupervisor, StartSessionRequest,
+    CaptureBackend, PluginPaths, SessionDiagnostics, SessionSupervisor, StartSessionRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -53,6 +53,7 @@ impl HostRuntime {
         device_id: &str,
         device_name: &str,
         selected_source_id: Option<String>,
+        capture_backend: CaptureBackend,
     ) -> Result<HostRuntimeSnapshot> {
         self.tokio.block_on(
             self.supervisor
@@ -60,6 +61,7 @@ impl HostRuntime {
                     device_id: device_id.into(),
                     device_name: device_name.into(),
                     selected_source_id,
+                    capture_backend,
                     plugin_paths: self.config.plugin_paths.clone(),
                 }),
         )?;

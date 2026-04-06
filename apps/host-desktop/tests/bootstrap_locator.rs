@@ -55,3 +55,41 @@ fn locator_uses_workspace_target_layout_for_repo_launches() {
         ))
     );
 }
+
+#[test]
+fn locator_resolves_direct_capture_plugin_for_bundle_and_workspace_layouts() {
+    let staged = stage_bundle_layout();
+
+    let bundle = locate_runtime_layout(RuntimeLocatorInput {
+        executable_path: staged.host_exe.clone(),
+        manifest_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        cargo_target_dir: None,
+        cargo_build_target: None,
+    })
+    .expect("bundle layout should resolve");
+
+    assert_eq!(
+        bundle.plugin_paths.capture_direct,
+        staged
+            .plugins_dir
+            .join(format!("plugin-capture-direct{}", std::env::consts::EXE_SUFFIX))
+    );
+
+    let root = workspace_root();
+    let exe = target_dir(&root).join(format!("debug/host-desktop{}", std::env::consts::EXE_SUFFIX));
+    let workspace = locate_runtime_layout(RuntimeLocatorInput {
+        executable_path: exe,
+        manifest_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        cargo_target_dir: std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
+        cargo_build_target: std::env::var_os("CARGO_BUILD_TARGET").map(PathBuf::from),
+    })
+    .expect("workspace layout should resolve");
+
+    assert_eq!(
+        workspace.plugin_paths.capture_direct,
+        target_dir(&root).join(format!(
+            "debug/plugin-capture-direct{}",
+            std::env::consts::EXE_SUFFIX
+        ))
+    );
+}

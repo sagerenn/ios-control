@@ -1,7 +1,7 @@
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::SessionPhase;
 use ios_control_session_orchestrator::{
-    PluginPaths, SessionOrchestrator, SessionSupervisor, StartSessionRequest,
+    CaptureBackend, PluginPaths, SessionOrchestrator, SessionSupervisor, StartSessionRequest,
 };
 
 mod support;
@@ -23,8 +23,10 @@ async fn start_session_collects_mock_plugin_state() {
             device_id: "device-1".into(),
             device_name: "Mock iPhone".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -136,8 +138,10 @@ async fn execution_result_marks_observed_change_as_applied() {
             device_id: "device-observed".into(),
             device_name: "Observed Change iPhone".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -169,8 +173,10 @@ async fn start_session_failure_does_not_persist_partial_state() {
             device_id: "device-2".into(),
             device_name: "Broken Mock iPhone".into(),
             selected_source_id: Some("missing-source".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -200,8 +206,10 @@ async fn start_session_opens_capture_stream_and_refreshes_frames() {
             device_id: "device-refresh".into(),
             device_name: "Refresh Mock iPhone".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -235,8 +243,10 @@ async fn supervisor_refresh_session_updates_active_latest_frame() {
             device_id: "device-supervisor-refresh".into(),
             device_name: "Refresh Mock iPhone".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),
@@ -273,4 +283,35 @@ async fn supervisor_refresh_session_updates_active_latest_frame() {
         .stop_session("device-supervisor-refresh")
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+
+    let mut orchestrator = SessionOrchestrator::default();
+    let state = orchestrator
+        .start_session_with_plugins(StartSessionRequest {
+            device_id: "direct-session".into(),
+            device_name: "Direct Receiver".into(),
+            selected_source_id: Some("direct-1".into()),
+            capture_backend: CaptureBackend::Direct,
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.direct"));
+    assert_eq!(state.selected_source_id.as_deref(), Some("direct-1"));
+    assert_eq!(state.latest_frame.as_ref().map(|frame| frame.source_id.as_str()), Some("direct-1"));
+
+    state.shutdown().await.unwrap();
 }

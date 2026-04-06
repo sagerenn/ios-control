@@ -82,6 +82,7 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
         HostRuntimeConfig {
             plugin_paths: PluginPaths {
                 capture: PathBuf::from("missing-capture-plugin"),
+                capture_direct: PathBuf::from("missing-direct-capture-plugin"),
                 control_ble: PathBuf::from("missing-control-ble-plugin"),
                 control_fallback: PathBuf::from("missing-control-fallback-plugin"),
                 grounding: None,
@@ -313,6 +314,36 @@ fn host_app_with_missing_runtime_components_starts_blocked_without_fake_device()
         .items
         .iter()
         .any(|item| item.detail.contains("missing-control-ble-plugin")));
+}
+
+#[test]
+fn host_app_enables_global_direct_receiver_when_direct_backend_is_ready() {
+    let fixture = host_app_with_runtime();
+
+    assert!(fixture.app.startup.direct_receiver.available);
+    assert!(fixture.app.can_start_direct_receiver());
+}
+
+#[test]
+fn host_app_start_direct_receiver_uses_direct_capture_source() {
+    let mut fixture = host_app_with_runtime();
+
+    fixture.app.request_start_direct_receiver();
+
+    assert_eq!(fixture.app.selected_device_id.as_deref(), Some("direct-receiver"));
+    assert!(matches!(
+        fixture.app.session.ui_state,
+        SessionUiState::Streaming | SessionUiState::Starting
+    ));
+    assert_eq!(
+        fixture
+            .app
+            .session
+            .selected_source
+            .as_ref()
+            .map(|source| source.source_id.as_str()),
+        Some("direct-1")
+    );
 }
 
 #[test]

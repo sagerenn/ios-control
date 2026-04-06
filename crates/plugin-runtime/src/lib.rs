@@ -18,11 +18,28 @@ pub struct RunningPlugin {
 
 impl RunningPlugin {
     pub async fn spawn(plugin_path: &Path) -> Result<Self> {
-        let mut child = Command::new(plugin_path)
+        Self::spawn_with_env(
+            plugin_path,
+            std::iter::empty::<(&'static str, &'static str)>(),
+        )
+        .await
+    }
+
+    pub async fn spawn_with_env<K, V, I>(plugin_path: &Path, envs: I) -> Result<Self>
+    where
+        K: AsRef<std::ffi::OsStr>,
+        V: AsRef<std::ffi::OsStr>,
+        I: IntoIterator<Item = (K, V)>,
+    {
+        let mut command = Command::new(plugin_path);
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+        for (key, value) in envs {
+            command.env(key, value);
+        }
+        let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("missing stdin"))?;
         let stdout = child

@@ -13,10 +13,18 @@ pub struct StartupItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectReceiverViewModel {
+    pub available: bool,
+    pub status: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupViewModel {
     pub readiness: StartupReadiness,
     pub summary: String,
     pub items: Vec<StartupItem>,
+    pub direct_receiver: DirectReceiverViewModel,
 }
 
 impl StartupViewModel {
@@ -25,6 +33,11 @@ impl StartupViewModel {
             readiness: StartupReadiness::Blocked,
             summary: summary.into(),
             items: Vec::new(),
+            direct_receiver: DirectReceiverViewModel {
+                available: false,
+                status: "Blocked".into(),
+                detail: "Direct receiver unavailable".into(),
+            },
         }
     }
 }

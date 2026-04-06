@@ -1,5 +1,7 @@
 use ios_control_contracts::session::SessionPhase;
-use ios_control_session_orchestrator::{PluginPaths, SessionOrchestrator, StartSessionRequest};
+use ios_control_session_orchestrator::{
+    CaptureBackend, PluginPaths, SessionOrchestrator, StartSessionRequest,
+};
 
 mod support;
 use support::{
@@ -19,8 +21,10 @@ async fn local_mock_e2e_builds_streaming_session() {
             device_id: "device-e2e".into(),
             device_name: "Mock iPhone".into(),
             selected_source_id: Some("window-helper-1".into()),
+            capture_backend: CaptureBackend::Window,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: plugin_path(&root, "plugin-capture-direct"),
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),

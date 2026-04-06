@@ -1,13 +1,23 @@
+use std::path::Path;
+
+use anyhow::anyhow;
+use ios_control_contracts::capture::CaptureCapability;
+use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
+use ios_control_plugin_runtime::RunningPlugin;
 use ios_control_session_orchestrator::PluginPaths;
 
 use crate::inventory::providers::{
     list_capture_sources, probe_capture_capability, probe_control_capability,
 };
-use crate::view_models::startup::{StartupItem, StartupReadiness, StartupViewModel};
+use crate::view_models::startup::{
+    DirectReceiverViewModel, StartupItem, StartupReadiness, StartupViewModel,
+};
 
 pub fn startup_from_plugin_paths(plugin_paths: &PluginPaths) -> StartupViewModel {
+    let window_capture = probe_capture_item("Window Capture", &plugin_paths.capture);
+    let direct_receiver = probe_direct_receiver(&plugin_paths.capture_direct);
     let mut items = vec![
-        probe_capture_item("Window Capture", &plugin_paths.capture),
+        window_capture,
         probe_control_item("BLE Control", &plugin_paths.control_ble),
         probe_control_item("Window Input Bridge", &plugin_paths.control_fallback),
     ];
@@ -15,7 +25,7 @@ pub fn startup_from_plugin_paths(plugin_paths: &PluginPaths) -> StartupViewModel
         items.push(item_for_path("Grounding", path));
     }
 
-    let capture_ready = items
+    let capture_ready = direct_receiver.available || items
         .iter()
         .any(|item| item.label == "Window Capture" && item.status == "Ready");
     let control_ready = items.iter().any(|item| {
@@ -39,6 +49,7 @@ pub fn startup_from_plugin_paths(plugin_paths: &PluginPaths) -> StartupViewModel
         readiness,
         summary,
         items,
+        direct_receiver,
     }
 }
 
@@ -121,4 +132,55 @@ fn item_for_path(label: &str, path: &std::path::Path) -> StartupItem {
         },
         detail: path.display().to_string(),
     }
+}
+
+fn probe_direct_receiver(path: &Path) -> DirectReceiverViewModel {
+    if !path.is_file() {
+        return DirectReceiverViewModel {
+            available: false,
+            status: "Missing".into(),
+            detail: path.display().to_string(),
+        };
+    }
+
+    match probe_direct_capture_capability(path) {
+        Ok(capability) if capability.available => DirectReceiverViewModel {
+            available: true,
+            status: "Ready".into(),
+            detail: format!("{} | receiver ready", capability.backend_id),
+        },
+        Ok(capability) => DirectReceiverViewModel {
+            available: false,
+            status: "Blocked".into(),
+            detail: capability
+                .reason
+                .unwrap_or_else(|| "capture probe reported unavailable".into()),
+        },
+        Err(error) => DirectReceiverViewModel {
+            available: false,
+            status: "Error".into(),
+            detail: format!("capture probe failed: {error}"),
+        },
+    }
+}
+
+fn probe_direct_capture_capability(path: &Path) -> anyhow::Result<CaptureCapability> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let mut plugin = RunningPlugin::spawn_with_env(
+            path,
+            [("IOS_CONTROL_DIRECT_RECEIVER_HELPER", path.as_os_str())],
+        )
+        .await?;
+        plugin.handshake().await?;
+        plugin.send(&HostToPlugin::ProbeCapture).await?;
+        let reply = plugin.read().await?;
+        let _ = plugin.stop().await;
+        match reply {
+            PluginToHost::CaptureCapability { capability } => Ok(capability),
+            other => Err(anyhow!("unexpected capture capability response: {other:?}")),
+        }
+    })
 }

@@ -88,6 +88,7 @@ pub fn plugin_path(workspace_root: &Path, name: &str) -> PathBuf {
 pub fn host_plugin_paths(workspace_root: &Path) -> PluginPaths {
     PluginPaths {
         capture: plugin_path(workspace_root, "plugin-capture-window"),
+        capture_direct: plugin_path(workspace_root, "plugin-capture-direct"),
         control_ble: plugin_path(workspace_root, "plugin-control-ble"),
         control_fallback: plugin_path(workspace_root, "plugin-control-window-bridge"),
         grounding: Some(plugin_path(workspace_root, "plugin-grounding-core")),
@@ -100,6 +101,8 @@ pub fn build_plugins(workspace_root: &Path) {
             "build",
             "-p",
             "plugin-capture-window",
+            "-p",
+            "plugin-capture-direct",
             "-p",
             "plugin-control-ble",
             "-p",
@@ -174,6 +177,7 @@ pub fn stage_bundle_layout() -> StagedBundleLayout {
 
     for name in [
         "plugin-capture-window",
+        "plugin-capture-direct",
         "plugin-control-ble",
         "plugin-control-window-bridge",
         "plugin-grounding-core",

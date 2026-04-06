@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use host_desktop::runtime::{HostRuntime, HostRuntimeConfig};
 use ios_control_contracts::session::SessionPhase;
+use ios_control_session_orchestrator::CaptureBackend;
 
 mod support;
 use support::{
@@ -22,7 +23,12 @@ fn runtime_start_session_returns_workspace_snapshot() {
     .unwrap();
 
     let snapshot = runtime
-        .start_session("device-1", "Mock iPhone", Some("window-helper-1".into()))
+        .start_session(
+            "device-1",
+            "Mock iPhone",
+            Some("window-helper-1".into()),
+            CaptureBackend::Window,
+        )
         .unwrap();
 
     assert_eq!(snapshot.statuses.len(), 1);
@@ -51,7 +57,12 @@ fn runtime_refresh_session_updates_workspace_latest_frame() {
     .unwrap();
 
     let first = runtime
-        .start_session("device-1", "Mock iPhone", Some("window-helper-1".into()))
+        .start_session(
+            "device-1",
+            "Mock iPhone",
+            Some("window-helper-1".into()),
+            CaptureBackend::Window,
+        )
         .unwrap()
         .workspace
         .latest_frame

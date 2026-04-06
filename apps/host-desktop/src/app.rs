@@ -1,5 +1,6 @@
 use eframe::egui;
 use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
+use ios_control_session_orchestrator::CaptureBackend;
 use std::time::{Duration, Instant};
 
 use crate::panels::device_detail::{
@@ -57,6 +58,9 @@ pub struct HostDesktopApp {
 impl HostDesktopApp {
     const INVENTORY_REFRESH_POLL_INTERVAL: Duration = Duration::from_secs(2);
     const RUNTIME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const DIRECT_RECEIVER_DEVICE_ID: &str = "direct-receiver";
+    const DIRECT_RECEIVER_DEVICE_NAME: &str = "Direct Receiver";
+    const DIRECT_RECEIVER_SOURCE_ID: &str = "direct-1";
 
     pub fn new() -> Self {
         Self {
@@ -401,6 +405,7 @@ impl HostDesktopApp {
                     &device_id,
                     &self.device_detail.device_name,
                     selected_source_id.clone(),
+                    CaptureBackend::Window,
                 );
 
             match start_result {
@@ -446,6 +451,84 @@ impl HostDesktopApp {
                     self.record_session_start_failure(Some(&device_id), &message);
                     return;
                 }
+            }
+        }
+    }
+
+    pub fn can_start_direct_receiver(&self) -> bool {
+        self.host_runtime.is_some()
+            && self.startup.direct_receiver.available
+            && !self
+                .runtime_statuses
+                .iter()
+                .any(|status| status.summary().device_id == Self::DIRECT_RECEIVER_DEVICE_ID)
+    }
+
+    pub fn request_start_direct_receiver(&mut self) {
+        if self
+            .runtime_statuses
+            .iter()
+            .any(|status| status.summary().device_id == Self::DIRECT_RECEIVER_DEVICE_ID)
+        {
+            return;
+        }
+
+        let device_id = Self::DIRECT_RECEIVER_DEVICE_ID.to_string();
+        self.selected_device_id = Some(device_id.clone());
+        self.next_runtime_refresh_at = None;
+        self.runtime_refresh_device_id = None;
+
+        if self.host_runtime.is_none() {
+            let message = "Host runtime unavailable";
+            self.session = SessionViewModel::error(message);
+            self.diagnostics.host_error = Some(message.into());
+            self.diagnostics.control_summary = "control blocked".into();
+            self.diagnostics.grounding_summary = "grounding blocked".into();
+            self.record_session_start_failure(Some(&device_id), message);
+            return;
+        }
+
+        if !self.startup.direct_receiver.available {
+            let message = self.startup.direct_receiver.detail.clone();
+            self.session = SessionViewModel::error(&message);
+            self.diagnostics.host_error = Some(message.clone());
+            self.diagnostics.control_summary = "control blocked".into();
+            self.diagnostics.grounding_summary = "grounding blocked".into();
+            self.record_session_start_failure(Some(&device_id), &message);
+            return;
+        }
+
+        self.session = SessionViewModel::starting();
+        self.diagnostics.host_error = None;
+        self.diagnostics.control_summary = "control bootstrapping".into();
+        self.diagnostics.grounding_summary = "grounding bootstrapping".into();
+        self.record_session_start_attempt(&device_id, Some(Self::DIRECT_RECEIVER_SOURCE_ID));
+
+        match self
+            .host_runtime
+            .as_mut()
+            .expect("host runtime should be present")
+            .start_session(
+                &device_id,
+                Self::DIRECT_RECEIVER_DEVICE_NAME,
+                Some(Self::DIRECT_RECEIVER_SOURCE_ID.into()),
+                CaptureBackend::Direct,
+            ) {
+            Ok(snapshot) => {
+                self.record_session_start_success(
+                    &device_id,
+                    snapshot.workspace.selected_source_id.as_deref(),
+                );
+                self.apply_runtime_snapshot(snapshot);
+                self.refresh_inventory();
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.session = SessionViewModel::error(&message);
+                self.diagnostics.host_error = Some(message.clone());
+                self.diagnostics.control_summary = "control blocked".into();
+                self.diagnostics.grounding_summary = "grounding blocked".into();
+                self.record_session_start_failure(Some(&device_id), &message);
             }
         }
     }
@@ -913,6 +996,7 @@ impl eframe::App for HostDesktopApp {
         let mut pending_action = SessionAction::None;
         let mut selected_device = None;
         let mut device_detail_action = DeviceDetailAction::None;
+        let mut startup_action = startup::StartupAction::None;
 
         if self.selected_runtime_session_is_streaming() {
             ctx.request_repaint_after(Self::RUNTIME_REFRESH_POLL_INTERVAL);
@@ -946,7 +1030,7 @@ impl eframe::App for HostDesktopApp {
             ui.separator();
             settings::render_rows(ui, &self.settings.plugin_rows);
             ui.separator();
-            startup::render(ui, &self.startup);
+            startup_action = startup::render(ui, &self.startup);
         });
 
         if let Some(device_id) = selected_device {
@@ -973,6 +1057,14 @@ impl eframe::App for HostDesktopApp {
                 ctx.request_repaint();
             }
         }
+
+        match startup_action {
+            startup::StartupAction::None => {}
+            startup::StartupAction::StartDirectReceiver => {
+                self.request_start_direct_receiver();
+                ctx.request_repaint();
+            }
+        }
     }
 }
 
@@ -993,6 +1085,7 @@ mod tests {
         HostDesktopApp::with_runtime(HostRuntimeConfig {
             plugin_paths: PluginPaths {
                 capture: PathBuf::from("missing-capture-plugin"),
+                capture_direct: PathBuf::from("missing-direct-capture-plugin"),
                 control_ble: PathBuf::from("missing-control-ble-plugin"),
                 control_fallback: PathBuf::from("missing-control-fallback-plugin"),
                 grounding: None,
