@@ -1,29 +1,12 @@
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
+use ble_helper::{
+    backend::HostCapability,
+    probe_host_capability,
+    state::{helper_state_from_capability, HelperState},
+};
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct HelperState {
-    phase: String,
-    paired_device_id: Option<String>,
-    paired_device_name: Option<String>,
-    bonded: bool,
-    execute_ready: bool,
-}
-
-impl Default for HelperState {
-    fn default() -> Self {
-        Self {
-            phase: "Advertising".into(),
-            paired_device_id: None,
-            paired_device_name: None,
-            bonded: false,
-            execute_ready: false,
-        }
-    }
-}
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -33,10 +16,13 @@ fn main() -> Result<()> {
 
     match command.as_str() {
         "probe" => {
+            let capability = effective_host_capability();
             println!(
                 "{}",
                 serde_json::to_string(&json!({
-                    "supported": helper_supported(),
+                    "supported": capability.supported,
+                    "reason": capability.reason,
+                    "backend": capability.backend,
                     "supports_prepare": true,
                     "supports_execute": true,
                     "supports_status": true,
@@ -46,36 +32,17 @@ fn main() -> Result<()> {
             );
         }
         "prepare" => {
-            let mut state = load_state()?;
-            if let Ok(phase) = std::env::var("IOS_CONTROL_BLE_HELPER_FORCE_PHASE") {
-                state.phase = phase;
-            } else if std::env::var("IOS_CONTROL_BLE_HELPER_AUTO_PAIR").ok().as_deref() == Some("1")
-            {
-                state.phase = "Connected".into();
-                state.bonded = true;
-                state.execute_ready = true;
-                if state.paired_device_id.is_none() {
-                    state.paired_device_id = Some("device-ble-1".into());
-                }
-                if state.paired_device_name.is_none() {
-                    state.paired_device_name = Some("Paired iPhone".into());
-                }
-            } else if state.bonded {
-                state.phase = "Connected".into();
-                state.execute_ready = true;
-            } else {
-                state.phase = "Advertising".into();
-                state.execute_ready = false;
-            }
+            let persisted = load_state()?;
+            let state = derive_runtime_state(persisted, true);
             save_state(&state)?;
             print_state(&state)?;
         }
         "status" => {
-            let state = load_state()?;
+            let state = derive_runtime_state(load_state()?, false);
             print_state(&state)?;
         }
         "execute" => {
-            let state = load_state()?;
+            let state = derive_runtime_state(load_state()?, false);
             if !state.execute_ready {
                 println!(
                     "{}",
@@ -98,12 +65,14 @@ fn main() -> Result<()> {
             );
         }
         "stop" => {
-            let mut state = load_state()?;
-            state.phase = if state.bonded {
-                "BondedIdle".into()
-            } else {
-                "ReadyToAdvertise".into()
-            };
+            let mut state = derive_runtime_state(load_state()?, false);
+            if state.phase == "Connected" {
+                state.phase = if state.bonded {
+                    "BondedIdle".into()
+                } else {
+                    "ReadyToAdvertise".into()
+                };
+            }
             state.execute_ready = false;
             save_state(&state)?;
             println!(
@@ -133,34 +102,59 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn helper_supported() -> bool {
-    std::env::var("IOS_CONTROL_BLE_HELPER_SUPPORTED")
-        .ok()
-        .map(|value| value != "0")
-        .unwrap_or(cfg!(any(target_os = "linux", target_os = "windows")))
+fn effective_host_capability() -> HostCapability {
+    let capability = probe_host_capability();
+    match std::env::var("IOS_CONTROL_BLE_HELPER_SUPPORTED").ok().as_deref() {
+        Some("0") => HostCapability::unsupported(
+            capability
+                .reason
+                .unwrap_or_else(|| "BLE helper disabled by environment".into()),
+        ),
+        _ => capability,
+    }
+}
+
+fn derive_runtime_state(mut persisted: HelperState, allow_auto_pair: bool) -> HelperState {
+    let capability = effective_host_capability();
+    let mut state = helper_state_from_capability(&capability, persisted.bonded);
+    state.paired_device_id = persisted.paired_device_id.take();
+    state.paired_device_name = persisted.paired_device_name.take();
+
+    if let Ok(phase) = std::env::var("IOS_CONTROL_BLE_HELPER_FORCE_PHASE") {
+        state.phase = phase;
+        return state;
+    }
+
+    if !capability.supported {
+        return state;
+    }
+
+    if allow_auto_pair && std::env::var("IOS_CONTROL_BLE_HELPER_AUTO_PAIR").ok().as_deref() == Some("1")
+    {
+        state.phase = "Connected".into();
+        state.bonded = true;
+        state.execute_ready = true;
+        if state.paired_device_id.is_none() {
+            state.paired_device_id = Some("device-ble-1".into());
+        }
+        if state.paired_device_name.is_none() {
+            state.paired_device_name = Some("Paired iPhone".into());
+        }
+        state.notes = vec!["Stored bond available".into()];
+        return state;
+    }
+
+    if persisted.execute_ready && persisted.bonded {
+        state.phase = "Connected".into();
+        state.execute_ready = true;
+        state.notes = vec!["Stored bond available".into()];
+    }
+
+    state
 }
 
 fn print_state(state: &HelperState) -> Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string(&json!({
-            "phase": state.phase,
-            "checklist": if state.bonded {
-                vec!["Reconnect the paired device"]
-            } else {
-                vec!["Enable Bluetooth", "Pair the device when it appears"]
-            },
-            "notes": if state.bonded {
-                vec!["Stored bond available"]
-            } else {
-                vec!["Waiting for first-time pairing"]
-            },
-            "paired_device_id": state.paired_device_id,
-            "paired_device_name": state.paired_device_name,
-            "bonded": state.bonded,
-            "execute_ready": state.execute_ready
-        }))?
-    );
+    println!("{}", serde_json::to_string(state)?);
     Ok(())
 }
 

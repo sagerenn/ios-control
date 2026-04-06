@@ -25,6 +25,12 @@ pub fn probe_ble_helper(helper: Option<PathBuf>) -> ControlCapability {
                     reason: None,
                 }
             }
+            Ok(probe) if !probe.supported => ControlCapability {
+                supported: false,
+                reason: probe
+                    .reason
+                    .or_else(|| Some("ble helper reported unsupported".into())),
+            },
             Ok(_) => ControlCapability {
                 supported: false,
                 reason: Some("ble helper missing lifecycle command support".into()),
@@ -36,7 +42,10 @@ pub fn probe_ble_helper(helper: Option<PathBuf>) -> ControlCapability {
         },
         None => ControlCapability {
             supported: false,
-            reason: Some("IOS_CONTROL_BLE_HELPER not configured".into()),
+            reason: Some(
+                "ble helper not found in override, sibling binary, or bundled helpers directory"
+                    .into(),
+            ),
         },
     }
 }

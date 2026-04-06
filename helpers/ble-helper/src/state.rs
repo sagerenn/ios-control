@@ -12,6 +12,20 @@ pub struct HelperState {
     pub execute_ready: bool,
 }
 
+impl Default for HelperState {
+    fn default() -> Self {
+        Self {
+            phase: "Advertising".into(),
+            checklist: Vec::new(),
+            notes: Vec::new(),
+            paired_device_id: None,
+            paired_device_name: None,
+            bonded: false,
+            execute_ready: false,
+        }
+    }
+}
+
 pub fn helper_state_from_capability(capability: &HostCapability, bonded: bool) -> HelperState {
     if !capability.supported {
         return HelperState {

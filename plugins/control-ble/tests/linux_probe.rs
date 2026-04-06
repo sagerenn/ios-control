@@ -50,7 +50,7 @@ fn ble_probe_reports_helper_backed_transport() {
     assert!(!capability.supported);
     assert_eq!(
         capability.reason.as_deref(),
-        Some("IOS_CONTROL_BLE_HELPER not configured")
+        Some("ble helper not found in override, sibling binary, or bundled helpers directory")
     );
 }
 
@@ -138,4 +138,19 @@ fn ble_probe_handles_chatty_helper_output_without_timeout() {
         Some(value) => env::set_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS", value),
         None => env::remove_var("IOS_CONTROL_BLE_HELPER_TIMEOUT_MS"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn ble_probe_uses_helper_reason_when_helper_reports_unsupported() {
+    let helper = write_test_helper_script(
+        "ble-unsupported",
+        "#!/bin/sh\nprintf '%s\\n' '{\"supported\":false,\"reason\":\"org.bluez not available\",\"supports_prepare\":true,\"supports_execute\":true,\"supports_status\":true,\"supports_stop\":true,\"supports_forget_bond\":true}'\n",
+    );
+
+    let capability = probe_ble_helper(Some(helper.clone()));
+    assert!(!capability.supported);
+    assert_eq!(capability.reason.as_deref(), Some("org.bluez not available"));
+
+    let _ = fs::remove_file(helper);
 }
