@@ -111,6 +111,19 @@ struct HelperFixture {
 }
 
 #[cfg(unix)]
+struct RuntimeBundleFixture {
+    _dir: tempfile::TempDir,
+    root: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl RuntimeBundleFixture {
+    fn path(&self) -> &std::path::Path {
+        &self.root
+    }
+}
+
+#[cfg(unix)]
 fn write_helper_script(contents: &str) -> HelperFixture {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("direct-helper.sh");
@@ -121,6 +134,37 @@ fn write_helper_script(contents: &str) -> HelperFixture {
     HelperFixture { _dir: dir, path }
 }
 
+#[cfg(unix)]
+fn write_runtime_bundle_fixture() -> RuntimeBundleFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        r#"{"uxplay_version":"test","runtime":"fixture"}"#,
+    )
+    .unwrap();
+
+    let uxplay_path = dir.path().join("uxplay");
+    std::fs::write(
+        &uxplay_path,
+        r#"#!/bin/sh
+if [ "$1" = "--probe" ]; then
+  exit 0
+fi
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&uxplay_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&uxplay_path, perms).unwrap();
+
+    RuntimeBundleFixture {
+        _dir: dir,
+        root: manifest_path.parent().unwrap().to_path_buf(),
+    }
+}
+
 #[test]
 fn direct_receiver_probe_requires_existing_executable() {
     let capability = capture_capability(None);
@@ -129,6 +173,34 @@ fn direct_receiver_probe_requires_existing_executable() {
         capability.reason.as_deref(),
         Some("IOS_CONTROL_DIRECT_RECEIVER_HELPER not configured")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_probe_requires_runtime_manifest_and_uxplay_binary() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let _runtime_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RUNTIME_ROOT", dir.path());
+
+    let capability = capture_capability(None);
+    assert!(!capability.available);
+    assert!(
+        capability.reason.as_deref().unwrap_or_default().contains("manifest"),
+        "unexpected reason: {:?}",
+        capability.reason
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_probe_accepts_minimal_runtime_bundle_fixture() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fixture = write_runtime_bundle_fixture();
+    let _runtime_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RUNTIME_ROOT", fixture.path());
+
+    let capability = capture_capability(None);
+    assert!(capability.available, "reason: {:?}", capability.reason);
+    assert_eq!(capability.backend_id, "capture.direct.uxplay");
 }
 
 #[test]

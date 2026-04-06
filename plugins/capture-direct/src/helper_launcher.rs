@@ -1,4 +1,5 @@
 use crate::helper_bridge::{HelperFrameEvent, HelperProbe};
+use crate::runtime_bundle::DirectRuntimeBundle;
 use anyhow::{anyhow, Result};
 use ios_control_contracts::capture::CaptureCapability;
 use std::io::{BufRead, BufReader, Read};
@@ -28,6 +29,23 @@ pub fn find_helper() -> Option<PathBuf> {
 }
 
 pub fn capture_capability(helper: Option<PathBuf>) -> CaptureCapability {
+    if DirectRuntimeBundle::configured_root().is_some() {
+        return match DirectRuntimeBundle::resolve().and_then(|bundle| bundle.probe()) {
+            Ok(()) => CaptureCapability {
+                available: true,
+                reason: None,
+                backend_id: "capture.direct.uxplay".into(),
+                supports_input_bridge: false,
+            },
+            Err(err) => CaptureCapability {
+                available: false,
+                reason: Some(err.to_string()),
+                backend_id: "capture.direct.uxplay".into(),
+                supports_input_bridge: false,
+            },
+        };
+    }
+
     match helper {
         Some(path) => match run_probe(&path) {
             Ok(probe) => CaptureCapability {
