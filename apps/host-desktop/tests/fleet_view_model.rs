@@ -9,6 +9,42 @@ use ios_control_contracts::session::{
 };
 
 #[test]
+fn fleet_view_model_launcher_filters_to_bluetooth_rows() {
+    let inventory = aggregate_inventory(vec![
+        DeviceObservation {
+            provider: InventoryEvidenceSource::Bluetooth,
+            stable_id: Some("bt:AA-BB".into()),
+            known_device_id: None,
+            display_name: "Alice iPhone".into(),
+            mirror_source_id: None,
+            live: true,
+            capture_state: CapabilityState::Unavailable,
+            preferred_control_state: CapabilityState::Ready,
+            fallback_control_state: CapabilityState::Unavailable,
+            reasons: vec!["paired over bluetooth".into()],
+        },
+        DeviceObservation {
+            provider: InventoryEvidenceSource::Mirror,
+            stable_id: None,
+            known_device_id: None,
+            display_name: "Operator Mirror".into(),
+            mirror_source_id: Some("window-helper-1".into()),
+            live: true,
+            capture_state: CapabilityState::Ready,
+            preferred_control_state: CapabilityState::Unavailable,
+            fallback_control_state: CapabilityState::Ready,
+            reasons: vec![],
+        },
+    ]);
+
+    let fleet = FleetViewModel::for_launcher(&inventory.devices, true, &[]);
+    assert_eq!(fleet.rows.len(), 1);
+    assert_eq!(fleet.rows[0].device_name, "Alice iPhone");
+    assert_eq!(fleet.rows[0].readiness_summary, "Startable");
+    assert!(fleet.rows[0].start_enabled);
+}
+
+#[test]
 fn fleet_view_model_preserves_operator_actions_per_device() {
     let statuses = vec![
         DeviceSessionStatus::new(

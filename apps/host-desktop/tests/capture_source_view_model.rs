@@ -42,7 +42,7 @@ fn session_view_model_actions_follow_ui_state() {
     let blocked = SessionViewModel::blocked("No capture path observed", None);
     assert_eq!(
         blocked.ui_state,
-        SessionUiState::Error("No capture path observed".into())
+        SessionUiState::Blocked("No capture path observed".into())
     );
     assert!(!blocked.can_start());
     assert!(!blocked.can_stop());

@@ -1,4 +1,5 @@
 use crate::inventory::model::{InventoryDevice, InventoryEvidenceSource, Sessionability};
+use crate::inventory::model::CapabilityState;
 use ios_control_contracts::session::DeviceSessionStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +19,43 @@ pub struct FleetViewModel {
 }
 
 impl FleetViewModel {
+    pub fn for_launcher(
+        devices: &[InventoryDevice],
+        direct_receiver_available: bool,
+        statuses: &[DeviceSessionStatus],
+    ) -> Self {
+        Self {
+            rows: devices
+                .iter()
+                .filter(|device| {
+                    device
+                        .evidence_sources
+                        .contains(&InventoryEvidenceSource::Bluetooth)
+                })
+                .map(|device| {
+                    let status = statuses
+                        .iter()
+                        .find(|status| status.summary().device_id == device.inventory_id);
+                    let start_enabled = direct_receiver_available && launcher_control_ready(device);
+                    FleetRow {
+                        device_id: device.inventory_id.clone(),
+                        device_name: device.display_name.clone(),
+                        evidence_badges: badges_for_device(device, status.is_some()),
+                        readiness_summary: if start_enabled {
+                            "Startable".into()
+                        } else {
+                            "Not Startable".into()
+                        },
+                        start_enabled,
+                        operator_action: status
+                            .and_then(|status| status.operator_action().map(str::to_string)),
+                        active_session: status.is_some(),
+                    }
+                })
+                .collect(),
+        }
+    }
+
     pub fn from_statuses(statuses: &[DeviceSessionStatus]) -> Self {
         Self {
             rows: statuses
@@ -81,6 +119,11 @@ impl FleetViewModel {
 
         Self { rows }
     }
+}
+
+fn launcher_control_ready(device: &InventoryDevice) -> bool {
+    matches!(device.preferred_control_state, CapabilityState::Ready)
+        || matches!(device.fallback_control_state, CapabilityState::Ready)
 }
 
 fn badges_for_device(device: &InventoryDevice, active_session: bool) -> Vec<String> {

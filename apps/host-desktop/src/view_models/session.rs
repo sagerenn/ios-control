@@ -5,7 +5,9 @@ use ios_control_contracts::capture::VideoFrameDescriptor;
 pub enum SessionUiState {
     Idle,
     Starting,
+    WaitingForMirror,
     Streaming,
+    Blocked(String),
     Error(String),
 }
 
@@ -45,6 +47,15 @@ impl SessionViewModel {
         }
     }
 
+    pub fn waiting_for_mirror(selected_source: Option<CaptureSourceOption>) -> Self {
+        Self {
+            ui_state: SessionUiState::WaitingForMirror,
+            selected_source,
+            latest_frame: None,
+            start_enabled: false,
+        }
+    }
+
     pub fn streaming(
         selected_source: CaptureSourceOption,
         latest_frame: VideoFrameDescriptor,
@@ -78,7 +89,7 @@ impl SessionViewModel {
     pub fn blocked(message: impl Into<String>, selected_source: Option<CaptureSourceOption>) -> Self {
         let start_enabled = selected_source.is_some();
         Self {
-            ui_state: SessionUiState::Error(message.into()),
+            ui_state: SessionUiState::Blocked(message.into()),
             selected_source,
             latest_frame: None,
             start_enabled,
@@ -86,18 +97,27 @@ impl SessionViewModel {
     }
 
     pub fn can_start(&self) -> bool {
-        self.start_enabled && matches!(self.ui_state, SessionUiState::Idle | SessionUiState::Error(_))
+        self.start_enabled
+            && matches!(
+                self.ui_state,
+                SessionUiState::Idle | SessionUiState::Blocked(_) | SessionUiState::Error(_)
+            )
     }
 
     pub fn can_stop(&self) -> bool {
-        matches!(self.ui_state, SessionUiState::Streaming)
+        matches!(
+            self.ui_state,
+            SessionUiState::WaitingForMirror | SessionUiState::Streaming
+        )
     }
 
     pub fn status_line(&self) -> &str {
         match &self.ui_state {
             SessionUiState::Idle => "No active session",
             SessionUiState::Starting => "Starting session",
+            SessionUiState::WaitingForMirror => "Waiting for mirror",
             SessionUiState::Streaming => "Streaming session",
+            SessionUiState::Blocked(message) => message.as_str(),
             SessionUiState::Error(message) => message.as_str(),
         }
     }

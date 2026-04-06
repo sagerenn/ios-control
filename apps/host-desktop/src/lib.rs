@@ -9,6 +9,7 @@ pub mod panels {
     pub mod dashboard;
     pub mod device_detail;
     pub mod diagnostics;
+    pub mod launcher;
     pub mod session_view;
     pub mod settings;
     pub mod startup;

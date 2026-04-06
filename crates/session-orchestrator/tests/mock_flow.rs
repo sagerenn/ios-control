@@ -7,7 +7,7 @@ use ios_control_session_orchestrator::{
 mod support;
 use support::{
     EnvVarGuard, build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock,
-    workspace_root, write_ble_helper,
+    workspace_root, write_ble_helper, write_direct_helper,
 };
 
 #[tokio::test]
@@ -220,7 +220,7 @@ async fn start_session_opens_capture_stream_and_refreshes_frames() {
 
     assert!(state.capture_stream.is_some());
     let previous = state.latest_frame.as_ref().unwrap().frame_index;
-    let refreshed = state.refresh_capture_frame().await.unwrap();
+    let refreshed = state.refresh_capture_frame().await.unwrap().unwrap();
     assert!(refreshed.frame_index > previous);
     assert_eq!(
         state.capture_stream.as_ref().unwrap().source_id,
@@ -312,6 +312,54 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
     assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.direct"));
     assert_eq!(state.selected_source_id.as_deref(), Some("direct-1"));
     assert_eq!(state.latest_frame.as_ref().map(|frame| frame.source_id.as_str()), Some("direct-1"));
+
+    state.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn start_session_with_direct_backend_can_wait_for_first_frame() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let direct_plugin = plugin_path(&root, "plugin-capture-direct");
+    let helper = write_direct_helper(&format!(
+        r#"#!/bin/sh
+if [ "$1" = "probe" ]; then
+  echo '{{"available":true,"supports_input_bridge":false}}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  sleep 3
+  exit 0
+fi
+exec "{}" "$@"
+"#,
+        direct_plugin.display()
+    ));
+    let _env = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper);
+
+    let mut orchestrator = SessionOrchestrator::default();
+    let state = orchestrator
+        .start_session_with_plugins(StartSessionRequest {
+            device_id: "direct-wait".into(),
+            device_name: "Alice iPhone".into(),
+            selected_source_id: Some("direct-1".into()),
+            capture_backend: CaptureBackend::Direct,
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: helper.clone(),
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(state.summary.phase, SessionPhase::Connecting);
+    assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.direct"));
+    assert!(state.capture_stream.is_some());
+    assert!(state.latest_frame.is_none());
 
     state.shutdown().await.unwrap();
 }

@@ -168,6 +168,28 @@ esac
     path
 }
 
+#[allow(dead_code)]
+pub fn write_direct_helper(body: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ios-control-session-orchestrator-direct-helper-{}-{nanos}.sh",
+        std::process::id()
+    ));
+    fs::write(&path, body).expect("failed to write direct helper script");
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(&path)
+            .expect("missing direct helper metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).expect("failed to make direct helper executable");
+    }
+    path
+}
+
 pub fn prepare_window_runtime_env(workspace_root: &Path) -> EnvVarGuards {
     EnvVarGuards::new(vec![
         // Keep the window-mock tests on the fallback control path unless they
