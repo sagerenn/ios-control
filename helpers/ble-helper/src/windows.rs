@@ -6,7 +6,7 @@ pub fn probe_windows_capability() -> HostCapability {
     }
 
     let adapter = match windows::Devices::Bluetooth::BluetoothAdapter::GetDefaultAsync()
-        .and_then(|operation| operation.get())
+        .and_then(|operation| operation.join())
     {
         Ok(adapter) => adapter,
         Err(err) => return HostCapability::unsupported(format!("bluetooth radio not detected: {err}")),

@@ -51,3 +51,31 @@ fn linux_probe_reports_missing_system_bus() {
         None => std::env::remove_var("IOS_CONTROL_BLE_TEST_ADAPTER"),
     }
 }
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_probe_reports_missing_radio_from_env_override() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let old_radio = std::env::var_os("IOS_CONTROL_BLE_TEST_RADIO");
+    let old_role = std::env::var_os("IOS_CONTROL_BLE_TEST_PERIPHERAL_ROLE");
+
+    std::env::set_var("IOS_CONTROL_BLE_TEST_RADIO", "0");
+    std::env::set_var("IOS_CONTROL_BLE_TEST_PERIPHERAL_ROLE", "1");
+
+    let capability = ble_helper::probe_host_capability();
+
+    assert!(!capability.supported);
+    assert_eq!(
+        capability.reason.as_deref(),
+        Some("bluetooth radio not detected")
+    );
+
+    match old_radio {
+        Some(value) => std::env::set_var("IOS_CONTROL_BLE_TEST_RADIO", value),
+        None => std::env::remove_var("IOS_CONTROL_BLE_TEST_RADIO"),
+    }
+    match old_role {
+        Some(value) => std::env::set_var("IOS_CONTROL_BLE_TEST_PERIPHERAL_ROLE", value),
+        None => std::env::remove_var("IOS_CONTROL_BLE_TEST_PERIPHERAL_ROLE"),
+    }
+}
