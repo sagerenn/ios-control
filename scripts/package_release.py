@@ -23,6 +23,7 @@ PLUGIN_BINARIES = [
 ]
 HELPER_BINARIES = [
     "ble-helper",
+    "direct-beacon",
 ]
 
 

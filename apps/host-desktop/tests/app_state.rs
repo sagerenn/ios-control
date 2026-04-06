@@ -14,12 +14,12 @@ use ios_control_contracts::session::{
 };
 use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 use support::{
     build_plugins, host_plugin_paths, plugin_path, runtime_env_lock, workspace_root,
     DirectRuntimeFixture, EnvVarGuard, EnvVarGuards, write_direct_runtime_fixture,
+    write_waiting_direct_runtime_fixture,
 };
 
 struct RuntimeAppFixture {
@@ -66,17 +66,8 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let direct_runtime = write_direct_runtime_fixture();
+    let direct_runtime = write_waiting_direct_runtime_fixture();
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
-    let state_file = std::env::temp_dir().join(format!(
-        "host-desktop-direct-wait-{}-{}.state",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_file(&state_file);
     let guard_values = vec![
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
@@ -86,12 +77,6 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
             "IOS_CONTROL_WINDOW_INPUT_HELPER",
             plugin_path(&root, "plugin-control-window-bridge"),
         ),
-        EnvVarGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200"),
-        EnvVarGuard::set(
-            "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
-            state_file.as_os_str(),
-        ),
-        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", direct_plugin.as_os_str()),
     ];
     let guards = EnvVarGuards::new(guard_values);
     let mut plugin_paths = host_plugin_paths(&root);

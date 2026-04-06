@@ -11,6 +11,7 @@ members = [
   "crates/hid-report-engine",
   "apps/host-desktop",
   "helpers/ble-helper",
+  "helpers/direct-beacon",
   "plugins/control-ble",
   "plugins/control-window-bridge",
   "plugins/capture-window",

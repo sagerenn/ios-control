@@ -29,6 +29,7 @@ EXPECTED_PLUGIN_BINARIES = [
 ]
 EXPECTED_HELPER_BINARIES = [
     "ble-helper",
+    "direct-beacon",
 ]
 
 
@@ -223,6 +224,43 @@ class PackageReleaseTests(unittest.TestCase):
 
             with tarfile.open(result["plugin_archive"], "r:gz") as plugin_tar:
                 self.assertIn(f"{plugin_root}/{runtime_manifest}", plugin_tar.getnames())
+
+    def test_bundle_includes_direct_beacon_helper(self) -> None:
+        target = "x86_64-unknown-linux-gnu"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            out_dir = root / "out"
+            bin_dir.mkdir()
+            out_dir.mkdir()
+            self._write_fake_binaries(bin_dir, target)
+            helper_name = package_release.executable_name("direct-beacon", target)
+            helper_path = bin_dir / helper_name
+            helper_path.write_text("direct-beacon", encoding="utf-8")
+            helper_path.chmod(0o755)
+
+            result = package_release.build_release_bundle(
+                target=target,
+                bin_dir=bin_dir,
+                out_dir=out_dir,
+                sha="abc123",
+                ref_name="refs/tags/v1.2.3",
+                run_number="77",
+                timestamp="2026-04-02T00:00:00Z",
+            )
+
+            bundle_root = f"ios-control-{target}"
+            plugin_root = f"ios-control-plugins-{target}"
+            with tarfile.open(result["bundle_archive"], "r:gz") as bundle_tar:
+                self.assertIn(
+                    f"{bundle_root}/helpers/{helper_name}",
+                    bundle_tar.getnames(),
+                )
+            with tarfile.open(result["plugin_archive"], "r:gz") as plugin_tar:
+                self.assertIn(
+                    f"{plugin_root}/helpers/{helper_name}",
+                    plugin_tar.getnames(),
+                )
 
     def test_missing_binary_raises_file_not_found_error(self) -> None:
         target = "x86_64-unknown-linux-gnu"

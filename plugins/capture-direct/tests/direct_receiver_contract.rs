@@ -140,7 +140,7 @@ fn write_runtime_bundle_fixture() -> RuntimeBundleFixture {
     let manifest_path = dir.path().join("manifest.json");
     std::fs::write(
         &manifest_path,
-        r#"{"uxplay_version":"test","runtime":"fixture"}"#,
+        r#"{"uxplay_path":"uxplay","gst_launch_path":"gst-launch-1.0","beacon_helper_path":"beacon-helper","beacon_script_path":"Bluetooth_LE_beacon/uxplay-beacon.py","python_path":"python3"}"#,
     )
     .unwrap();
 
@@ -158,6 +158,144 @@ exit 0
     let mut perms = std::fs::metadata(&uxplay_path).unwrap().permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&uxplay_path, perms).unwrap();
+
+    let gst_launch_path = dir.path().join("gst-launch-1.0");
+    std::fs::write(
+        &gst_launch_path,
+        r#"#!/bin/sh
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&gst_launch_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gst_launch_path, perms).unwrap();
+
+    let beacon_helper_path = dir.path().join("beacon-helper");
+    std::fs::write(
+        &beacon_helper_path,
+        r#"#!/bin/sh
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&beacon_helper_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&beacon_helper_path, perms).unwrap();
+
+    let beacon_dir = dir.path().join("Bluetooth_LE_beacon");
+    std::fs::create_dir_all(&beacon_dir).unwrap();
+    std::fs::write(beacon_dir.join("uxplay-beacon.py"), "print('ok')\n").unwrap();
+
+    RuntimeBundleFixture {
+        _dir: dir,
+        root: manifest_path.parent().unwrap().to_path_buf(),
+    }
+}
+
+#[cfg(unix)]
+fn write_runtime_bundle_fixture_without_receivers() -> RuntimeBundleFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        r#"{"uxplay_path":"uxplay","gst_launch_path":"gst-launch-1.0","beacon_helper_path":"beacon-helper","beacon_script_path":"Bluetooth_LE_beacon/uxplay-beacon.py","python_path":"python3"}"#,
+    )
+    .unwrap();
+
+    let uxplay_path = dir.path().join("uxplay");
+    std::fs::write(
+        &uxplay_path,
+        r#"#!/bin/sh
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&uxplay_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&uxplay_path, perms).unwrap();
+
+    RuntimeBundleFixture {
+        _dir: dir,
+        root: manifest_path.parent().unwrap().to_path_buf(),
+    }
+}
+
+#[cfg(unix)]
+fn write_runtime_bundle_fixture_with_media_scripts() -> RuntimeBundleFixture {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        r#"{"uxplay_path":"uxplay","gst_launch_path":"gst-launch-1.0","beacon_helper_path":"beacon-helper","beacon_script_path":"Bluetooth_LE_beacon/uxplay-beacon.py","python_path":"python3"}"#,
+    )
+    .unwrap();
+
+    let uxplay_path = dir.path().join("uxplay");
+    std::fs::write(
+        &uxplay_path,
+        r#"#!/bin/sh
+if [ "$1" = "--help" ]; then
+  exit 0
+fi
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-ble" ]; then
+    shift
+    echo "beacon-data" > "$1"
+  fi
+  shift
+done
+sleep 60
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&uxplay_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&uxplay_path, perms).unwrap();
+
+    let gst_launch_path = dir.path().join("gst-launch-1.0");
+    std::fs::write(
+        &gst_launch_path,
+        r#"#!/bin/sh
+location=""
+if [ -n "$IOS_CONTROL_DIRECT_FRAME_PATTERN" ]; then
+  location="$IOS_CONTROL_DIRECT_FRAME_PATTERN"
+fi
+for arg in "$@"; do
+  case "$arg" in
+    location=*)
+      location="${arg#location=}"
+      ;;
+  esac
+done
+if [ -n "$location" ]; then
+  output=$(printf "$location" 1)
+  mkdir -p "$(dirname "$output")"
+  printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==' | base64 -d > "$output"
+fi
+sleep 60
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&gst_launch_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gst_launch_path, perms).unwrap();
+
+    let beacon_helper_path = dir.path().join("beacon-helper");
+    std::fs::write(
+        &beacon_helper_path,
+        r#"#!/bin/sh
+sleep 60
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&beacon_helper_path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&beacon_helper_path, perms).unwrap();
+
+    let beacon_dir = dir.path().join("Bluetooth_LE_beacon");
+    std::fs::create_dir_all(&beacon_dir).unwrap();
+    std::fs::write(beacon_dir.join("uxplay-beacon.py"), "print('ok')\n").unwrap();
 
     RuntimeBundleFixture {
         _dir: dir,
@@ -205,6 +343,27 @@ fn direct_probe_accepts_minimal_runtime_bundle_fixture() {
 
 #[cfg(unix)]
 #[test]
+fn direct_probe_requires_manifest_receiver_paths() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fixture = write_runtime_bundle_fixture_without_receivers();
+    let _runtime_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RUNTIME_ROOT", fixture.path());
+
+    let capability = capture_capability(None);
+    assert!(!capability.available);
+    assert!(
+        capability.reason.as_deref().unwrap_or_default().contains("gst-launch")
+            || capability
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("beacon"),
+        "unexpected reason: {:?}",
+        capability.reason
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn capture_status_reports_waiting_before_stream_is_open() {
     let _guard = ENV_LOCK.lock().unwrap();
     let fixture = write_runtime_bundle_fixture();
@@ -223,6 +382,37 @@ fn capture_status_reports_waiting_before_stream_is_open() {
             assert_eq!(status.audio.phase, AudioStreamPhase::Idle);
         }
         other => panic!("unexpected status reply: {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_runtime_stream_opens_and_reads_generated_frame() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fixture = write_runtime_bundle_fixture_with_media_scripts();
+    let _runtime_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RUNTIME_ROOT", fixture.path());
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::OpenCaptureStream {
+        source_id: "direct-1".into(),
+    });
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureStreamOpened { .. }
+    ));
+
+    plugin.send(HostToPlugin::ReadCaptureFrame);
+    match plugin.recv() {
+        PluginToHost::CaptureFrame { frame } => {
+            assert_eq!(frame.source_id, "direct-1");
+            assert!(frame.frame_index >= 1);
+        }
+        other => panic!("unexpected read reply: {other:?}"),
     }
 }
 

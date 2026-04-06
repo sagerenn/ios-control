@@ -27,6 +27,29 @@ impl Default for DirectCaptureStatus {
 }
 
 impl DirectCaptureStatus {
+    pub fn waiting_for_runtime_frame(&mut self) {
+        self.video_phase = CaptureStreamPhase::Opening;
+        self.video_health = FrameHealth::Healthy;
+        self.detail = Some("Waiting for first direct frame".into());
+    }
+
+    pub fn streaming(&mut self, health: FrameHealth) {
+        self.video_phase = CaptureStreamPhase::Streaming;
+        self.video_health = health;
+        self.audio_phase = match self.audio_route {
+            AudioRoute::LocalPlayback => AudioStreamPhase::Streaming,
+            AudioRoute::None => self.audio_phase,
+        };
+        self.detail = None;
+    }
+
+    pub fn closed(&mut self) {
+        self.video_phase = CaptureStreamPhase::Closed;
+        self.audio_phase = AudioStreamPhase::Idle;
+        self.audio_active = false;
+        self.detail = Some("Direct stream closed".into());
+    }
+
     pub fn to_capture_status(&self) -> CaptureStatus {
         CaptureStatus {
             video_phase: self.video_phase,

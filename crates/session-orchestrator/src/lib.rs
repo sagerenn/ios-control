@@ -523,9 +523,9 @@ async fn request_capture_status(capture: &mut RunningPlugin) -> Result<CaptureSt
 }
 
 fn waiting_for_direct_frame(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .contains("direct helper frame event read timed out")
+    let message = error.to_string();
+    message.contains("direct helper frame event read timed out")
+        || message.contains("direct runtime frame wait timed out")
 }
 
 async fn start_capture_backend(request: &StartSessionRequest) -> Result<RunningPlugin> {

@@ -3,4 +3,7 @@ pub mod direct_status;
 pub mod helper_bridge;
 pub mod helper_launcher;
 pub mod mock_backend;
+pub mod rtp_audio;
+pub mod rtp_video;
 pub mod runtime_bundle;
+pub mod uxplay_launcher;

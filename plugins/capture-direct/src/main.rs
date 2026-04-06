@@ -10,6 +10,8 @@ use plugin_capture_direct::direct_status::DirectCaptureStatus;
 use plugin_capture_direct::helper_launcher::{
     capture_capability, find_helper, read_next_frame_event, run_probe,
 };
+use plugin_capture_direct::runtime_bundle::DirectRuntimeBundle;
+use plugin_capture_direct::uxplay_launcher::DirectRuntimeSession;
 
 const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
@@ -19,9 +21,16 @@ const BASE64_CHARS: &[u8; 64] =
 
 struct StreamState {
     source_id: String,
-    helper_path: std::path::PathBuf,
-    last_frame_index: u64,
     slot: FrameSlot,
+    backend: StreamBackend,
+}
+
+enum StreamBackend {
+    Helper {
+        helper_path: std::path::PathBuf,
+        last_frame_index: u64,
+    },
+    Runtime(DirectRuntimeSession),
 }
 
 fn resolve_available_helper() -> Result<std::path::PathBuf, String> {
@@ -122,6 +131,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::GetCaptureStatus => {
+                if let Some(StreamState {
+                    backend: StreamBackend::Runtime(session),
+                    ..
+                }) = stream.as_mut()
+                {
+                    let _ = session.refresh_status(&mut direct_status);
+                }
                 let reply = PluginToHost::CaptureStatus {
                     status: direct_status.to_capture_status(),
                 };
@@ -135,15 +151,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     write_reply(&mut stdout, &reply)?;
                     continue;
                 }
-
-                let helper_path = match resolve_available_helper() {
-                    Ok(path) => path,
-                    Err(message) => {
-                        let reply = PluginToHost::Error { message };
-                        write_reply(&mut stdout, &reply)?;
-                        continue;
-                    }
-                };
 
                 let slot = match allocate_mock_slot() {
                     Ok(slot) => slot,
@@ -165,14 +172,39 @@ fn main() -> Result<(), Box<dyn Error>> {
                     slot_bytes: SLOT_BYTES,
                     slot_path: slot.path().display().to_string(),
                 };
+                let backend = if DirectRuntimeBundle::configured_root().is_some() {
+                    match DirectRuntimeBundle::resolve()
+                        .and_then(|bundle| DirectRuntimeSession::start(&bundle, &mut direct_status))
+                    {
+                        Ok(session) => StreamBackend::Runtime(session),
+                        Err(err) => {
+                            let reply = PluginToHost::Error {
+                                message: err.to_string(),
+                            };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+                    }
+                } else {
+                    let helper_path = match resolve_available_helper() {
+                        Ok(path) => path,
+                        Err(message) => {
+                            let reply = PluginToHost::Error { message };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+                    };
+                    direct_status.waiting_for_runtime_frame();
+                    StreamBackend::Helper {
+                        helper_path,
+                        last_frame_index: 0,
+                    }
+                };
                 stream = Some(StreamState {
                     source_id,
-                    helper_path,
-                    last_frame_index: 0,
                     slot,
+                    backend,
                 });
-                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Opening;
-                direct_status.detail = Some("Waiting for first direct frame".into());
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -188,77 +220,117 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
-                let event = match read_next_frame_event(&state.helper_path, &state.source_id) {
-                    Ok(event) => event,
-                    Err(err) => {
-                        let reply = PluginToHost::Error {
-                            message: format!("failed to read helper frame event: {}", err),
+                let frame = match &mut state.backend {
+                    StreamBackend::Helper {
+                        helper_path,
+                        last_frame_index,
+                    } => {
+                        let event = match read_next_frame_event(helper_path, &state.source_id) {
+                            Ok(event) => event,
+                            Err(err) => {
+                                let reply = PluginToHost::Error {
+                                    message: format!("failed to read helper frame event: {}", err),
+                                };
+                                write_reply(&mut stdout, &reply)?;
+                                continue;
+                            }
                         };
-                        write_reply(&mut stdout, &reply)?;
-                        continue;
+                        if event.width != DIRECT_WIDTH || event.height != DIRECT_HEIGHT {
+                            let reply = PluginToHost::Error {
+                                message: format!(
+                                    "helper frame geometry mismatch: expected {}x{}, got {}x{}",
+                                    DIRECT_WIDTH, DIRECT_HEIGHT, event.width, event.height
+                                ),
+                            };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+                        let bytes = match event.decode_rgba() {
+                            Ok(bytes) => bytes,
+                            Err(err) => {
+                                let reply = PluginToHost::Error {
+                                    message: format!("failed to decode helper frame payload: {}", err),
+                                };
+                                write_reply(&mut stdout, &reply)?;
+                                continue;
+                            }
+                        };
+                        if bytes.len() != state.slot.byte_len() {
+                            let reply = PluginToHost::Error {
+                                message: format!(
+                                    "helper frame payload size mismatch: expected {}, got {}",
+                                    state.slot.byte_len(),
+                                    bytes.len()
+                                ),
+                            };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+                        if let Err(err) = state.slot.write(&bytes) {
+                            let reply = PluginToHost::Error {
+                                message: format!("failed to write frame slot: {}", err),
+                            };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+
+                        let frame_index = if event.frame_index > *last_frame_index {
+                            event.frame_index
+                        } else {
+                            last_frame_index.saturating_add(1)
+                        };
+                        *last_frame_index = frame_index;
+                        let mut frame = mock_frame(&state.source_id, frame_index);
+                        frame.width = event.width;
+                        frame.height = event.height;
+                        frame.rotation_degrees = event.rotation_degrees;
+                        frame.health = event.health;
+                        direct_status.streaming(event.health);
+                        frame
+                    }
+                    StreamBackend::Runtime(session) => {
+                        let decoded = match session.next_frame() {
+                            Ok(Some(frame)) => frame,
+                            Ok(None) => {
+                                let reply = PluginToHost::Error {
+                                    message: "direct runtime frame wait timed out".into(),
+                                };
+                                write_reply(&mut stdout, &reply)?;
+                                continue;
+                            }
+                            Err(err) => {
+                                let reply = PluginToHost::Error {
+                                    message: format!("failed to read runtime frame: {}", err),
+                                };
+                                write_reply(&mut stdout, &reply)?;
+                                continue;
+                            }
+                        };
+                        if let Err(err) = state.slot.write(&decoded.rgba) {
+                            let reply = PluginToHost::Error {
+                                message: format!("failed to write runtime frame slot: {}", err),
+                            };
+                            write_reply(&mut stdout, &reply)?;
+                            continue;
+                        }
+                        let frame = mock_frame(&state.source_id, decoded.frame_index);
+                        direct_status.streaming(frame.health);
+                        frame
                     }
                 };
-                if event.width != DIRECT_WIDTH || event.height != DIRECT_HEIGHT {
-                    let reply = PluginToHost::Error {
-                        message: format!(
-                            "helper frame geometry mismatch: expected {}x{}, got {}x{}",
-                            DIRECT_WIDTH, DIRECT_HEIGHT, event.width, event.height
-                        ),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                    continue;
-                }
-
-                let bytes = match event.decode_rgba() {
-                    Ok(bytes) => bytes,
-                    Err(err) => {
-                        let reply = PluginToHost::Error {
-                            message: format!("failed to decode helper frame payload: {}", err),
-                        };
-                        write_reply(&mut stdout, &reply)?;
-                        continue;
-                    }
-                };
-                if bytes.len() != state.slot.byte_len() {
-                    let reply = PluginToHost::Error {
-                        message: format!(
-                            "helper frame payload size mismatch: expected {}, got {}",
-                            state.slot.byte_len(),
-                            bytes.len()
-                        ),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                    continue;
-                }
-                if let Err(err) = state.slot.write(&bytes) {
-                    let reply = PluginToHost::Error {
-                        message: format!("failed to write frame slot: {}", err),
-                    };
-                    write_reply(&mut stdout, &reply)?;
-                    continue;
-                }
-
-                let frame_index = if event.frame_index > state.last_frame_index {
-                    event.frame_index
-                } else {
-                    state.last_frame_index.saturating_add(1)
-                };
-                state.last_frame_index = frame_index;
-                let mut frame = mock_frame(&state.source_id, frame_index);
-                frame.width = event.width;
-                frame.height = event.height;
-                frame.rotation_degrees = event.rotation_degrees;
-                frame.health = event.health;
-                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Streaming;
-                direct_status.video_health = event.health;
-                direct_status.detail = None;
                 let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::CloseCaptureStream => {
+                if let Some(StreamState {
+                    backend: StreamBackend::Runtime(session),
+                    ..
+                }) = stream.as_mut()
+                {
+                    let _ = session.shutdown();
+                }
                 stream = None;
-                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Closed;
-                direct_status.detail = Some("Direct stream closed".into());
+                direct_status.closed();
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
             }
             HostToPlugin::StartDirectCapture => {

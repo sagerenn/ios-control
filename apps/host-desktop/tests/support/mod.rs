@@ -251,14 +251,25 @@ fn default_runtime_target() -> &'static str {
 }
 
 pub fn write_direct_runtime_fixture() -> DirectRuntimeFixture {
+    write_direct_runtime_fixture_with_delay_ms(None)
+}
+
+pub fn write_waiting_direct_runtime_fixture() -> DirectRuntimeFixture {
+    write_direct_runtime_fixture_with_delay_ms(Some(2200))
+}
+
+fn write_direct_runtime_fixture_with_delay_ms(delay_ms: Option<u64>) -> DirectRuntimeFixture {
     let tempdir = tempfile::tempdir().expect("direct runtime tempdir should be created");
     let root = tempdir.path().to_path_buf();
-    std::fs::write(root.join("manifest.json"), b"{}")
+    std::fs::write(
+        root.join("manifest.json"),
+        br#"{"uxplay_path":"uxplay","gst_launch_path":"gst-launch-1.0","beacon_helper_path":"beacon-helper","beacon_script_path":"Bluetooth_LE_beacon/uxplay-beacon.py","python_path":"python3"}"#,
+    )
         .expect("direct runtime manifest should be written");
     let uxplay = root.join(format!("uxplay{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(
         &uxplay,
-        b"#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nexit 0\n",
+        b"#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"-ble\" ]; then\n    shift\n    echo \"beacon-data\" > \"$1\"\n  fi\n  shift\ndone\nsleep 60\n",
     )
     .expect("direct runtime uxplay should be written");
     #[cfg(unix)]
@@ -270,6 +281,41 @@ pub fn write_direct_runtime_fixture() -> DirectRuntimeFixture {
         std::fs::set_permissions(&uxplay, perms)
             .expect("direct runtime uxplay should be executable");
     }
+    let gst_launch = root.join(format!("gst-launch-1.0{}", std::env::consts::EXE_SUFFIX));
+    let png_payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+    let delay_block = delay_ms
+        .map(|delay| format!("sleep {delay_ms_seconds}\n", delay_ms_seconds = (delay as f64 / 1000.0)))
+        .unwrap_or_default();
+    let gst_script = format!(
+        "#!/bin/sh\nlocation=\"${{IOS_CONTROL_DIRECT_FRAME_PATTERN:-}}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    location=*)\n      location=\"${{arg#location=}}\"\n      ;;\n  esac\ndone\nif [ -n \"$location\" ]; then\n  {delay_block}output=$(printf \"$location\" 1)\n  mkdir -p \"$(dirname \"$output\")\"\n  printf '%s' '{png_payload}' | base64 -d > \"$output\"\nfi\nsleep 60\n"
+    );
+    std::fs::write(&gst_launch, gst_script)
+        .expect("direct runtime gst-launch should be written");
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&gst_launch)
+            .expect("direct runtime gst-launch metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&gst_launch, perms)
+            .expect("direct runtime gst-launch should be executable");
+    }
+    let beacon_helper = root.join(format!("beacon-helper{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&beacon_helper, b"#!/bin/sh\nexit 0\n")
+        .expect("direct runtime beacon helper should be written");
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&beacon_helper)
+            .expect("direct runtime beacon helper metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&beacon_helper, perms)
+            .expect("direct runtime beacon helper should be executable");
+    }
+    let beacon_dir = root.join("Bluetooth_LE_beacon");
+    std::fs::create_dir_all(&beacon_dir).expect("beacon script dir should be created");
+    std::fs::write(beacon_dir.join("uxplay-beacon.py"), b"print('ok')\n")
+        .expect("beacon script should be written");
 
     DirectRuntimeFixture {
         _tempdir: tempdir,
