@@ -111,6 +111,7 @@ jobs:
       - name: Install Linux direct runtime build dependencies
         if: runner.os == 'Linux'
         run: >
+          sudo dpkg --add-architecture arm64 &&
           sudo apt-get update &&
           sudo apt-get install -y
           build-essential
@@ -123,10 +124,16 @@ jobs:
           curl
           unzip
           git
+          libdbus-1-dev
           libssl-dev
           libplist-dev
           libasound2-dev
           libavahi-compat-libdnssd-dev
+          libdbus-1-dev:arm64
+          libssl-dev:arm64
+          libplist-dev:arm64
+          libasound2-dev:arm64
+          libavahi-compat-libdnssd-dev:arm64
           gcc-aarch64-linux-gnu
           g++-aarch64-linux-gnu
       - name: Setup MSYS2

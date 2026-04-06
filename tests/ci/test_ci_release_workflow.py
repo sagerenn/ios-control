@@ -10,6 +10,8 @@ from scripts.assert_ci_release import assert_validation_structure
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci-release.yml"
 CROSS_TOML_PATH = REPO_ROOT / "Cross.toml"
+BUILD_DIRECT_RUNTIME_LINUX_PATH = REPO_ROOT / "scripts" / "ci" / "build_direct_runtime_linux.sh"
+BUILD_DIRECT_RUNTIME_WINDOWS_PATH = REPO_ROOT / "scripts" / "ci" / "build_direct_runtime_windows.ps1"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
@@ -143,6 +145,61 @@ class CiReleaseWorkflowTests(unittest.TestCase):
                 ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
             ],
         )
+
+    def test_linux_runtime_build_installs_arm64_direct_runtime_dependencies(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("sudo dpkg --add-architecture arm64", workflow_text)
+        self.assertIn("sudo apt-get update", workflow_text)
+        for package in (
+            "libdbus-1-dev",
+            "libplist-dev",
+            "libasound2-dev",
+            "libavahi-compat-libdnssd-dev",
+            "libssl-dev",
+        ):
+            self.assertIn(f"{package}:arm64", workflow_text)
+
+    def test_linux_runtime_build_script_sets_cross_pkg_config_for_aarch64(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertIn("export PKG_CONFIG_ALLOW_CROSS=1", script_text)
+        self.assertIn("export PKG_CONFIG_LIBDIR=", script_text)
+        self.assertIn("/usr/lib/aarch64-linux-gnu/pkgconfig", script_text)
+        self.assertIn("export PKG_CONFIG_SYSROOT_DIR=/", script_text)
+
+    def test_linux_runtime_build_script_builds_gstreamer_before_configuring_uxplay(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertIn('gst_pkgconfig_path="${gst_prefix}/lib/pkgconfig:${gst_prefix}/lib64/pkgconfig:${gst_prefix}/share/pkgconfig"', script_text)
+        self.assertIn('export PKG_CONFIG_PATH="${gst_pkgconfig_path}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"', script_text)
+        self.assertLess(
+            script_text.index('meson install -C "${gst_build}"'),
+            script_text.index('cmake "${cmake_args[@]}"'),
+        )
+
+    def test_windows_runtime_build_script_stages_gstreamer_before_configuring_uxplay(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertLess(
+            script_text.index('if ($GstreamerSource -eq "download") {'),
+            script_text.index('cmake @cmakeArgs'),
+        )
+
+    def test_windows_runtime_build_script_uses_runtime_and_development_installers(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("gstreamer-1.0-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
+        self.assertIn("gstreamer-1.0-devel-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
+        self.assertNotIn("merge-modules.zip", script_text)
+
+    def test_windows_runtime_build_script_exports_pkg_config_and_prefix_paths(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn('$env:PKG_CONFIG_PATH =', script_text)
+        self.assertIn('$env:CMAKE_PREFIX_PATH =', script_text)
+        self.assertIn('-DPKG_CONFIG_EXECUTABLE=', script_text)
+
+    def test_windows_runtime_build_script_resolves_meson_from_msys2_for_source_builds(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Resolve-MesonInvocation", script_text)
+        self.assertIn("meson executable not found on PATH or in common MSYS2 locations", script_text)
+        self.assertIn("C:\\msys64\\clangarm64\\bin\\meson.exe", script_text)
+        self.assertIn("C:\\msys64\\clangarm64\\bin\\meson.py", script_text)
 
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

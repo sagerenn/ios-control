@@ -30,6 +30,22 @@ cmake_args=(
 )
 
 if [[ "${uxplay_builder}" == "cross" ]]; then
+  case "${target}" in
+    aarch64-unknown-linux-gnu)
+      target_pkgconfig_dir="/usr/lib/aarch64-linux-gnu/pkgconfig"
+      ;;
+    *)
+      echo "unsupported Linux cross target=${target}" >&2
+      exit 1
+      ;;
+  esac
+
+  # Point pkg-config at the target sysroot so CMake and Meson don't pick host .pc files.
+  export PKG_CONFIG_ALLOW_CROSS=1
+  export PKG_CONFIG_LIBDIR="${target_pkgconfig_dir}:/usr/share/pkgconfig"
+  export PKG_CONFIG_PATH=
+  export PKG_CONFIG_SYSROOT_DIR=/
+
   cat > "${work_root}/meson-cross.ini" <<'EOF'
 [binaries]
 c = 'aarch64-linux-gnu-gcc'
@@ -52,9 +68,6 @@ EOF
   )
 fi
 
-cmake "${cmake_args[@]}"
-cmake --build "${uxplay_build}" --parallel
-
 if [[ "${gstreamer_source}" != "source" ]]; then
   echo "unsupported Linux gstreamer_source=${gstreamer_source}" >&2
   exit 1
@@ -65,6 +78,7 @@ git clone --depth 1 --branch "${GSTREAMER_VERSION}" https://gitlab.freedesktop.o
 meson_args=(
   setup "${gst_build}" "${gst_src}"
   --prefix "${gst_prefix}"
+  --libdir lib
   -Ddefault_library=shared
   -Dexamples=disabled
   -Dtests=disabled
@@ -79,6 +93,14 @@ fi
 meson "${meson_args[@]}"
 meson compile -C "${gst_build}"
 meson install -C "${gst_build}"
+
+# UxPlay's CMake config uses pkg-config to locate GStreamer modules.
+gst_pkgconfig_path="${gst_prefix}/lib/pkgconfig:${gst_prefix}/lib64/pkgconfig:${gst_prefix}/share/pkgconfig"
+export PKG_CONFIG_PATH="${gst_pkgconfig_path}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+export CMAKE_PREFIX_PATH="${gst_prefix}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
+
+cmake "${cmake_args[@]}"
+cmake --build "${uxplay_build}" --parallel
 
 python3 "${workspace_root}/scripts/prepare_direct_runtime.py" \
   --target "${target}" \
