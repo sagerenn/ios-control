@@ -14,27 +14,36 @@ use ios_control_contracts::session::{
 };
 use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 use support::{
     build_plugins, host_plugin_paths, plugin_path, runtime_env_lock, workspace_root,
-    DirectRuntimeFixture, EnvVarGuard, EnvVarGuards, write_direct_runtime_fixture,
-    write_waiting_direct_runtime_fixture,
+    EnvVarGuard, EnvVarGuards,
 };
 
 struct RuntimeAppFixture {
     _lock: std::sync::MutexGuard<'static, ()>,
     _guards: EnvVarGuards,
-    _direct_runtime: Option<DirectRuntimeFixture>,
     preferences_path: Option<PathBuf>,
     app: HostDesktopApp,
+}
+
+fn direct_helper_delay_state_path(prefix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}.state",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos()
+    ))
 }
 
 fn host_app_with_runtime() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let direct_runtime = write_direct_runtime_fixture();
     let guards = EnvVarGuards::new(vec![
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
@@ -49,14 +58,13 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
             plugin_path(&root, "plugin-capture-direct"),
         ),
     ]);
-    let mut plugin_paths = host_plugin_paths(&root);
-    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
-    let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
+    let app = HostDesktopApp::with_runtime(HostRuntimeConfig {
+        plugin_paths: host_plugin_paths(&root),
+    });
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
-        _direct_runtime: Some(direct_runtime),
         preferences_path: None,
         app,
     }
@@ -66,8 +74,9 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let direct_runtime = write_waiting_direct_runtime_fixture();
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
+    let state_path = direct_helper_delay_state_path("host-desktop-direct-helper-delay");
+    let _ = std::fs::remove_file(&state_path);
     let guard_values = vec![
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
@@ -77,17 +86,21 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
             "IOS_CONTROL_WINDOW_INPUT_HELPER",
             plugin_path(&root, "plugin-control-window-bridge"),
         ),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &direct_plugin),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200"),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
+            state_path.as_os_str(),
+        ),
     ];
     let guards = EnvVarGuards::new(guard_values);
     let mut plugin_paths = host_plugin_paths(&root);
     plugin_paths.capture_direct = direct_plugin;
-    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
     let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
-        _direct_runtime: Some(direct_runtime),
         preferences_path: None,
         app,
     }
@@ -104,7 +117,6 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
     let lock = runtime_env_lock();
     let root = workspace_root();
     build_plugins(&root);
-    let direct_runtime = write_direct_runtime_fixture();
     let guards = EnvVarGuards::new(vec![
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
@@ -120,17 +132,16 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
         ),
     ]);
     let prefs_path = support::write_preferences_json(preferences_json);
-    let mut plugin_paths = host_plugin_paths(&root);
-    plugin_paths.capture_direct_runtime_root = Some(direct_runtime.root.clone());
     let app = HostDesktopApp::with_runtime_and_preferences(
-        HostRuntimeConfig { plugin_paths },
+        HostRuntimeConfig {
+            plugin_paths: host_plugin_paths(&root),
+        },
         host_desktop::preferences::HostPreferencesStore::new(prefs_path.clone()),
     );
 
     RuntimeAppFixture {
         _lock: lock,
         _guards: guards,
-        _direct_runtime: Some(direct_runtime),
         preferences_path: Some(prefs_path),
         app,
     }
@@ -158,7 +169,6 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
     RuntimeAppFixture {
         _lock: lock,
         _guards: EnvVarGuards::new(vec![]),
-        _direct_runtime: None,
         preferences_path: Some(prefs_path),
         app,
     }
