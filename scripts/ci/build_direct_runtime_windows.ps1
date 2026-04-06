@@ -137,7 +137,7 @@ function Invoke-DownloadFile {
     $headers = @{
         "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
     }
-    $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    $session = $null
     $currentUri = $Uri
 
     for ($attempt = 0; $attempt -lt 5; $attempt++) {
@@ -145,13 +145,23 @@ function Invoke-DownloadFile {
             Remove-Item $OutFile -Force
         }
 
-        $response = Invoke-WebRequest `
-            -Uri $currentUri `
-            -Headers $headers `
-            -MaximumRedirection 10 `
-            -OutFile $OutFile `
-            -PassThru `
-            -WebSession $session
+        if ($null -eq $session) {
+            $response = Invoke-WebRequest `
+                -Uri $currentUri `
+                -Headers $headers `
+                -MaximumRedirection 10 `
+                -OutFile $OutFile `
+                -PassThru `
+                -SessionVariable session
+        } else {
+            $response = Invoke-WebRequest `
+                -Uri $currentUri `
+                -Headers $headers `
+                -MaximumRedirection 10 `
+                -OutFile $OutFile `
+                -PassThru `
+                -WebSession $session
+        }
 
         $contentType = [string]$response.Headers["Content-Type"]
         if ((Get-Item $OutFile).Length -gt 0 -and -not $contentType.StartsWith("text/html", [System.StringComparison]::OrdinalIgnoreCase)) {

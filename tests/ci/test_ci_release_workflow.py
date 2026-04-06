@@ -177,9 +177,17 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('gst_pkgconfig_path="${gst_prefix}/lib/pkgconfig:${gst_prefix}/lib64/pkgconfig:${gst_prefix}/share/pkgconfig"', script_text)
         self.assertIn('export PKG_CONFIG_PATH="${gst_pkgconfig_path}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"', script_text)
         self.assertLess(
-            script_text.index('meson install -C "${gst_build}"'),
+            script_text.index('run_meson install -C "${gst_build}"'),
             script_text.index('cmake "${cmake_args[@]}"'),
         )
+
+    def test_linux_runtime_build_script_bootstraps_a_compatible_meson_for_gstreamer(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertIn("resolve_gstreamer_meson_requirement()", script_text)
+        self.assertIn("ensure_meson()", script_text)
+        self.assertIn('python3 -m pip install --upgrade --disable-pip-version-check --target "${meson_site_packages}"', script_text)
+        self.assertIn('python3 -m mesonbuild.mesonmain "$@"', script_text)
+        self.assertIn('run_meson "${meson_args[@]}"', script_text)
 
     def test_windows_runtime_build_script_stages_gstreamer_before_configuring_uxplay(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
@@ -193,6 +201,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("gstreamer-1.0-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
         self.assertIn("gstreamer-1.0-devel-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
         self.assertNotIn("merge-modules.zip", script_text)
+
+    def test_windows_runtime_build_script_avoids_explicit_web_request_session_type(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("[Microsoft.PowerShell.Commands.WebRequestSession]::new()", script_text)
+        self.assertIn("-SessionVariable session", script_text)
 
     def test_windows_runtime_build_script_escapes_colons_after_interpolated_variables(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")

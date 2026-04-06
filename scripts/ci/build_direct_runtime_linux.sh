@@ -17,8 +17,87 @@ uxplay_build="${work_root}/uxplay-build"
 gst_src="${work_root}/gstreamer"
 gst_build="${work_root}/gstreamer-build"
 gst_prefix="${work_root}/gst-root"
+meson_site_packages="${work_root}/meson-site-packages"
 
-rm -rf "${uxplay_src}" "${uxplay_build}" "${gst_src}" "${gst_build}" "${gst_prefix}"
+version_is_at_least() {
+  python3 - "$1" "$2" <<'PY'
+import re
+import sys
+
+
+def parse(version: str) -> tuple[int, ...]:
+    parts = [int(component) for component in re.findall(r"\d+", version)]
+    if not parts:
+        raise SystemExit(1)
+    return tuple(parts)
+
+
+current = parse(sys.argv[1])
+required = parse(sys.argv[2])
+width = max(len(current), len(required))
+current += (0,) * (width - len(current))
+required += (0,) * (width - len(required))
+
+raise SystemExit(0 if current >= required else 1)
+PY
+}
+
+resolve_gstreamer_meson_requirement() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'meson_version\s*:\s*[\'"]([^\'"]+)[\'"]', text)
+if not match:
+    raise SystemExit("unable to determine GStreamer Meson version requirement")
+
+constraint = match.group(1)
+minimum = re.search(r'>=\s*([0-9][0-9.]*)', constraint)
+if minimum:
+    print(minimum.group(1))
+    raise SystemExit(0)
+
+exact = re.fullmatch(r'\s*([0-9][0-9.]*)\s*', constraint)
+if exact:
+    print(exact.group(1))
+    raise SystemExit(0)
+
+raise SystemExit(f"unsupported Meson version constraint: {constraint}")
+PY
+}
+
+ensure_meson() {
+  local required_version="$1"
+
+  if command -v meson >/dev/null 2>&1; then
+    local system_meson_version
+    system_meson_version="$(meson --version)"
+    if version_is_at_least "${system_meson_version}" "${required_version}"; then
+      echo "Using system Meson ${system_meson_version}" >&2
+      return
+    fi
+    echo "System Meson ${system_meson_version} is older than required ${required_version}; installing private Meson" >&2
+  else
+    echo "Meson not found on PATH; installing private Meson ${required_version}+." >&2
+  fi
+
+  rm -rf "${meson_site_packages}"
+  python3 -m pip install --upgrade --disable-pip-version-check --target "${meson_site_packages}" "meson>=${required_version},<2"
+}
+
+run_meson() {
+  if [[ -d "${meson_site_packages}" ]]; then
+    PYTHONPATH="${meson_site_packages}${PYTHONPATH:+:${PYTHONPATH}}" \
+      python3 -m mesonbuild.mesonmain "$@"
+    return
+  fi
+
+  meson "$@"
+}
+
+rm -rf "${uxplay_src}" "${uxplay_build}" "${gst_src}" "${gst_build}" "${gst_prefix}" "${meson_site_packages}"
 mkdir -p "${work_root}"
 
 git clone --depth 1 --branch "${UXPLAY_REF}" https://github.com/FDH2/UxPlay.git "${uxplay_src}"
@@ -75,6 +154,9 @@ fi
 
 git clone --depth 1 --branch "${GSTREAMER_VERSION}" https://gitlab.freedesktop.org/gstreamer/gstreamer.git "${gst_src}"
 
+gst_required_meson_version="$(resolve_gstreamer_meson_requirement "${gst_src}/meson.build")"
+ensure_meson "${gst_required_meson_version}"
+
 meson_args=(
   setup "${gst_build}" "${gst_src}"
   --prefix "${gst_prefix}"
@@ -90,9 +172,9 @@ if [[ "${uxplay_builder}" == "cross" ]]; then
   meson_args+=(--cross-file "${work_root}/meson-cross.ini")
 fi
 
-meson "${meson_args[@]}"
-meson compile -C "${gst_build}"
-meson install -C "${gst_build}"
+run_meson "${meson_args[@]}"
+run_meson compile -C "${gst_build}"
+run_meson install -C "${gst_build}"
 
 # UxPlay's CMake config uses pkg-config to locate GStreamer modules.
 gst_pkgconfig_path="${gst_prefix}/lib/pkgconfig:${gst_prefix}/lib64/pkgconfig:${gst_prefix}/share/pkgconfig"
