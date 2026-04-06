@@ -6,9 +6,10 @@ use ios_control_session_orchestrator::{
 
 mod support;
 use support::{
-    EnvVarGuard, build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock,
-    workspace_root, write_ble_helper, write_direct_helper,
+    EnvVarGuard, EnvVarGuards, build_plugins, plugin_path, prepare_window_runtime_env,
+    runtime_env_lock, workspace_root, write_ble_helper,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn start_session_collects_mock_plugin_state() {
@@ -322,21 +323,23 @@ async fn start_session_with_direct_backend_can_wait_for_first_frame() {
     let root = workspace_root();
     build_plugins(&root);
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
-    let helper = write_direct_helper(&format!(
-        r#"#!/bin/sh
-if [ "$1" = "probe" ]; then
-  echo '{{"available":true,"supports_input_bridge":false}}'
-  exit 0
-fi
-if [ "$1" = "stream" ]; then
-  sleep 3
-  exit 0
-fi
-exec "{}" "$@"
-"#,
-        direct_plugin.display()
+    let state_file = std::env::temp_dir().join(format!(
+        "session-orchestrator-direct-wait-{}-{}.state",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos()
     ));
-    let _env = EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &helper);
+    let _ = std::fs::remove_file(&state_file);
+    let _env = EnvVarGuards::new(vec![
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &direct_plugin),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200"),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
+            state_file.as_os_str(),
+        ),
+    ]);
 
     let mut orchestrator = SessionOrchestrator::default();
     let state = orchestrator
@@ -347,7 +350,7 @@ exec "{}" "$@"
             capture_backend: CaptureBackend::Direct,
             plugin_paths: PluginPaths {
                 capture: plugin_path(&root, "plugin-capture-window"),
-                capture_direct: helper.clone(),
+                capture_direct: direct_plugin,
                 control_ble: plugin_path(&root, "plugin-control-ble"),
                 control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
                 grounding: Some(plugin_path(&root, "plugin-grounding-core")),

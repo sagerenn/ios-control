@@ -53,7 +53,9 @@ pub fn workspace_root() -> PathBuf {
 }
 
 pub fn runtime_env_lock() -> MutexGuard<'static, ()> {
-    RUNTIME_ENV_LOCK.lock().expect("runtime env lock poisoned")
+    RUNTIME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn target_dir(workspace_root: &Path) -> PathBuf {
