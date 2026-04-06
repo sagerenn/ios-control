@@ -50,7 +50,7 @@ pub fn render(
         SessionUiState::Starting => {
             ui.label("Waiting for runtime session status");
         }
-        SessionUiState::Idle | SessionUiState::Error(_) => {
+        SessionUiState::WaitingForMirror | SessionUiState::Idle | SessionUiState::Blocked(_) | SessionUiState::Error(_) => {
             if let Some(source) = &view_model.selected_source {
                 ui.label(format!("Source: {}", source.label()));
             }

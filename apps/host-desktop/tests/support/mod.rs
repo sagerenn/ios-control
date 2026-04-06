@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use ios_control_frame_transport::FrameSlot;
 use ios_control_session_orchestrator::PluginPaths;
@@ -58,7 +60,9 @@ pub fn workspace_root() -> PathBuf {
 }
 
 pub fn runtime_env_lock() -> MutexGuard<'static, ()> {
-    RUNTIME_ENV_LOCK.lock().expect("runtime env lock poisoned")
+    RUNTIME_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn target_dir(workspace_root: &Path) -> PathBuf {
@@ -154,6 +158,29 @@ pub fn write_preferences_json(json: &str) -> PathBuf {
         nonce
     ));
     std::fs::write(&path, json).expect("preferences json should be written");
+    path
+}
+
+pub fn write_direct_helper(body: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "host-desktop-direct-helper-{}-{}.sh",
+        std::process::id(),
+        nonce
+    ));
+    std::fs::write(&path, body).expect("direct helper script should be written");
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&path)
+            .expect("direct helper metadata should exist")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms)
+            .expect("direct helper script should be executable");
+    }
     path
 }
 

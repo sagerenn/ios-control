@@ -17,8 +17,8 @@ use std::path::PathBuf;
 
 mod support;
 use support::{
-    build_plugins, host_plugin_paths, prepare_window_runtime_env, runtime_env_lock, workspace_root,
-    EnvVarGuards,
+    build_plugins, host_plugin_paths, plugin_path, prepare_window_runtime_env, runtime_env_lock,
+    workspace_root, write_direct_helper, EnvVarGuards,
 };
 
 struct RuntimeAppFixture {
@@ -36,6 +36,43 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
     let app = HostDesktopApp::with_runtime(HostRuntimeConfig {
         plugin_paths: host_plugin_paths(&root),
     });
+
+    RuntimeAppFixture {
+        _lock: lock,
+        _guards: guards,
+        preferences_path: None,
+        app,
+    }
+}
+
+fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
+    let lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let guards = prepare_window_runtime_env(&root);
+    let direct_plugin = plugin_path(&root, "plugin-capture-direct");
+    let helper = write_direct_helper(&format!(
+        r#"#!/bin/sh
+state_file="${{TMPDIR:-/tmp}}/host-desktop-direct-wait-{}.state"
+if [ "$1" = "probe" ]; then
+  echo '{{"available":true,"supports_input_bridge":false}}'
+  exit 0
+fi
+if [ "$1" = "stream" ]; then
+  if [ ! -f "$state_file" ]; then
+    touch "$state_file"
+    sleep 3
+    exit 0
+  fi
+fi
+exec "{}" "$@"
+"#,
+        std::process::id(),
+        direct_plugin.display()
+    ));
+    let mut plugin_paths = host_plugin_paths(&root);
+    plugin_paths.capture_direct = helper;
+    let app = HostDesktopApp::with_runtime(HostRuntimeConfig { plugin_paths });
 
     RuntimeAppFixture {
         _lock: lock,
@@ -219,6 +256,52 @@ fn runtime_snapshot_streaming_without_frame() -> HostRuntimeSnapshot {
     }
 }
 
+fn direct_streaming_snapshot(device_id: &str, device_name: &str) -> HostRuntimeSnapshot {
+    let status = status(
+        device_id,
+        device_name,
+        SessionPhase::Streaming,
+        SessionSubstate::Streaming,
+        "capture.direct",
+        "control.window-bridge",
+        None,
+    );
+
+    HostRuntimeSnapshot {
+        statuses: vec![status.clone()],
+        workspace: RuntimeWorkspaceState {
+            device_id: device_id.into(),
+            summary: status.summary().clone(),
+            capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                source_id: "direct-1".into(),
+                display_name: "Direct Receiver".into(),
+                kind: ios_control_contracts::capture::SourceKind::DirectReceiver,
+            }],
+            capture_stream: None,
+            latest_frame: Some(ios_control_contracts::capture::VideoFrameDescriptor {
+                source_id: "direct-1".into(),
+                source_kind: ios_control_contracts::capture::SourceKind::DirectReceiver,
+                width: 1179,
+                height: 2556,
+                rotation_degrees: 0,
+                frame_index: 2,
+                health: ios_control_contracts::capture::FrameHealth::Healthy,
+            }),
+            selected_source_id: Some("direct-1".into()),
+            control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                items: vec!["Pair the device".into()],
+            },
+            control_phase: ControlSessionPhase::Connected,
+            execution_observed_change: None,
+            diagnostics: SessionDiagnostics {
+                control_phase: ControlSessionPhase::Connected,
+                control_summary: "control ready".into(),
+                grounding_summary: None,
+            },
+        },
+    }
+}
+
 fn host_app_from_runtime_snapshot(snapshot: HostRuntimeSnapshot) -> HostDesktopApp {
     let mut app = HostDesktopApp::new();
     app.apply_runtime_snapshot(snapshot);
@@ -267,6 +350,21 @@ fn bluetooth_and_unlinked_mirror_inventory() -> host_desktop::inventory::model::
             reasons: vec![],
         },
     ])
+}
+
+fn launcher_ready_bluetooth_inventory() -> host_desktop::inventory::model::InventorySnapshot {
+    aggregate_inventory(vec![DeviceObservation {
+        provider: InventoryEvidenceSource::Bluetooth,
+        stable_id: Some("bt:AA-BB".into()),
+        known_device_id: None,
+        display_name: "Alice iPhone".into(),
+        mirror_source_id: None,
+        live: true,
+        capture_state: CapabilityState::Unavailable,
+        preferred_control_state: CapabilityState::Ready,
+        fallback_control_state: CapabilityState::Unavailable,
+        reasons: vec!["paired over bluetooth".into()],
+    }])
 }
 
 #[test]
@@ -347,6 +445,40 @@ fn host_app_start_direct_receiver_uses_direct_capture_source() {
 }
 
 #[test]
+fn host_app_opens_blocked_session_window_for_not_startable_launcher_device() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(partially_discovered_inventory());
+    app.select_device("bt:AA-BB");
+
+    app.request_open_selected_device_session();
+
+    assert!(app.session_window_is_visible());
+    assert!(matches!(app.session.ui_state, SessionUiState::Blocked(_)));
+}
+
+#[test]
+fn host_app_defers_startable_session_window_until_direct_frame_is_live() {
+    let mut fixture = host_app_with_runtime_and_waiting_direct_helper();
+    fixture.app.apply_inventory_snapshot(launcher_ready_bluetooth_inventory());
+    fixture.app.select_device("bt:AA-BB");
+
+    fixture.app.request_open_selected_device_session();
+
+    assert!(matches!(
+        fixture.app.session.ui_state,
+        SessionUiState::WaitingForMirror
+    ));
+    assert!(!fixture.app.session_window_is_visible());
+
+    fixture
+        .app
+        .apply_runtime_snapshot(direct_streaming_snapshot("bt:AA-BB", "Alice iPhone"));
+
+    assert!(fixture.app.session_window_is_visible());
+    assert_eq!(fixture.app.session.ui_state, SessionUiState::Streaming);
+}
+
+#[test]
 fn host_app_displays_partially_discovered_inventory_rows() {
     let mut app = HostDesktopApp::new();
     app.apply_inventory_snapshot(partially_discovered_inventory());
@@ -362,7 +494,10 @@ fn host_app_displays_partially_discovered_inventory_rows() {
         .inventory_notes
         .iter()
         .any(|note| note.contains("paired over bluetooth")));
-    assert_eq!(app.session.ui_state, SessionUiState::Error("No capture path observed".into()));
+    assert_eq!(
+        app.session.ui_state,
+        SessionUiState::Blocked("No capture path observed".into())
+    );
 }
 
 #[test]
@@ -433,6 +568,18 @@ fn host_app_records_session_start_diagnostic_metrics_and_logs() {
         diagnostics.contains("session start succeeded device=bt:AA-BB source=window-helper-1"),
         "{diagnostics}"
     );
+}
+
+#[test]
+fn host_app_settings_surface_preferences_and_log_paths() {
+    let fixture = host_app_with_runtime_and_preferences("{}");
+    let rows = &fixture.app.settings.rows;
+
+    let prefs_path = fixture.preferences_path.as_ref().unwrap();
+    let logs_dir = HostPreferencesStore::log_dir_for_preferences_path(prefs_path);
+
+    assert!(rows.iter().any(|row| row.contains(&prefs_path.display().to_string())));
+    assert!(rows.iter().any(|row| row.contains(&logs_dir.display().to_string())));
 }
 
 #[test]
@@ -885,7 +1032,7 @@ fn stop_session_clears_runtime_state_even_without_runtime_instance() {
     assert!(app.fleet.rows.is_empty());
     assert_eq!(app.dashboard.total_devices, 0);
     assert_eq!(app.dashboard.degraded_devices, 0);
-    assert!(app.settings.plugin_rows.is_empty());
+    assert!(app.settings.rows.is_empty());
     assert!(app.selected_device_id.is_none());
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
 }
@@ -965,11 +1112,7 @@ fn app_syncs_runtime_statuses_into_fleet_and_workspace() {
     assert_eq!(app.device_detail.device_name, "Alpha");
     assert_eq!(app.session.ui_state, SessionUiState::Streaming);
     assert!(app.diagnostics.host_error.is_none());
-    assert!(app
-        .settings
-        .plugin_rows
-        .iter()
-        .any(|row| row.contains("control.window-bridge")));
+    assert!(app.settings.rows.is_empty());
 }
 
 #[test]

@@ -157,8 +157,17 @@ impl SessionOrchestrator {
             &capture_sources,
             &capture_descriptor,
         )?;
-        let (capture_stream, latest_frame) =
-            request_capture_frame(&mut capture, &selected_source_id).await?;
+        let capture_stream = Some(open_capture_stream(&mut capture, &selected_source_id).await?);
+        let latest_frame = match read_capture_frame(&mut capture).await {
+            Ok(frame) => Some(frame),
+            Err(error)
+                if request.capture_backend == CaptureBackend::Direct
+                    && waiting_for_direct_frame(&error) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
         staged_telemetry.push(TelemetryEvent {
             session_id: session_id.clone(),
             message: format!("capture source selected: {selected_source_id}"),
@@ -184,13 +193,21 @@ impl SessionOrchestrator {
             execution_result,
             latest_frame,
         ) = if request.capture_backend == CaptureBackend::Direct {
-            (None, None, None, None, Some(latest_frame))
+            (None, None, None, None, latest_frame)
         } else if let Some(path) = request.plugin_paths.grounding.as_ref() {
             let mut grounding = RunningPlugin::spawn(path).await?;
             let grounding_descriptor = grounding.handshake().await?;
             let plan = request_grounding_plan(&mut grounding).await?;
             let (execution_result, latest_frame) =
-                execute_grounding_plan(&mut capture, &mut control, &plan, &latest_frame).await?;
+                execute_grounding_plan(
+                    &mut capture,
+                    &mut control,
+                    &plan,
+                    latest_frame
+                        .as_ref()
+                        .expect("window sessions should have an initial frame"),
+                )
+                .await?;
             staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
             staged_telemetry.push(TelemetryEvent {
                 session_id: session_id.clone(),
@@ -208,7 +225,7 @@ impl SessionOrchestrator {
                 Some(latest_frame),
             )
         } else {
-            (None, None, None, None, Some(latest_frame))
+            (None, None, None, None, latest_frame)
         };
 
         let mut plugin_health = if control_capability.supported {
@@ -230,7 +247,11 @@ impl SessionOrchestrator {
         let summary = DeviceSessionSummary {
             device_id: request.device_id.clone(),
             device_name: request.device_name.clone(),
-            phase: SessionPhase::Streaming,
+            phase: if request.capture_backend == CaptureBackend::Direct && latest_frame.is_none() {
+                SessionPhase::Connecting
+            } else {
+                SessionPhase::Streaming
+            },
             plugin_health,
             capture_plugin: Some(capture_descriptor.plugin_id.clone()),
             control_plugin: Some(control_descriptor.plugin_id.clone()),
@@ -336,14 +357,28 @@ impl SessionSupervisor {
 }
 
 impl ActiveSessionState {
-    pub async fn refresh_capture_frame(&mut self) -> Result<VideoFrameDescriptor> {
+    pub async fn refresh_capture_frame(&mut self) -> Result<Option<VideoFrameDescriptor>> {
         let capture = self
             .capture_plugin
             .as_mut()
             .ok_or_else(|| anyhow!("missing capture plugin"))?;
-        let frame = read_capture_frame(capture).await?;
-        self.latest_frame = Some(frame.clone());
-        Ok(frame)
+        match read_capture_frame(capture).await {
+            Ok(frame) => {
+                self.latest_frame = Some(frame.clone());
+                if self.summary.phase == SessionPhase::Connecting {
+                    self.summary.phase = SessionPhase::Streaming;
+                }
+                Ok(Some(frame))
+            }
+            Err(error)
+                if self.summary.capture_plugin.as_deref() == Some("capture.direct")
+                    && self.latest_frame.is_none()
+                    && waiting_for_direct_frame(&error) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn shutdown(mut self) -> Result<()> {
@@ -434,10 +469,10 @@ fn select_source_id(
         .ok_or_else(|| anyhow!("no capture sources available for {}", descriptor.plugin_id))
 }
 
-async fn request_capture_frame(
+async fn open_capture_stream(
     capture: &mut RunningPlugin,
     selected_source_id: &str,
-) -> Result<(Option<CaptureStreamDescriptor>, VideoFrameDescriptor)> {
+) -> Result<CaptureStreamDescriptor> {
     let stream = match request_plugin(
         capture,
         &HostToPlugin::OpenCaptureStream {
@@ -450,9 +485,7 @@ async fn request_capture_frame(
         other => return Err(anyhow!("unexpected capture stream response: {other:?}")),
     };
 
-    let frame = read_capture_frame(capture).await?;
-
-    Ok((Some(stream), frame))
+    Ok(stream)
 }
 
 async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDescriptor> {
@@ -460,6 +493,12 @@ async fn read_capture_frame(capture: &mut RunningPlugin) -> Result<VideoFrameDes
         PluginToHost::CaptureFrame { frame } => Ok(frame),
         other => Err(anyhow!("unexpected capture frame response: {other:?}")),
     }
+}
+
+fn waiting_for_direct_frame(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("direct helper frame event read timed out")
 }
 
 async fn start_capture_backend(request: &StartSessionRequest) -> Result<RunningPlugin> {

@@ -3,11 +3,10 @@ use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
 use ios_control_session_orchestrator::CaptureBackend;
 use std::time::{Duration, Instant};
 
-use crate::panels::device_detail::{
-    CaptureSourceOption, ControlSetupChecklist, DeviceDetailAction,
-};
+use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
+use crate::panels::launcher::LauncherAction;
 use crate::panels::session_view::SessionAction;
-use crate::panels::{dashboard, device_detail, diagnostics, session_view, settings, startup};
+use crate::panels::{launcher, session_view, settings};
 use crate::logging::HostLogWriter;
 use crate::preferences::{HostPreferences, HostPreferencesStore, KnownDevicePreference};
 use crate::preview::color_image_from_slot;
@@ -47,6 +46,9 @@ pub struct HostDesktopApp {
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
+    session_window_open: bool,
+    session_window_deferred_until_streaming: bool,
+    session_window_device_id: Option<String>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -81,6 +83,9 @@ impl HostDesktopApp {
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
             preview_texture: None,
+            session_window_open: false,
+            session_window_deferred_until_streaming: false,
+            session_window_device_id: None,
             dashboard: DashboardViewModel {
                 total_devices: 0,
                 degraded_devices: 0,
@@ -108,7 +113,7 @@ impl HostDesktopApp {
                 log_lines: Vec::new(),
             },
             settings: SettingsViewModel {
-                plugin_rows: Vec::new(),
+                rows: Vec::new(),
             },
             startup: StartupViewModel::blocked("Blocked: no usable device path yet"),
         }
@@ -148,6 +153,7 @@ impl HostDesktopApp {
         app.preferences = preferences;
         app.restored_source_preference = restored_source_preference;
         app.install_log_writer_from_preferences_path(store.path());
+        app.settings = SettingsViewModel::from_preferences_path(Some(store.path()));
         app.preferences_store = Some(store);
         app.refresh_inventory();
         if app.preferences.selected_device_id.is_some() {
@@ -316,6 +322,57 @@ impl HostDesktopApp {
         }
     }
 
+    pub fn request_open_selected_device_session(&mut self) {
+        let Some(device_id) = self
+            .selected_device_id
+            .clone()
+            .or_else(|| self.available_device_ids.first().cloned())
+        else {
+            self.session = SessionViewModel::error("No device selected");
+            self.session_window_open = true;
+            self.session_window_deferred_until_streaming = false;
+            self.session_window_device_id = None;
+            return;
+        };
+
+        self.session_window_device_id = Some(device_id.clone());
+
+        let launcher = FleetViewModel::for_launcher(
+            &self.inventory_snapshot.devices,
+            self.startup.direct_receiver.available,
+            &self.runtime_statuses,
+        );
+        let startable = launcher
+            .rows
+            .iter()
+            .find(|row| row.device_id == device_id)
+            .is_some_and(|row| row.start_enabled);
+
+        if startable {
+            self.session_window_open = false;
+            self.session_window_deferred_until_streaming = true;
+            self.request_start_direct_session_for_device(&device_id);
+            self.reconcile_session_window_state();
+            return;
+        }
+
+        self.session_window_open = true;
+        self.session_window_deferred_until_streaming = false;
+        if let Some(device) = self
+            .inventory_snapshot
+            .devices
+            .iter()
+            .find(|device| device.inventory_id == device_id)
+            .cloned()
+        {
+            self.apply_inventory_detail(device);
+        }
+    }
+
+    pub fn session_window_is_visible(&self) -> bool {
+        self.session_window_open
+    }
+
     pub fn request_start_session(&mut self) {
         if self.host_runtime.is_none() {
             let message = "Host runtime unavailable";
@@ -455,6 +512,63 @@ impl HostDesktopApp {
         }
     }
 
+    fn request_start_direct_session_for_device(&mut self, device_id: &str) {
+        self.selected_device_id = Some(device_id.to_string());
+        self.next_runtime_refresh_at = None;
+        self.runtime_refresh_device_id = None;
+
+        let device_name = self
+            .inventory_snapshot
+            .devices
+            .iter()
+            .find(|device| device.inventory_id == device_id)
+            .map(|device| device.display_name.clone())
+            .unwrap_or_else(|| self.device_detail.device_name.clone());
+
+        if self.host_runtime.is_none() {
+            let message = "Host runtime unavailable";
+            self.session = SessionViewModel::error(message);
+            self.diagnostics.host_error = Some(message.into());
+            self.diagnostics.control_summary = "control blocked".into();
+            self.diagnostics.grounding_summary = "grounding blocked".into();
+            self.record_session_start_failure(Some(device_id), message);
+            return;
+        }
+
+        self.session = SessionViewModel::starting();
+        self.diagnostics.host_error = None;
+        self.diagnostics.control_summary = "control bootstrapping".into();
+        self.diagnostics.grounding_summary = "grounding bootstrapping".into();
+        self.record_session_start_attempt(device_id, Some(Self::DIRECT_RECEIVER_SOURCE_ID));
+
+        match self
+            .host_runtime
+            .as_mut()
+            .expect("host runtime should be present")
+            .start_session(
+                device_id,
+                &device_name,
+                Some(Self::DIRECT_RECEIVER_SOURCE_ID.into()),
+                CaptureBackend::Direct,
+            ) {
+            Ok(snapshot) => {
+                self.record_session_start_success(
+                    device_id,
+                    snapshot.workspace.selected_source_id.as_deref(),
+                );
+                self.apply_runtime_snapshot(snapshot);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.session = SessionViewModel::error(&message);
+                self.diagnostics.host_error = Some(message.clone());
+                self.diagnostics.control_summary = "control blocked".into();
+                self.diagnostics.grounding_summary = "grounding blocked".into();
+                self.record_session_start_failure(Some(device_id), &message);
+            }
+        }
+    }
+
     pub fn can_start_direct_receiver(&self) -> bool {
         self.host_runtime.is_some()
             && self.startup.direct_receiver.available
@@ -549,6 +663,9 @@ impl HostDesktopApp {
         self.preview_texture = None;
         self.restored_source_preference = None;
         self.manual_source_selection_device_id = None;
+        self.session_window_open = false;
+        self.session_window_deferred_until_streaming = false;
+        self.session_window_device_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control not started".into();
@@ -567,6 +684,7 @@ impl HostDesktopApp {
             self.session.ui_state,
             crate::view_models::session::SessionUiState::Streaming
                 | crate::view_models::session::SessionUiState::Starting
+                | crate::view_models::session::SessionUiState::WaitingForMirror
         );
         self.manual_source_selection_device_id = self.selected_device_id.clone();
         if let Some(device_id) = self.selected_device_id.clone() {
@@ -609,21 +727,8 @@ impl HostDesktopApp {
             self.selected_device_id = self.available_device_ids.first().cloned();
         }
 
-        self.settings.plugin_rows = statuses
-            .iter()
-            .flat_map(|status| {
-                [
-                    status.summary().capture_plugin.clone(),
-                    status.summary().control_plugin.clone(),
-                    status.summary().grounding_plugin.clone(),
-                ]
-            })
-            .flatten()
-            .collect();
-        self.settings.plugin_rows.sort();
-        self.settings.plugin_rows.dedup();
-
         self.sync_selected_workspace();
+        self.reconcile_session_window_state();
     }
 
     fn sync_selected_workspace(&mut self) {
@@ -634,6 +739,7 @@ impl HostDesktopApp {
             self.device_detail.control_checklist = ControlSetupChecklist { items: Vec::new() };
             self.device_detail.inventory_notes.clear();
             self.session = SessionViewModel::idle();
+            self.reconcile_session_window_state();
             return;
         };
         let status = self
@@ -693,7 +799,15 @@ impl HostDesktopApp {
                 SessionSubstate::Discovering
                 | SessionSubstate::StartingCapture
                 | SessionSubstate::StartingControl
-                | SessionSubstate::Recovering => SessionViewModel::starting(),
+                | SessionSubstate::Recovering => {
+                    if status.backends().capture_backend == "capture.direct"
+                        && workspace.latest_frame.is_none()
+                    {
+                        SessionViewModel::waiting_for_mirror(Some(source))
+                    } else {
+                        SessionViewModel::starting()
+                    }
+                }
                 SessionSubstate::OperatorActionRequired
                 | SessionSubstate::DegradedCapture
                 | SessionSubstate::DegradedControl => SessionViewModel::error(
@@ -703,6 +817,7 @@ impl HostDesktopApp {
                 ),
                 SessionSubstate::Stopped => SessionViewModel::idle(),
             };
+            self.reconcile_session_window_state();
             return;
         }
 
@@ -726,7 +841,13 @@ impl HostDesktopApp {
                 SessionSubstate::Discovering
                 | SessionSubstate::StartingCapture
                 | SessionSubstate::StartingControl
-                | SessionSubstate::Recovering => SessionViewModel::starting(),
+                | SessionSubstate::Recovering => {
+                    if status.backends().capture_backend == "capture.direct" {
+                        SessionViewModel::waiting_for_mirror(Some(source))
+                    } else {
+                        SessionViewModel::starting()
+                    }
+                }
                 SessionSubstate::OperatorActionRequired
                 | SessionSubstate::DegradedCapture
                 | SessionSubstate::DegradedControl => SessionViewModel::error(
@@ -736,6 +857,7 @@ impl HostDesktopApp {
                 ),
                 SessionSubstate::Stopped => SessionViewModel::idle(),
             };
+            self.reconcile_session_window_state();
             return;
         }
 
@@ -750,6 +872,27 @@ impl HostDesktopApp {
         };
 
         self.apply_inventory_detail(device);
+        self.reconcile_session_window_state();
+    }
+
+    fn reconcile_session_window_state(&mut self) {
+        if !self.session_window_deferred_until_streaming {
+            return;
+        }
+
+        match self.session.ui_state {
+            crate::view_models::session::SessionUiState::WaitingForMirror
+            | crate::view_models::session::SessionUiState::Starting => {}
+            crate::view_models::session::SessionUiState::Streaming
+            | crate::view_models::session::SessionUiState::Blocked(_)
+            | crate::view_models::session::SessionUiState::Error(_) => {
+                self.session_window_open = true;
+                self.session_window_deferred_until_streaming = false;
+            }
+            crate::view_models::session::SessionUiState::Idle => {
+                self.session_window_deferred_until_streaming = false;
+            }
+        }
     }
 
     fn apply_inventory_detail(&mut self, device: InventoryDevice) {
@@ -891,7 +1034,12 @@ impl HostDesktopApp {
                 matches!(
                     status.substate(),
                     SessionSubstate::ControlReady | SessionSubstate::Streaming
-                )
+                ) || (status.backends().capture_backend == "capture.direct"
+                    && self
+                        .runtime_workspace
+                        .as_ref()
+                        .filter(|workspace| workspace.device_id == device_id)
+                        .is_some_and(|workspace| workspace.latest_frame.is_none()))
             });
         if streaming {
             Some(device_id)
@@ -994,9 +1142,7 @@ fn sentence_case(message: String) -> String {
 impl eframe::App for HostDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut pending_action = SessionAction::None;
-        let mut selected_device = None;
-        let mut device_detail_action = DeviceDetailAction::None;
-        let mut startup_action = startup::StartupAction::None;
+        let mut launcher_action = LauncherAction::None;
 
         if self.selected_runtime_session_is_streaming() {
             ctx.request_repaint_after(Self::RUNTIME_REFRESH_POLL_INTERVAL);
@@ -1007,41 +1153,55 @@ impl eframe::App for HostDesktopApp {
 
         self.sync_preview_texture(ctx);
 
+        let launcher_rows = FleetViewModel::for_launcher(
+            &self.inventory_snapshot.devices,
+            self.startup.direct_receiver.available,
+            &self.runtime_statuses,
+        );
         egui::CentralPanel::default().show(ctx, |ui| {
-            selected_device = dashboard::render(
-                ui,
-                &self.dashboard,
-                &self.fleet,
-                self.selected_device_id.as_deref(),
-            );
+            launcher_action =
+                launcher::render(ui, &launcher_rows, self.selected_device_id.as_deref());
             ui.separator();
-            device_detail_action = device_detail::render(ui, &self.device_detail);
-            ui.separator();
-            pending_action = session_view::render(ui, &self.session, self.preview_texture.as_ref());
-            ui.separator();
-            let diagnostic_message = match &self.diagnostics.host_error {
-                Some(error) => format!("{} | {}", self.diagnostics.grounding_summary, error),
-                None => self.diagnostics.grounding_summary.clone(),
-            };
-            diagnostics::render(ui, &diagnostic_message);
-            diagnostics::render_control_diagnostics(ui, &self.diagnostics.control_summary);
-            diagnostics::render_host_metrics(ui, &self.diagnostics.metric_lines());
-            diagnostics::render_host_logs(ui, &self.diagnostics.log_lines);
-            ui.separator();
-            settings::render_rows(ui, &self.settings.plugin_rows);
-            ui.separator();
-            startup_action = startup::render(ui, &self.startup);
+            settings::render_rows(ui, &self.settings.rows);
         });
 
-        if let Some(device_id) = selected_device {
-            self.select_device(&device_id);
-            ctx.request_repaint();
+        if self.session_window_open {
+            let viewport_id = egui::ViewportId::from_hash_of("host-desktop-session-window");
+            let title = if self.device_detail.device_name.is_empty() {
+                "Device Session".to_string()
+            } else {
+                format!("Session | {}", self.device_detail.device_name)
+            };
+            ctx.show_viewport_immediate(
+                viewport_id,
+                egui::ViewportBuilder::default()
+                    .with_title(title)
+                    .with_inner_size([900.0, 700.0]),
+                |ctx, _class| {
+                    if ctx.input(|input| input.viewport().close_requested()) {
+                        self.session_window_open = false;
+                        self.session_window_deferred_until_streaming = false;
+                        self.session_window_device_id = None;
+                        return;
+                    }
+
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        pending_action =
+                            session_view::render(ui, &self.session, self.preview_texture.as_ref());
+                    });
+                },
+            );
         }
 
-        match device_detail_action {
-            DeviceDetailAction::None => {}
-            DeviceDetailAction::SelectCaptureSource(source_id) => {
-                self.select_capture_source(&source_id);
+        match launcher_action {
+            LauncherAction::None => {}
+            LauncherAction::SelectDevice(device_id) => {
+                self.select_device(&device_id);
+                ctx.request_repaint();
+            }
+            LauncherAction::OpenDevice(device_id) => {
+                self.select_device(&device_id);
+                self.request_open_selected_device_session();
                 ctx.request_repaint();
             }
         }
@@ -1054,14 +1214,6 @@ impl eframe::App for HostDesktopApp {
             }
             SessionAction::Stop => {
                 self.stop_session();
-                ctx.request_repaint();
-            }
-        }
-
-        match startup_action {
-            startup::StartupAction::None => {}
-            startup::StartupAction::StartDirectReceiver => {
-                self.request_start_direct_receiver();
                 ctx.request_repaint();
             }
         }
