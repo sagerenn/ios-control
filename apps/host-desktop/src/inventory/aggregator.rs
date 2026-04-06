@@ -32,12 +32,14 @@ pub fn aggregate_inventory(observations: Vec<DeviceObservation>) -> InventorySna
 
 fn should_merge(device: &InventoryDevice, observation: &DeviceObservation) -> bool {
     if let (Some(existing), Some(incoming)) = (&device.stable_id, &observation.stable_id) {
-        return existing == incoming;
+        if existing == incoming {
+            return true;
+        }
     }
 
     if let (Some(existing), Some(incoming)) = (&device.known_device_id, &observation.known_device_id)
     {
-        if existing == incoming && observation.live {
+        if existing == incoming && (device.live || observation.live) {
             return true;
         }
     }
