@@ -37,6 +37,29 @@ impl Drop for EnvVarGuard {
     }
 }
 
+struct EnvStringGuard {
+    key: &'static str,
+    original: Option<std::ffi::OsString>,
+}
+
+impl EnvStringGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let original = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvStringGuard {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.take() {
+            env::set_var(self.key, value);
+        } else {
+            env::remove_var(self.key);
+        }
+    }
+}
+
 struct PluginProcess {
     child: Child,
     stdin: ChildStdin,
@@ -148,6 +171,46 @@ fn helper_frame_event_decodes_rgba_rotation_and_health() {
     assert_eq!(event.decode_rgba().unwrap(), vec![1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(event.rotation_degrees, 90);
     assert_eq!(event.health, FrameHealth::Occluded);
+}
+
+#[test]
+fn helper_mode_can_delay_first_stream_once_via_env() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let state_file = std::env::temp_dir().join(format!(
+        "capture-direct-delay-once-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+    let _delay_guard = EnvStringGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200");
+    let _state_guard = EnvStringGuard::set(
+        "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
+        &state_file.display().to_string(),
+    );
+
+    let started = Instant::now();
+    let first = Command::new(env!("CARGO_BIN_EXE_plugin-capture-direct"))
+        .args(["stream", "--source", "direct-1"])
+        .output()
+        .expect("first delayed helper stream should spawn");
+    let first_elapsed = started.elapsed();
+
+    let second_started = Instant::now();
+    let second = Command::new(env!("CARGO_BIN_EXE_plugin-capture-direct"))
+        .args(["stream", "--source", "direct-1"])
+        .output()
+        .expect("second helper stream should spawn");
+    let second_elapsed = second_started.elapsed();
+
+    assert!(first.status.success());
+    assert!(second.status.success());
+    assert!(
+        first_elapsed >= Duration::from_millis(2100),
+        "first helper stream should delay once, elapsed={first_elapsed:?}"
+    );
+    assert!(
+        second_elapsed < Duration::from_secs(2),
+        "second helper stream should return quickly, elapsed={second_elapsed:?}"
+    );
 }
 
 #[cfg(unix)]
