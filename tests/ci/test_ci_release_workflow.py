@@ -13,6 +13,23 @@ CROSS_TOML_PATH = REPO_ROOT / "Cross.toml"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
+    def _extract_runtime_matrix_rows(self, workflow_text: str) -> list[tuple[str, str, str, str]]:
+        pattern = re.compile(
+            r"- runner: (?P<runner>[^\n]+)\n"
+            r"\s+target: (?P<target>[^\n]+)\n"
+            r"\s+uxplay_builder: (?P<uxplay_builder>[^\n]+)\n"
+            r"\s+gstreamer_source: (?P<gstreamer_source>[^\n]+)"
+        )
+        return [
+            (
+                match["runner"],
+                match["target"],
+                match["uxplay_builder"],
+                match["gstreamer_source"],
+            )
+            for match in pattern.finditer(workflow_text)
+        ]
+
     def _extract_release_matrix_rows(self, workflow_text: str) -> list[tuple[str, str, str, str]]:
         pattern = re.compile(
             r"- runner: (?P<runner>[^\n]+)\n"
@@ -53,7 +70,10 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             ],
         )
         self.assertIn("if: github.event_name == 'push'", workflow_text)
-        self.assertIn("needs: [test-native-linux, test-native-windows]", workflow_text)
+        self.assertIn(
+            "needs: [test-native-linux, test-native-windows, build-direct-runtime-matrix]",
+            workflow_text,
+        )
         self.assertIn("runs-on: ${{ matrix.runner }}", workflow_text)
         self.assertIn("- runner: ubuntu-latest", workflow_text)
         self.assertIn("- runner: windows-latest", workflow_text)
@@ -86,14 +106,43 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--package plugin-grounding-core", workflow_text)
         self.assertIn("--package plugin-mock-device", workflow_text)
         self.assertIn("--package ble-helper", workflow_text)
+        self.assertIn("--package direct-beacon", workflow_text)
         self.assertIn("--target ${{ matrix.target }}", workflow_text)
         self.assertIn("--bin-dir target/${{ matrix.target }}/release", workflow_text)
         self.assertIn("--out-dir dist/${{ matrix.target }}", workflow_text)
+        self.assertIn("--runtime-dir runtime", workflow_text)
         self.assertIn("--sha ${{ github.sha }}", workflow_text)
         self.assertIn("--ref-name ${{ github.ref_name }}", workflow_text)
         self.assertIn("--run-number ${{ github.run_number }}", workflow_text)
         self.assertIn("--timestamp ${{ steps.build-metadata.outputs.timestamp }}", workflow_text)
         self.assertIn("if-no-files-found: error", workflow_text)
+        self.assertIn("build-direct-runtime-matrix:", workflow_text)
+        self.assertIn("name: Download direct runtime artifact", workflow_text)
+        self.assertIn("name: direct-runtime-${{ matrix.target }}", workflow_text)
+
+    def test_release_build_structure_requires_runtime_matrix_and_runtime_dir(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("build-direct-runtime-matrix:", workflow_text)
+        self.assertIn(
+            "needs: [test-native-linux, test-native-windows, build-direct-runtime-matrix]",
+            workflow_text,
+        )
+        self.assertIn("name: Download direct runtime artifact", workflow_text)
+        self.assertIn("name: direct-runtime-${{ matrix.target }}", workflow_text)
+        self.assertIn("--runtime-dir runtime", workflow_text)
+        self.assertIn("--package direct-beacon", workflow_text)
+
+    def test_runtime_matrix_rows_match_expected_targets(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(
+            self._extract_runtime_matrix_rows(workflow_text),
+            [
+                ("ubuntu-latest", "x86_64-unknown-linux-gnu", "native", "source"),
+                ("ubuntu-latest", "aarch64-unknown-linux-gnu", "cross", "source"),
+                ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "download"),
+                ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
+            ],
+        )
 
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

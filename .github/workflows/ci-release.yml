@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  UXPLAY_REF: v1.73.6
+  GSTREAMER_VERSION: "1.26.3"
+
 jobs:
   test-native-linux:
     runs-on: ubuntu-latest
@@ -52,9 +56,120 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace
 
-  build-release-matrix:
+  build-direct-runtime-matrix:
     if: github.event_name == 'push'
     needs: [test-native-linux, test-native-windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            uxplay_builder: native
+            gstreamer_source: source
+            beacon_helper_relpath: ../../../helpers/direct-beacon
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            uxplay_builder: cross
+            gstreamer_source: source
+            beacon_helper_relpath: ../../../helpers/direct-beacon
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            uxplay_builder: msys2
+            gstreamer_source: download
+            msystem: UCRT64
+            msys_packages: >-
+              git
+              base-devel
+              mingw-w64-ucrt-x86_64-toolchain
+              mingw-w64-ucrt-x86_64-cmake
+              mingw-w64-ucrt-x86_64-ninja
+              mingw-w64-ucrt-x86_64-meson
+              mingw-w64-ucrt-x86_64-python
+              mingw-w64-ucrt-x86_64-pkgconf
+              unzip
+            beacon_helper_relpath: ../../../helpers/direct-beacon.exe
+          - runner: windows-latest
+            target: aarch64-pc-windows-msvc
+            uxplay_builder: msys2
+            gstreamer_source: source
+            msystem: CLANGARM64
+            msys_packages: >-
+              git
+              base-devel
+              mingw-w64-clang-aarch64-toolchain
+              mingw-w64-clang-aarch64-cmake
+              mingw-w64-clang-aarch64-ninja
+              mingw-w64-clang-aarch64-meson
+              mingw-w64-clang-aarch64-python
+              mingw-w64-clang-aarch64-pkgconf
+              unzip
+            beacon_helper_relpath: ../../../helpers/direct-beacon.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux direct runtime build dependencies
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          build-essential
+          cmake
+          ninja-build
+          meson
+          pkg-config
+          python3
+          python3-pip
+          curl
+          unzip
+          git
+          libssl-dev
+          libplist-dev
+          libasound2-dev
+          libavahi-compat-libdnssd-dev
+          gcc-aarch64-linux-gnu
+          g++-aarch64-linux-gnu
+      - name: Setup MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: ${{ matrix.msys_packages }}
+      - name: Restore direct runtime cache
+        uses: actions/cache@v4
+        with:
+          path: .runtime-cache/${{ matrix.target }}
+          key: direct-runtime-${{ matrix.target }}-${{ env.UXPLAY_REF }}-${{ env.GSTREAMER_VERSION }}
+      - name: Build direct runtime on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: >
+          bash scripts/ci/build_direct_runtime_linux.sh
+          "${{ matrix.target }}"
+          "${{ matrix.uxplay_builder }}"
+          "${{ matrix.gstreamer_source }}"
+          runtime
+          "${{ matrix.beacon_helper_relpath }}"
+      - name: Build direct runtime on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          ./scripts/ci/build_direct_runtime_windows.ps1
+          -Target "${{ matrix.target }}"
+          -GstreamerSource "${{ matrix.gstreamer_source }}"
+          -OutDir runtime
+          -BeaconHelperRelpath "${{ matrix.beacon_helper_relpath }}"
+      - name: Upload direct runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: direct-runtime-${{ matrix.target }}
+          path: runtime
+
+  build-release-matrix:
+    if: github.event_name == 'push'
+    needs: [test-native-linux, test-native-windows, build-direct-runtime-matrix]
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +227,7 @@ jobs:
           --package plugin-grounding-core
           --package plugin-mock-device
           --package ble-helper
+          --package direct-beacon
       - name: Build release binaries with cross
         if: matrix.builder == 'cross'
         shell: bash
@@ -125,6 +241,12 @@ jobs:
           --package plugin-grounding-core
           --package plugin-mock-device
           --package ble-helper
+          --package direct-beacon
+      - name: Download direct runtime artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: direct-runtime-${{ matrix.target }}
+          path: runtime
       - name: Package release archives
         shell: bash
         run: >
@@ -132,6 +254,7 @@ jobs:
           --target ${{ matrix.target }}
           --bin-dir target/${{ matrix.target }}/release
           --out-dir dist/${{ matrix.target }}
+          --runtime-dir runtime
           --sha ${{ github.sha }}
           --ref-name ${{ github.ref_name }}
           --run-number ${{ github.run_number }}

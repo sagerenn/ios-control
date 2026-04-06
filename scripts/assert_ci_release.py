@@ -34,7 +34,7 @@ VALIDATION_SNIPPETS = [
 RELEASE_BUILD_SNIPPETS = [
     "build-release-matrix:",
     "if: github.event_name == 'push'",
-    "needs: [test-native-linux, test-native-windows]",
+    "needs: [test-native-linux, test-native-windows, build-direct-runtime-matrix]",
     "fail-fast: false",
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
@@ -58,8 +58,10 @@ RELEASE_BUILD_SNIPPETS = [
     "--package plugin-grounding-core",
     "--package plugin-mock-device",
     "--package ble-helper",
+    "--package direct-beacon",
     "--bin-dir target/${{ matrix.target }}/release",
     "--out-dir dist/${{ matrix.target }}",
+    "--runtime-dir runtime",
     "--sha ${{ github.sha }}",
     "--ref-name ${{ github.ref_name }}",
     "--run-number ${{ github.run_number }}",
@@ -70,6 +72,15 @@ RELEASE_BUILD_SNIPPETS = [
     "path: dist/${{ matrix.target }}/ios-control-${{ matrix.target }}.${{ matrix.archive_ext }}",
     "path: dist/${{ matrix.target }}/ios-control-plugins-${{ matrix.target }}.${{ matrix.archive_ext }}",
     "if-no-files-found: error",
+]
+
+RUNTIME_BUILD_SNIPPETS = [
+    "build-direct-runtime-matrix:",
+    "direct-runtime-${{ matrix.target }}",
+    "uxplay_builder:",
+    "gstreamer_source:",
+    "scripts/ci/build_direct_runtime_linux.sh",
+    "scripts/ci/build_direct_runtime_windows.ps1",
 ]
 
 CROSS_TARGET = "aarch64-unknown-linux-gnu"
@@ -183,6 +194,24 @@ def _extract_release_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:
     ]
 
 
+def _extract_runtime_matrix_rows(text: str) -> list[tuple[str, str, str, str]]:
+    pattern = (
+        r"- runner: (?P<runner>[^\n]+)\n"
+        r"\s+target: (?P<target>[^\n]+)\n"
+        r"\s+uxplay_builder: (?P<uxplay_builder>[^\n]+)\n"
+        r"\s+gstreamer_source: (?P<gstreamer_source>[^\n]+)"
+    )
+    return [
+        (
+            match["runner"],
+            match["target"],
+            match["uxplay_builder"],
+            match["gstreamer_source"],
+        )
+        for match in re.finditer(pattern, text)
+    ]
+
+
 def _extract_job_block(text: str, job_name: str) -> str:
     header = f"  {job_name}:"
     lines = text.splitlines()
@@ -218,15 +247,43 @@ def assert_release_matrix_rows(text: str) -> None:
         raise AssertionError(f"Release matrix rows must match exactly.\nExpected: {expected}\nActual: {actual}")
 
 
+def assert_runtime_matrix_rows(text: str) -> None:
+    expected = [
+        ("ubuntu-latest", "x86_64-unknown-linux-gnu", "native", "source"),
+        ("ubuntu-latest", "aarch64-unknown-linux-gnu", "cross", "source"),
+        ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "download"),
+        ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
+    ]
+    actual = _extract_runtime_matrix_rows(text)
+    if actual != expected:
+        raise AssertionError(f"Runtime matrix rows must match exactly.\nExpected: {expected}\nActual: {actual}")
+
+
+def assert_runtime_build_structure(text: str) -> None:
+    _assert_snippets(text, RUNTIME_BUILD_SNIPPETS, "runtime build")
+    _assert_snippets(
+        text,
+        [
+            "needs: [test-native-linux, test-native-windows]",
+            "actions/upload-artifact@v4",
+            "name: direct-runtime-${{ matrix.target }}",
+        ],
+        "runtime build structure",
+    )
+    assert_runtime_matrix_rows(text)
+
+
 def assert_release_build_structure(text: str) -> None:
     assert_validation_structure(text)
+    assert_runtime_build_structure(text)
     _assert_snippets(text, RELEASE_BUILD_SNIPPETS, "release build")
     _assert_snippets(
         text,
         [
             "name: Install Linux UI dependencies\n        if: runner.os == 'Linux'\n        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev",
-            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n        shell: bash\n        run: >\n          cargo build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper",
-            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n        shell: bash\n        run: >\n          cross build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper",
+            "name: Build release binaries with cargo\n        if: matrix.builder == 'cargo'\n        shell: bash\n        run: >\n          cargo build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper\n          --package direct-beacon",
+            "name: Build release binaries with cross\n        if: matrix.builder == 'cross'\n        shell: bash\n        run: >\n          cross build --release --target \"${{ matrix.target }}\"\n          --package host-desktop\n          --package plugin-control-ble\n          --package plugin-control-window-bridge\n          --package plugin-capture-window\n          --package plugin-capture-direct\n          --package plugin-grounding-core\n          --package plugin-mock-device\n          --package ble-helper\n          --package direct-beacon",
+            "name: Download direct runtime artifact\n        uses: actions/download-artifact@v5\n        with:\n          name: direct-runtime-${{ matrix.target }}\n          path: runtime",
         ],
         "release build step pairing",
     )
