@@ -6,6 +6,7 @@ use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
 use plugin_capture_direct::backend::{allocate_mock_slot, mock_frame, DIRECT_HEIGHT, DIRECT_WIDTH};
+use plugin_capture_direct::direct_status::DirectCaptureStatus;
 use plugin_capture_direct::helper_launcher::{
     capture_capability, find_helper, read_next_frame_event, run_probe,
 };
@@ -87,6 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut handshaken = false;
     let mut stream: Option<StreamState> = None;
     let mut legacy_frame_index: u64 = 0;
+    let mut direct_status = DirectCaptureStatus::default();
 
     while let Some(line) = lines.next() {
         let line = line?;
@@ -117,6 +119,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             HostToPlugin::ProbeCapture => {
                 let capability = capture_capability(find_helper());
                 let reply = PluginToHost::CaptureCapability { capability };
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::GetCaptureStatus => {
+                let reply = PluginToHost::CaptureStatus {
+                    status: direct_status.to_capture_status(),
+                };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::OpenCaptureStream { source_id } => {
@@ -163,6 +171,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     last_frame_index: 0,
                     slot,
                 });
+                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Opening;
+                direct_status.detail = Some("Waiting for first direct frame".into());
                 let reply = PluginToHost::CaptureStreamOpened { stream: descriptor };
                 write_reply(&mut stdout, &reply)?;
             }
@@ -239,11 +249,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 frame.height = event.height;
                 frame.rotation_degrees = event.rotation_degrees;
                 frame.health = event.health;
+                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Streaming;
+                direct_status.video_health = event.health;
+                direct_status.detail = None;
                 let reply = PluginToHost::CaptureFrame { frame };
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::CloseCaptureStream => {
                 stream = None;
+                direct_status.video_phase = ios_control_contracts::capture::CaptureStreamPhase::Closed;
+                direct_status.detail = Some("Direct stream closed".into());
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
             }
             HostToPlugin::StartDirectCapture => {

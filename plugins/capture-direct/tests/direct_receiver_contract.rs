@@ -1,5 +1,5 @@
+use ios_control_contracts::capture::{AudioStreamPhase, CaptureStreamPhase, FrameHealth};
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
-use ios_control_contracts::capture::FrameHealth;
 use plugin_capture_direct::helper_bridge::HelperFrameEvent;
 use plugin_capture_direct::helper_launcher::{
     capture_capability, read_next_frame_event, run_probe,
@@ -201,6 +201,29 @@ fn direct_probe_accepts_minimal_runtime_bundle_fixture() {
     let capability = capture_capability(None);
     assert!(capability.available, "reason: {:?}", capability.reason);
     assert_eq!(capability.backend_id, "capture.direct.uxplay");
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_status_reports_waiting_before_stream_is_open() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let fixture = write_runtime_bundle_fixture();
+    let _runtime_guard = EnvVarGuard::set("IOS_CONTROL_DIRECT_RUNTIME_ROOT", fixture.path());
+    let mut plugin = PluginProcess::spawn();
+
+    plugin.send(HostToPlugin::Handshake {
+        protocol_version: 3,
+    });
+    assert!(matches!(plugin.recv(), PluginToHost::HandshakeAck { .. }));
+
+    plugin.send(HostToPlugin::GetCaptureStatus);
+    match plugin.recv() {
+        PluginToHost::CaptureStatus { status } => {
+            assert_eq!(status.video_phase, CaptureStreamPhase::Opening);
+            assert_eq!(status.audio.phase, AudioStreamPhase::Idle);
+        }
+        other => panic!("unexpected status reply: {other:?}"),
+    }
 }
 
 #[test]
