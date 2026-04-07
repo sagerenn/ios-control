@@ -202,6 +202,35 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             workflow_text,
         )
 
+    def test_direct_runtime_cache_restore_happens_before_expensive_setup(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertLess(
+            workflow_text.index("name: Restore direct runtime cache"),
+            workflow_text.index("name: Install Linux direct runtime build dependencies"),
+        )
+        self.assertLess(
+            workflow_text.index("name: Restore direct runtime cache"),
+            workflow_text.index("name: Setup MSYS2"),
+        )
+
+    def test_direct_runtime_workflow_skips_expensive_setup_on_exact_cache_hits(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("id: direct-runtime-cache", workflow_text)
+        self.assertIn("steps.direct-runtime-cache.outputs.cache-hit != 'true'", workflow_text)
+
+    def test_direct_runtime_workflow_has_cache_hit_staging_steps(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("name: Stage direct runtime from cache on Linux", workflow_text)
+        self.assertIn("name: Stage direct runtime from cache on Windows", workflow_text)
+
+    def test_linux_runtime_build_script_short_circuits_when_cached_outputs_exist(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertIn("stage_cached_runtime_if_available()", script_text)
+        self.assertLess(
+            script_text.index('stage_cached_runtime_if_available "${out_dir}" "${beacon_helper_relpath}"'),
+            script_text.index('ensure_git_checkout_at_ref "${uxplay_src}"'),
+        )
+
     def test_linux_runtime_build_script_reuses_runtime_cache_root(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
         self.assertNotIn(
@@ -253,6 +282,24 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('import mesonbuild', script_text)
         self.assertIn('@("-m", "mesonbuild.mesonmain")', script_text)
 
+    def test_windows_runtime_build_script_patches_libffi_ffs_for_clangarm64(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerLibffiFfsUsage", script_text)
+        self.assertIn("subprojects\\libffi\\src\\dlmalloc.c", script_text)
+        self.assertIn("__builtin_ffs", script_text)
+        self.assertLess(
+            script_text.index("Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc"),
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+
+    def test_windows_runtime_build_script_short_circuits_when_cached_outputs_exist(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("function Stage-CachedRuntimeIfAvailable", script_text)
+        self.assertLess(
+            script_text.index("Stage-CachedRuntimeIfAvailable -OutDir $OutDir -BeaconHelperRelpath $BeaconHelperRelpath"),
+            script_text.index("Add-PathEntries -Entries (Get-Msys2BinDirectories -Target $Target)"),
+        )
+
     def test_windows_runtime_build_script_reuses_runtime_cache_root(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertNotIn("Remove-Item $WorkRoot -Recurse -Force", script_text)
@@ -264,6 +311,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn("id: msys2", workflow_text)
         self.assertIn("MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}", workflow_text)
+
+    def test_windows_runtime_build_workflow_installs_python_distutils_compatibility(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("mingw-w64-ucrt-x86_64-python-setuptools", workflow_text)
+        self.assertIn("mingw-w64-clang-aarch64-python-setuptools", workflow_text)
 
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

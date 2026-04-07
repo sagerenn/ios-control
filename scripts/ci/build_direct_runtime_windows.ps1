@@ -265,6 +265,81 @@ function Resolve-UxPlayExecutablePath {
     return (Join-Path $BuildRoot "uxplay.exe")
 }
 
+function Invoke-PrepareDirectRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$OutDir,
+        [Parameter(Mandatory = $true)][string]$UxPlayExecutable,
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [Parameter(Mandatory = $true)][string]$BeaconScript,
+        [Parameter(Mandatory = $true)][string]$BeaconHelperRelpath
+    )
+
+    python scripts/prepare_direct_runtime.py `
+      --target $Target `
+      --out-dir $OutDir `
+      --uxplay-path $UxPlayExecutable `
+      --gst-root $GstreamerRoot `
+      --beacon-script $BeaconScript `
+      --beacon-helper-relpath $BeaconHelperRelpath `
+      --python-path "python" `
+      --uxplay-version $env:UXPLAY_REF `
+      --gstreamer-version $env:GSTREAMER_VERSION
+}
+
+function Stage-CachedRuntimeIfAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutDir,
+        [Parameter(Mandatory = $true)][string]$BeaconHelperRelpath,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$UxPlaySrc,
+        [Parameter(Mandatory = $true)][string]$UxPlayBuild,
+        [Parameter(Mandatory = $true)][string]$GstRoot
+    )
+
+    $uxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
+    $beaconScript = Join-Path $UxPlaySrc "Bluetooth_LE_beacon\uxplay-beacon.py"
+    if (-not (Test-Path $uxPlayExecutable) -or -not (Test-GstreamerInstallReady -InstallRoot $GstRoot) -or -not (Test-Path $beaconScript)) {
+        return $false
+    }
+
+    Invoke-PrepareDirectRuntime `
+      -Target $Target `
+      -OutDir $OutDir `
+      -UxPlayExecutable $uxPlayExecutable `
+      -GstreamerRoot $GstRoot `
+      -BeaconScript $beaconScript `
+      -BeaconHelperRelpath $BeaconHelperRelpath
+    return $true
+}
+
+function Repair-GstreamerLibffiFfsUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    if ($Target -ne "aarch64-pc-windows-msvc") {
+        return
+    }
+
+    $dlmallocPath = Join-Path $GstreamerRoot "subprojects\libffi\src\dlmalloc.c"
+    if (-not (Test-Path $dlmallocPath)) {
+        return
+    }
+
+    $legacyMacro = "#define compute_bit2idx(X, I) I = ffs(X)-1"
+    $patchedMacro = "#define compute_bit2idx(X, I) I = __builtin_ffs(X)-1"
+    $dlmallocSource = Get-Content -Raw -Path $dlmallocPath
+    if ($dlmallocSource.Contains($patchedMacro) -or -not $dlmallocSource.Contains($legacyMacro)) {
+        return
+    }
+
+    # clangarm64 does not expose a POSIX ffs declaration here, but the builtin is available.
+    $patchedSource = $dlmallocSource.Replace($legacyMacro, $patchedMacro)
+    Set-Content -Path $dlmallocPath -Value $patchedSource -NoNewline
+}
+
 if (-not $env:UXPLAY_REF) {
     throw "UXPLAY_REF must be set"
 }
@@ -288,6 +363,10 @@ if ($GstreamerSource -ne "source") {
     throw "unsupported Windows GStreamerSource=$GstreamerSource"
 }
 
+if (Stage-CachedRuntimeIfAvailable -OutDir $OutDir -BeaconHelperRelpath $BeaconHelperRelpath -Target $Target -UxPlaySrc $UxPlaySrc -UxPlayBuild $UxPlayBuild -GstRoot $GstRoot) {
+    return
+}
+
 Add-PathEntries -Entries (Get-Msys2BinDirectories -Target $Target)
 $pkgConfigExecutable = Resolve-PkgConfigExecutable
 $env:PKG_CONFIG = $pkgConfigExecutable
@@ -298,6 +377,7 @@ Write-Host "Using Meson command: $($mesonInvocation.Command)"
 
 Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
+Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 
 $mesonSetupArgs = @($mesonInvocation.Arguments + @(
     "setup",
@@ -363,13 +443,10 @@ if (-not (Test-Path $UxPlayExecutable)) {
     $UxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
 }
 
-python scripts/prepare_direct_runtime.py `
-  --target $Target `
-  --out-dir $OutDir `
-  --uxplay-path $UxPlayExecutable `
-  --gst-root $GstRoot `
-  --beacon-script (Join-Path $UxPlaySrc "Bluetooth_LE_beacon\uxplay-beacon.py") `
-  --beacon-helper-relpath $BeaconHelperRelpath `
-  --python-path "python" `
-  --uxplay-version $env:UXPLAY_REF `
-  --gstreamer-version $env:GSTREAMER_VERSION
+Invoke-PrepareDirectRuntime `
+  -Target $Target `
+  -OutDir $OutDir `
+  -UxPlayExecutable $UxPlayExecutable `
+  -GstreamerRoot $GstRoot `
+  -BeaconScript (Join-Path $UxPlaySrc "Bluetooth_LE_beacon\uxplay-beacon.py") `
+  -BeaconHelperRelpath $BeaconHelperRelpath

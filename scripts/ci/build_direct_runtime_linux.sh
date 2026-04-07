@@ -153,7 +153,48 @@ gstreamer_install_ready() {
   [[ -f "${gst_prefix}/lib/pkgconfig/gstreamer-1.0.pc" ]] && [[ -x "${gst_prefix}/bin/gst-launch-1.0" ]]
 }
 
+stage_runtime_bundle() {
+  local runtime_out_dir="$1"
+  local runtime_beacon_helper_relpath="$2"
+
+  python3 "${workspace_root}/scripts/prepare_direct_runtime.py" \
+    --target "${target}" \
+    --out-dir "${runtime_out_dir}" \
+    --uxplay-path "${uxplay_output}" \
+    --gst-root "${gst_prefix}" \
+    --beacon-script "${uxplay_src}/Bluetooth_LE_beacon/uxplay-beacon.py" \
+    --beacon-helper-relpath "${runtime_beacon_helper_relpath}" \
+    --python-path "python3" \
+    --uxplay-version "${UXPLAY_REF}" \
+    --gstreamer-version "${GSTREAMER_VERSION}"
+}
+
+cached_runtime_outputs_ready() {
+  [[ -x "${uxplay_output}" ]] &&
+    [[ -f "${uxplay_src}/Bluetooth_LE_beacon/uxplay-beacon.py" ]] &&
+    gstreamer_install_ready
+}
+
+stage_cached_runtime_if_available() {
+  local runtime_out_dir="$1"
+  local runtime_beacon_helper_relpath="$2"
+
+  if ! cached_runtime_outputs_ready; then
+    return
+  fi
+
+  stage_runtime_bundle "${runtime_out_dir}" "${runtime_beacon_helper_relpath}"
+  exit 0
+}
+
 mkdir -p "${work_root}"
+
+if [[ "${gstreamer_source}" != "source" ]]; then
+  echo "unsupported Linux gstreamer_source=${gstreamer_source}" >&2
+  exit 1
+fi
+
+stage_cached_runtime_if_available "${out_dir}" "${beacon_helper_relpath}"
 
 ensure_git_checkout_at_ref "${uxplay_src}" "https://github.com/FDH2/UxPlay.git" "${UXPLAY_REF}" "${uxplay_ref_file}" \
   "${uxplay_src}" "${uxplay_build}"
@@ -203,11 +244,6 @@ EOF
   )
 fi
 
-if [[ "${gstreamer_source}" != "source" ]]; then
-  echo "unsupported Linux gstreamer_source=${gstreamer_source}" >&2
-  exit 1
-fi
-
 ensure_git_checkout_at_ref "${gst_src}" "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" "${GSTREAMER_VERSION}" "${gstreamer_ref_file}" \
   "${gst_src}" "${gst_build}" "${gst_prefix}" "${meson_site_packages}"
 
@@ -251,13 +287,4 @@ if [[ ! -x "${uxplay_output}" ]]; then
   cmake --build "${uxplay_build}" --parallel
 fi
 
-python3 "${workspace_root}/scripts/prepare_direct_runtime.py" \
-  --target "${target}" \
-  --out-dir "${out_dir}" \
-  --uxplay-path "${uxplay_output}" \
-  --gst-root "${gst_prefix}" \
-  --beacon-script "${uxplay_src}/Bluetooth_LE_beacon/uxplay-beacon.py" \
-  --beacon-helper-relpath "${beacon_helper_relpath}" \
-  --python-path "python3" \
-  --uxplay-version "${UXPLAY_REF}" \
-  --gstreamer-version "${GSTREAMER_VERSION}"
+stage_runtime_bundle "${out_dir}" "${beacon_helper_relpath}"
