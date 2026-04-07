@@ -332,6 +332,31 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_abseil_time_zone_lookup_for_mingw(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerAbseilTimeZoneLookupUsage", script_text)
+        self.assertIn('Get-ChildItem -Path $subprojectsRoot -Directory -Filter "abseil-cpp-*"', script_text)
+        self.assertIn('Join-Path $_.FullName "absl\\time\\internal\\cctz\\src\\time_zone_lookup.cc"', script_text)
+        self.assertIn('::LoadLibraryExW(L\\"icu.dll\\"', script_text)
+        self.assertIn("ucal_getTimeZoneIDForWindowsID", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
     def test_windows_runtime_build_script_short_circuits_when_cached_outputs_exist(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("function Stage-CachedRuntimeIfAvailable", script_text)
