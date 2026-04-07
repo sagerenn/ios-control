@@ -340,6 +340,87 @@ function Repair-GstreamerLibffiFfsUsage {
     Set-Content -Path $dlmallocPath -Value $patchedSource -NoNewline
 }
 
+function Repair-GstreamerIntrospectionDistutilsUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [string]$BuildRoot
+    )
+
+    $candidateRoots = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateRoot in @($GstreamerRoot, $BuildRoot)) {
+        if (-not $candidateRoot -or $candidateRoots.Contains($candidateRoot) -or -not (Test-Path $candidateRoot)) {
+            continue
+        }
+
+        $candidateRoots.Add($candidateRoot)
+    }
+
+    foreach ($candidateRoot in $candidateRoots) {
+        $subprojectsRoot = Join-Path $candidateRoot "subprojects"
+        if (-not (Test-Path $subprojectsRoot)) {
+            continue
+        }
+
+        $giscannerRoots = Get-ChildItem -Path $subprojectsRoot -Directory -Filter "gobject-introspection-*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "giscanner" }
+
+        foreach ($giscannerRoot in $giscannerRoots) {
+            $ccompilerPath = Join-Path $giscannerRoot "ccompiler.py"
+            if (Test-Path $ccompilerPath) {
+                $ccompilerSource = Get-Content -Raw -Path $ccompilerPath
+                $patchedCcompilerSource = $ccompilerSource -replace '(?m)^from distutils\.msvccompiler import MSVCCompiler\r?\n', ''
+                $patchedCcompilerSource = $patchedCcompilerSource.Replace(
+                    "# MSVC9Compiler class, as it does not provide a preprocess()",
+                    "# MSVCCompiler class, as it does not provide a preprocess()"
+                )
+                $patchedCcompilerSource = $patchedCcompilerSource.Replace(
+                    'return isinstance(self.compiler, MSVCCompiler)',
+                    'return self.compiler.compiler_type == "msvc"'
+                )
+                $patchedCcompilerSource = $patchedCcompilerSource.Replace(
+                    'if isinstance(self.compiler, MSVCCompiler):',
+                    'if self.check_is_msvc():'
+                )
+
+                if ($patchedCcompilerSource -ne $ccompilerSource) {
+                    Set-Content -Path $ccompilerPath -Value $patchedCcompilerSource -NoNewline
+                }
+            }
+
+            $msvccompilerPath = Join-Path $giscannerRoot "msvccompiler.py"
+            if (Test-Path $msvccompilerPath) {
+                $msvccompilerSource = Get-Content -Raw -Path $msvccompilerPath
+                $newline = if ($msvccompilerSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+                $distutilsCompilerDefinition = 'DistutilsMSVCCompiler: Type = type(new_compiler(compiler="msvc"))'
+                $patchedMsvccompilerSource = $msvccompilerSource -replace '(?m)^import distutils\r?\n', "from typing import Type$newline"
+                $patchedMsvccompilerSource = $patchedMsvccompilerSource.Replace(
+                    "from distutils.ccompiler import CCompiler, gen_preprocess_options",
+                    "from distutils.ccompiler import CCompiler, gen_preprocess_options, new_compiler"
+                )
+                if (-not $patchedMsvccompilerSource.Contains($distutilsCompilerDefinition)) {
+                    $patchedMsvccompilerSource = $patchedMsvccompilerSource.Replace(
+                        "# Implementation, so do our own here.$newline$newline",
+                        "# Implementation, so do our own here.$newline$newline$distutilsCompilerDefinition$newline$newline"
+                    )
+                }
+                $patchedMsvccompilerSource = $patchedMsvccompilerSource.Replace(
+                    "class MSVCCompiler(distutils.msvccompiler.MSVCCompiler):",
+                    "class MSVCCompiler(DistutilsMSVCCompiler):"
+                )
+                $patchedMsvccompilerSource = $patchedMsvccompilerSource.Replace(
+                    "super(distutils.msvccompiler.MSVCCompiler, self).__init__()",
+                    "super(DistutilsMSVCCompiler, self).__init__()"
+                )
+                $patchedMsvccompilerSource = $patchedMsvccompilerSource -replace "(?m)^        if os\.name == 'nt':\r?\n            if isinstance\(self, distutils\.msvc9compiler\.MSVCCompiler\):\r?\n                self\.__version = distutils\.msvc9compiler\.VERSION\r?\n", ''
+
+                if ($patchedMsvccompilerSource -ne $msvccompilerSource) {
+                    Set-Content -Path $msvccompilerPath -Value $patchedMsvccompilerSource -NoNewline
+                }
+            }
+        }
+    }
+}
+
 if (-not $env:UXPLAY_REF) {
     throw "UXPLAY_REF must be set"
 }
@@ -378,6 +459,7 @@ Write-Host "Using Meson command: $($mesonInvocation.Command)"
 Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 
 $mesonSetupArgs = @($mesonInvocation.Arguments + @(
     "setup",
@@ -401,6 +483,8 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     }
     New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
     & $mesonInvocation.Command @mesonSetupArgs
+    Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+    Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))
 }

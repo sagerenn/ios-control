@@ -287,9 +287,49 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Repair-GstreamerLibffiFfsUsage", script_text)
         self.assertIn("subprojects\\libffi\\src\\dlmalloc.c", script_text)
         self.assertIn("__builtin_ffs", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
         self.assertLess(
-            script_text.index("Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc"),
+            first_patch_index,
             script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
+    def test_windows_runtime_build_script_patches_gobject_introspection_for_python_312(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerIntrospectionDistutilsUsage", script_text)
+        self.assertIn('Get-ChildItem -Path $subprojectsRoot -Directory -Filter "gobject-introspection-*"', script_text)
+        self.assertIn('ForEach-Object { Join-Path $_.FullName "giscanner" }', script_text)
+        self.assertIn('Join-Path $giscannerRoot "ccompiler.py"', script_text)
+        self.assertIn('Join-Path $giscannerRoot "msvccompiler.py"', script_text)
+        self.assertIn('new_compiler(compiler="msvc")', script_text)
+        self.assertIn('return self.compiler.compiler_type == "msvc"', script_text)
+        first_patch_index = script_text.index("Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
     def test_windows_runtime_build_script_short_circuits_when_cached_outputs_exist(self) -> None:
