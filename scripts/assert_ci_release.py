@@ -81,6 +81,7 @@ RUNTIME_BUILD_SNIPPETS = [
     "gstreamer_source:",
     "scripts/ci/build_direct_runtime_linux.sh",
     "scripts/ci/build_direct_runtime_windows.ps1",
+    "hashFiles('.github/workflows/ci-release.yml', 'scripts/ci/build_direct_runtime_linux.sh', 'scripts/ci/build_direct_runtime_windows.ps1')",
 ]
 
 CROSS_TARGET = "aarch64-unknown-linux-gnu"

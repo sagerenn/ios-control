@@ -191,10 +191,33 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('python3 -m mesonbuild.mesonmain "$@"', script_text)
         self.assertIn('run_meson "${meson_args[@]}"', script_text)
 
+    def test_linux_cross_runtime_build_disables_libxml2_python_bindings(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertIn('-Dlibxml2:python=disabled', script_text)
+
+    def test_direct_runtime_cache_key_includes_build_logic_inputs(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "hashFiles('.github/workflows/ci-release.yml', 'scripts/ci/build_direct_runtime_linux.sh', 'scripts/ci/build_direct_runtime_windows.ps1')",
+            workflow_text,
+        )
+
+    def test_linux_runtime_build_script_reuses_runtime_cache_root(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_LINUX_PATH.read_text(encoding="utf-8")
+        self.assertNotIn(
+            'rm -rf "${uxplay_src}" "${uxplay_build}" "${gst_src}" "${gst_build}" "${gst_prefix}" "${meson_site_packages}"',
+            script_text,
+        )
+        self.assertIn('ensure_git_checkout_at_ref "${uxplay_src}" "https://github.com/FDH2/UxPlay.git" "${UXPLAY_REF}"', script_text)
+        self.assertIn(
+            'ensure_git_checkout_at_ref "${gst_src}" "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" "${GSTREAMER_VERSION}"',
+            script_text,
+        )
+
     def test_windows_runtime_build_script_stages_gstreamer_before_configuring_uxplay(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertLess(
-            script_text.index('git clone --depth 1 --branch $env:GSTREAMER_VERSION https://gitlab.freedesktop.org/gstreamer/gstreamer.git $GstSrc'),
+            script_text.index('Ensure-GitCheckoutAtRef -RepoPath $GstSrc'),
             script_text.index('cmake @cmakeArgs'),
         )
 
@@ -213,9 +236,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_windows_runtime_build_script_resolves_meson_from_msys2_for_source_builds(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Resolve-MesonInvocation", script_text)
+        self.assertIn("MSYS2_LOCATION", script_text)
         self.assertIn("meson executable not found on PATH or in common MSYS2 locations", script_text)
-        self.assertIn("C:\\msys64\\clangarm64\\bin\\meson.exe", script_text)
-        self.assertIn("C:\\msys64\\clangarm64\\bin\\python.exe", script_text)
+        self.assertIn('"C:\\msys64"', script_text)
+        self.assertIn('"clangarm64\\bin\\meson.exe"', script_text)
+        self.assertIn('"clangarm64\\bin\\python.exe"', script_text)
         self.assertIn('"meson-script.py"', script_text)
         self.assertIn('"mesonbuild.mesonmain"', script_text)
 
@@ -223,6 +248,18 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn('import mesonbuild', script_text)
         self.assertIn('@("-m", "mesonbuild.mesonmain")', script_text)
+
+    def test_windows_runtime_build_script_reuses_runtime_cache_root(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("Remove-Item $WorkRoot -Recurse -Force", script_text)
+        self.assertIn("Ensure-GitCheckoutAtRef", script_text)
+        self.assertIn('-RepoUrl "https://github.com/FDH2/UxPlay.git"', script_text)
+        self.assertIn('-RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git"', script_text)
+
+    def test_windows_runtime_build_workflow_passes_msys2_install_root_to_script(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("id: msys2", workflow_text)
+        self.assertIn("MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}", workflow_text)
 
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

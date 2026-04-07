@@ -14,9 +14,12 @@ workspace_root="$(pwd)"
 work_root="${workspace_root}/.runtime-cache/${target}"
 uxplay_src="${work_root}/UxPlay"
 uxplay_build="${work_root}/uxplay-build"
+uxplay_output="${uxplay_build}/uxplay"
+uxplay_ref_file="${work_root}/uxplay.ref"
 gst_src="${work_root}/gstreamer"
 gst_build="${work_root}/gstreamer-build"
 gst_prefix="${work_root}/gst-root"
+gstreamer_ref_file="${work_root}/gstreamer.ref"
 meson_site_packages="${work_root}/meson-site-packages"
 
 version_is_at_least() {
@@ -68,8 +71,33 @@ raise SystemExit(f"unsupported Meson version constraint: {constraint}")
 PY
 }
 
+cached_private_meson_version() {
+  [[ -d "${meson_site_packages}" ]] || return 1
+
+  PYTHONPATH="${meson_site_packages}${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 - <<'PY'
+try:
+    from mesonbuild.coredata import version
+except Exception:
+    raise SystemExit(1)
+
+print(version)
+PY
+}
+
 ensure_meson() {
   local required_version="$1"
+
+  if [[ -d "${meson_site_packages}" ]]; then
+    local cached_meson_version
+    if cached_meson_version="$(cached_private_meson_version)"; then
+      if version_is_at_least "${cached_meson_version}" "${required_version}"; then
+        echo "Using cached private Meson ${cached_meson_version}" >&2
+        return
+      fi
+    fi
+    rm -rf "${meson_site_packages}"
+  fi
 
   if command -v meson >/dev/null 2>&1; then
     local system_meson_version
@@ -97,10 +125,38 @@ run_meson() {
   meson "$@"
 }
 
-rm -rf "${uxplay_src}" "${uxplay_build}" "${gst_src}" "${gst_build}" "${gst_prefix}" "${meson_site_packages}"
+ref_marker_matches() {
+  local marker_path="$1"
+  local expected_ref="$2"
+  [[ -f "${marker_path}" ]] || return 1
+  [[ "$(tr -d '\r\n' < "${marker_path}")" == "${expected_ref}" ]]
+}
+
+ensure_git_checkout_at_ref() {
+  local repo_path="$1"
+  local repo_url="$2"
+  local ref="$3"
+  local marker_path="$4"
+  shift 4
+  local reset_paths=("$@")
+
+  if [[ -d "${repo_path}/.git" ]] && ref_marker_matches "${marker_path}" "${ref}"; then
+    return
+  fi
+
+  rm -rf "${reset_paths[@]}"
+  git clone --depth 1 --branch "${ref}" "${repo_url}" "${repo_path}"
+  printf '%s\n' "${ref}" > "${marker_path}"
+}
+
+gstreamer_install_ready() {
+  [[ -f "${gst_prefix}/lib/pkgconfig/gstreamer-1.0.pc" ]] && [[ -x "${gst_prefix}/bin/gst-launch-1.0" ]]
+}
+
 mkdir -p "${work_root}"
 
-git clone --depth 1 --branch "${UXPLAY_REF}" https://github.com/FDH2/UxPlay.git "${uxplay_src}"
+ensure_git_checkout_at_ref "${uxplay_src}" "https://github.com/FDH2/UxPlay.git" "${UXPLAY_REF}" "${uxplay_ref_file}" \
+  "${uxplay_src}" "${uxplay_build}"
 
 cmake_args=(
   -S "${uxplay_src}"
@@ -152,7 +208,8 @@ if [[ "${gstreamer_source}" != "source" ]]; then
   exit 1
 fi
 
-git clone --depth 1 --branch "${GSTREAMER_VERSION}" https://gitlab.freedesktop.org/gstreamer/gstreamer.git "${gst_src}"
+ensure_git_checkout_at_ref "${gst_src}" "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" "${GSTREAMER_VERSION}" "${gstreamer_ref_file}" \
+  "${gst_src}" "${gst_build}" "${gst_prefix}" "${meson_site_packages}"
 
 gst_required_meson_version="$(resolve_gstreamer_meson_requirement "${gst_src}/meson.build")"
 ensure_meson "${gst_required_meson_version}"
@@ -169,25 +226,35 @@ meson_args=(
 )
 
 if [[ "${uxplay_builder}" == "cross" ]]; then
-  meson_args+=(--cross-file "${work_root}/meson-cross.ini")
+  # Prevent libxml2 from auto-building host Python bindings during target cross-compiles.
+  meson_args+=(
+    --cross-file "${work_root}/meson-cross.ini"
+    -Dlibxml2:python=disabled
+  )
 fi
 
-run_meson "${meson_args[@]}"
-run_meson compile -C "${gst_build}"
-run_meson install -C "${gst_build}"
+if ! gstreamer_install_ready; then
+  rm -rf "${gst_build}" "${gst_prefix}"
+  run_meson "${meson_args[@]}"
+  run_meson compile -C "${gst_build}"
+  run_meson install -C "${gst_build}"
+fi
 
 # UxPlay's CMake config uses pkg-config to locate GStreamer modules.
 gst_pkgconfig_path="${gst_prefix}/lib/pkgconfig:${gst_prefix}/lib64/pkgconfig:${gst_prefix}/share/pkgconfig"
 export PKG_CONFIG_PATH="${gst_pkgconfig_path}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
 export CMAKE_PREFIX_PATH="${gst_prefix}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
 
-cmake "${cmake_args[@]}"
-cmake --build "${uxplay_build}" --parallel
+if [[ ! -x "${uxplay_output}" ]]; then
+  rm -rf "${uxplay_build}"
+  cmake "${cmake_args[@]}"
+  cmake --build "${uxplay_build}" --parallel
+fi
 
 python3 "${workspace_root}/scripts/prepare_direct_runtime.py" \
   --target "${target}" \
   --out-dir "${out_dir}" \
-  --uxplay-path "${uxplay_build}/uxplay" \
+  --uxplay-path "${uxplay_output}" \
   --gst-root "${gst_prefix}" \
   --beacon-script "${uxplay_src}/Bluetooth_LE_beacon/uxplay-beacon.py" \
   --beacon-helper-relpath "${beacon_helper_relpath}" \

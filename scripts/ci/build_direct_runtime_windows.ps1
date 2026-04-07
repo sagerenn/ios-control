@@ -29,18 +29,42 @@ function Add-PathEntries {
     $env:PATH = [string]::Join(";", $mergedEntries)
 }
 
+function Get-Msys2RootDirectories {
+    $rootDirectories = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateRoot in @(
+        $env:MSYS2_LOCATION,
+        $(if ($env:RUNNER_TEMP) { Join-Path $env:RUNNER_TEMP "msys64" }),
+        "C:\msys64"
+    )) {
+        if (-not $candidateRoot -or $rootDirectories.Contains($candidateRoot)) {
+            continue
+        }
+        $rootDirectories.Add($candidateRoot)
+    }
+
+    return $rootDirectories
+}
+
 function Get-Msys2BinDirectories {
     param(
         [Parameter(Mandatory = $true)][string]$Target
     )
 
-    $targetBinDirectories = switch ($Target) {
-        "x86_64-pc-windows-msvc" { @("C:\msys64\ucrt64\bin", "C:\msys64\mingw64\bin") }
-        "aarch64-pc-windows-msvc" { @("C:\msys64\clangarm64\bin") }
+    $msys2RootDirectories = Get-Msys2RootDirectories
+    $targetBinSuffixes = switch ($Target) {
+        "x86_64-pc-windows-msvc" { @("ucrt64\bin", "mingw64\bin") }
+        "aarch64-pc-windows-msvc" { @("clangarm64\bin") }
         default { @() }
     }
 
-    return @($targetBinDirectories + @("C:\msys64\usr\bin"))
+    $binDirectories = [System.Collections.Generic.List[string]]::new()
+    foreach ($msys2Root in $msys2RootDirectories) {
+        foreach ($binSuffix in @($targetBinSuffixes) + @("usr\bin")) {
+            $binDirectories.Add((Join-Path $msys2Root $binSuffix))
+        }
+    }
+
+    return $binDirectories
 }
 
 function Resolve-PkgConfigExecutable {
@@ -52,16 +76,23 @@ function Resolve-PkgConfigExecutable {
         }
     }
 
-    $candidatePaths = @(
-        "C:\msys64\ucrt64\bin\pkg-config.exe",
-        "C:\msys64\ucrt64\bin\pkgconf.exe",
-        "C:\msys64\clangarm64\bin\pkg-config.exe",
-        "C:\msys64\clangarm64\bin\pkgconf.exe",
-        "C:\msys64\mingw64\bin\pkg-config.exe",
-        "C:\msys64\mingw64\bin\pkgconf.exe",
-        "C:\msys64\usr\bin\pkg-config.exe",
-        "C:\msys64\usr\bin\pkgconf.exe"
-    )
+    $candidatePaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($msys2Root in Get-Msys2RootDirectories) {
+        foreach ($candidatePath in @(
+            (Join-Path $msys2Root "ucrt64\bin\pkg-config.exe"),
+            (Join-Path $msys2Root "ucrt64\bin\pkgconf.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\pkg-config.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\pkgconf.exe"),
+            (Join-Path $msys2Root "mingw64\bin\pkg-config.exe"),
+            (Join-Path $msys2Root "mingw64\bin\pkgconf.exe"),
+            (Join-Path $msys2Root "usr\bin\pkg-config.exe"),
+            (Join-Path $msys2Root "usr\bin\pkgconf.exe")
+        )) {
+            if (-not $candidatePaths.Contains($candidatePath)) {
+                $candidatePaths.Add($candidatePath)
+            }
+        }
+    }
     foreach ($candidatePath in $candidatePaths) {
         if (Test-Path $candidatePath) {
             return $candidatePath
@@ -69,6 +100,42 @@ function Resolve-PkgConfigExecutable {
     }
 
     throw "pkg-config executable not found on PATH or in common MSYS2 locations"
+}
+
+function Test-RefMarkerMatches {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedRef
+    )
+
+    if (-not (Test-Path $MarkerPath)) {
+        return $false
+    }
+
+    return (Get-Content -Raw -Path $MarkerPath).Trim() -eq $ExpectedRef
+}
+
+function Ensure-GitCheckoutAtRef {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoPath,
+        [Parameter(Mandatory = $true)][string]$RepoUrl,
+        [Parameter(Mandatory = $true)][string]$Ref,
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [string[]]$ResetPaths = @()
+    )
+
+    if ((Test-Path (Join-Path $RepoPath ".git")) -and (Test-RefMarkerMatches -MarkerPath $MarkerPath -ExpectedRef $Ref)) {
+        return
+    }
+
+    foreach ($resetPath in $ResetPaths) {
+        if (Test-Path $resetPath) {
+            Remove-Item $resetPath -Recurse -Force
+        }
+    }
+
+    git clone --depth 1 --branch $Ref $RepoUrl $RepoPath
+    Set-Content -Path $MarkerPath -Value $Ref
 }
 
 function Test-PythonImportsMeson {
@@ -96,12 +163,19 @@ function Resolve-MesonInvocation {
         }
     }
 
-    $candidateExecutables = @(
-        "C:\msys64\ucrt64\bin\meson.exe",
-        "C:\msys64\clangarm64\bin\meson.exe",
-        "C:\msys64\mingw64\bin\meson.exe",
-        "C:\msys64\usr\bin\meson.exe"
-    )
+    $candidateExecutables = [System.Collections.Generic.List[string]]::new()
+    foreach ($msys2Root in Get-Msys2RootDirectories) {
+        foreach ($candidateExecutable in @(
+            (Join-Path $msys2Root "ucrt64\bin\meson.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\meson.exe"),
+            (Join-Path $msys2Root "mingw64\bin\meson.exe"),
+            (Join-Path $msys2Root "usr\bin\meson.exe")
+        )) {
+            if (-not $candidateExecutables.Contains($candidateExecutable)) {
+                $candidateExecutables.Add($candidateExecutable)
+            }
+        }
+    }
     foreach ($candidateExecutable in $candidateExecutables) {
         if (Test-Path $candidateExecutable) {
             return @{
@@ -111,12 +185,19 @@ function Resolve-MesonInvocation {
         }
     }
 
-    $candidatePythonExecutables = @(
-        "C:\msys64\ucrt64\bin\python.exe",
-        "C:\msys64\clangarm64\bin\python.exe",
-        "C:\msys64\mingw64\bin\python.exe",
-        "C:\msys64\usr\bin\python.exe"
-    )
+    $candidatePythonExecutables = [System.Collections.Generic.List[string]]::new()
+    foreach ($msys2Root in Get-Msys2RootDirectories) {
+        foreach ($candidatePythonExecutable in @(
+            (Join-Path $msys2Root "ucrt64\bin\python.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\python.exe"),
+            (Join-Path $msys2Root "mingw64\bin\python.exe"),
+            (Join-Path $msys2Root "usr\bin\python.exe")
+        )) {
+            if (-not $candidatePythonExecutables.Contains($candidatePythonExecutable)) {
+                $candidatePythonExecutables.Add($candidatePythonExecutable)
+            }
+        }
+    }
     foreach ($candidatePythonExecutable in $candidatePythonExecutables) {
         if (-not (Test-Path $candidatePythonExecutable)) {
             continue
@@ -158,6 +239,32 @@ function Resolve-MesonInvocation {
     throw "meson executable not found on PATH or in common MSYS2 locations"
 }
 
+function Test-GstreamerInstallReady {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallRoot
+    )
+
+    return (Test-Path (Join-Path $InstallRoot "lib\pkgconfig\gstreamer-1.0.pc")) -and
+        (Test-Path (Join-Path $InstallRoot "bin\gst-launch-1.0.exe"))
+}
+
+function Resolve-UxPlayExecutablePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildRoot
+    )
+
+    foreach ($candidatePath in @(
+        (Join-Path $BuildRoot "uxplay.exe"),
+        (Join-Path $BuildRoot "Release\uxplay.exe")
+    )) {
+        if (Test-Path $candidatePath) {
+            return $candidatePath
+        }
+    }
+
+    return (Join-Path $BuildRoot "uxplay.exe")
+}
+
 if (-not $env:UXPLAY_REF) {
     throw "UXPLAY_REF must be set"
 }
@@ -169,17 +276,13 @@ $WorkspaceRoot = (Get-Location).Path
 $WorkRoot = Join-Path $WorkspaceRoot ".runtime-cache\$Target"
 $UxPlaySrc = Join-Path $WorkRoot "UxPlay"
 $UxPlayBuild = Join-Path $WorkRoot "uxplay-build"
+$UxPlayRefFile = Join-Path $WorkRoot "uxplay.ref"
 $GstRoot = Join-Path $WorkRoot "gst-root"
 $GstBuild = Join-Path $WorkRoot "gstreamer-build"
 $GstSrc = Join-Path $WorkRoot "gstreamer"
+$GstreamerRefFile = Join-Path $WorkRoot "gstreamer.ref"
 
-if (Test-Path $WorkRoot) {
-    Remove-Item $WorkRoot -Recurse -Force
-}
 New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
-
-git clone --depth 1 --branch $env:UXPLAY_REF https://github.com/FDH2/UxPlay.git $UxPlaySrc
 
 if ($GstreamerSource -ne "source") {
     throw "unsupported Windows GStreamerSource=$GstreamerSource"
@@ -193,7 +296,9 @@ $mesonInvocation = Resolve-MesonInvocation
 Write-Host "Using pkg-config executable: $pkgConfigExecutable"
 Write-Host "Using Meson command: $($mesonInvocation.Command)"
 
-git clone --depth 1 --branch $env:GSTREAMER_VERSION https://gitlab.freedesktop.org/gstreamer/gstreamer.git $GstSrc
+Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
+Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
+
 $mesonSetupArgs = @($mesonInvocation.Arguments + @(
     "setup",
     $GstBuild,
@@ -208,9 +313,17 @@ $mesonSetupArgs = @($mesonInvocation.Arguments + @(
     "-Ddevtools=enabled",
     "-Ddoc=disabled"
 ))
-& $mesonInvocation.Command @mesonSetupArgs
-& $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
-& $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))
+if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
+    foreach ($resetPath in @($GstBuild, $GstRoot)) {
+        if (Test-Path $resetPath) {
+            Remove-Item $resetPath -Recurse -Force
+        }
+    }
+    New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
+    & $mesonInvocation.Command @mesonSetupArgs
+    & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
+    & $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))
+}
 
 if (-not $pkgConfigExecutable) {
     throw "pkg-config executable could not be resolved for GStreamerSource=$GstreamerSource"
@@ -240,13 +353,20 @@ $cmakeArgs = @(
     "-DPKG_CONFIG_EXECUTABLE=$pkgConfigExecutable"
 )
 
-cmake @cmakeArgs
-cmake --build $UxPlayBuild --config Release --parallel
+$UxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
+if (-not (Test-Path $UxPlayExecutable)) {
+    if (Test-Path $UxPlayBuild) {
+        Remove-Item $UxPlayBuild -Recurse -Force
+    }
+    cmake @cmakeArgs
+    cmake --build $UxPlayBuild --config Release --parallel
+    $UxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
+}
 
 python scripts/prepare_direct_runtime.py `
   --target $Target `
   --out-dir $OutDir `
-  --uxplay-path (Join-Path $UxPlayBuild "uxplay.exe") `
+  --uxplay-path $UxPlayExecutable `
   --gst-root $GstRoot `
   --beacon-script (Join-Path $UxPlaySrc "Bluetooth_LE_beacon\uxplay-beacon.py") `
   --beacon-helper-relpath $BeaconHelperRelpath `

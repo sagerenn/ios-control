@@ -187,6 +187,7 @@ jobs:
       - name: Setup MSYS2
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
+        id: msys2
         with:
           msystem: ${{ matrix.msystem }}
           update: true
@@ -195,7 +196,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .runtime-cache/${{ matrix.target }}
-          key: direct-runtime-${{ matrix.target }}-${{ env.UXPLAY_REF }}-${{ env.GSTREAMER_VERSION }}
+          key: direct-runtime-${{ matrix.target }}-${{ env.UXPLAY_REF }}-${{ env.GSTREAMER_VERSION }}-${{ hashFiles('.github/workflows/ci-release.yml', 'scripts/ci/build_direct_runtime_linux.sh', 'scripts/ci/build_direct_runtime_windows.ps1') }}
       - name: Build direct runtime on Linux
         if: runner.os == 'Linux'
         shell: bash
@@ -209,6 +210,8 @@ jobs:
       - name: Build direct runtime on Windows
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: >
           ./scripts/ci/build_direct_runtime_windows.ps1
           -Target "${{ matrix.target }}"
