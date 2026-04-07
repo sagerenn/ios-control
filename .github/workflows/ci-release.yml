@@ -89,7 +89,7 @@ jobs:
               mingw-w64-ucrt-x86_64-pkgconf
               unzip
             beacon_helper_relpath: ../../../helpers/direct-beacon.exe
-          - runner: windows-latest
+          - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
             uxplay_builder: msys2
             gstreamer_source: source

@@ -19,7 +19,7 @@ function Add-PathEntries {
     }
 
     $mergedEntries = [System.Collections.Generic.List[string]]::new()
-    foreach ($entry in @($pathEntries) + @($Entries)) {
+    foreach ($entry in @($Entries) + @($pathEntries)) {
         if (-not $entry -or -not (Test-Path $entry) -or $mergedEntries.Contains($entry)) {
             continue
         }

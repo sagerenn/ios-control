@@ -142,7 +142,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
                 ("ubuntu-latest", "x86_64-unknown-linux-gnu", "native", "source"),
                 ("ubuntu-latest", "aarch64-unknown-linux-gnu", "cross", "source"),
                 ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "source"),
-                ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
+                ("windows-11-arm", "aarch64-pc-windows-msvc", "msys2", "source"),
             ],
         )
 
@@ -232,6 +232,10 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('$env:PKG_CONFIG_PATH =', script_text)
         self.assertIn('$env:CMAKE_PREFIX_PATH =', script_text)
         self.assertIn('-DPKG_CONFIG_EXECUTABLE=', script_text)
+
+    def test_windows_runtime_build_script_prepends_msys2_bins_ahead_of_existing_path(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("foreach ($entry in @($Entries) + @($pathEntries))", script_text)
 
     def test_windows_runtime_build_script_resolves_meson_from_msys2_for_source_builds(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
