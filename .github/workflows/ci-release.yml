@@ -76,7 +76,7 @@ jobs:
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             uxplay_builder: msys2
-            gstreamer_source: download
+            gstreamer_source: source
             msystem: UCRT64
             msys_packages: >-
               git
@@ -170,11 +170,13 @@ jobs:
           curl
           unzip
           git
+          libglib2.0-dev
           libdbus-1-dev
           libssl-dev
           libplist-dev
           libasound2-dev
           libavahi-compat-libdnssd-dev
+          libglib2.0-dev:arm64
           libdbus-1-dev:arm64
           libssl-dev:arm64
           libplist-dev:arm64

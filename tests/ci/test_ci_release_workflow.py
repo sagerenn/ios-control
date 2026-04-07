@@ -141,7 +141,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             [
                 ("ubuntu-latest", "x86_64-unknown-linux-gnu", "native", "source"),
                 ("ubuntu-latest", "aarch64-unknown-linux-gnu", "cross", "source"),
-                ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "download"),
+                ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "source"),
                 ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
             ],
         )
@@ -150,6 +150,8 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn("sudo dpkg --add-architecture arm64", workflow_text)
         self.assertIn("sudo apt-get update", workflow_text)
+        self.assertRegex(workflow_text, r"(?m)^\s*libglib2\.0-dev\s*$")
+        self.assertRegex(workflow_text, r"(?m)^\s*libglib2\.0-dev:arm64\s*$")
         for package in (
             "libdbus-1-dev",
             "libplist-dev",
@@ -192,25 +194,15 @@ class CiReleaseWorkflowTests(unittest.TestCase):
     def test_windows_runtime_build_script_stages_gstreamer_before_configuring_uxplay(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertLess(
-            script_text.index('if ($GstreamerSource -eq "download") {'),
+            script_text.index('git clone --depth 1 --branch $env:GSTREAMER_VERSION https://gitlab.freedesktop.org/gstreamer/gstreamer.git $GstSrc'),
             script_text.index('cmake @cmakeArgs'),
         )
 
-    def test_windows_runtime_build_script_uses_runtime_and_development_installers(self) -> None:
+    def test_windows_runtime_build_script_supports_only_source_builds(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
-        self.assertIn("gstreamer-1.0-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
-        self.assertIn("gstreamer-1.0-devel-msvc-x86_64-$($env:GSTREAMER_VERSION).msi", script_text)
-        self.assertNotIn("merge-modules.zip", script_text)
-
-    def test_windows_runtime_build_script_avoids_explicit_web_request_session_type(self) -> None:
-        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("[Microsoft.PowerShell.Commands.WebRequestSession]::new()", script_text)
-        self.assertIn("-SessionVariable session", script_text)
-
-    def test_windows_runtime_build_script_escapes_colons_after_interpolated_variables(self) -> None:
-        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
-        self.assertNotIn('throw "failed to download $Uri: received HTML instead of a binary payload"', script_text)
-        self.assertIn('throw "failed to download ${Uri}: received HTML instead of a binary payload"', script_text)
+        self.assertIn('throw "unsupported Windows GStreamerSource=$GstreamerSource"', script_text)
+        self.assertNotIn("Invoke-WebRequest", script_text)
+        self.assertNotIn(".msi", script_text)
 
     def test_windows_runtime_build_script_exports_pkg_config_and_prefix_paths(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
@@ -223,7 +215,14 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Resolve-MesonInvocation", script_text)
         self.assertIn("meson executable not found on PATH or in common MSYS2 locations", script_text)
         self.assertIn("C:\\msys64\\clangarm64\\bin\\meson.exe", script_text)
-        self.assertIn("C:\\msys64\\clangarm64\\bin\\meson.py", script_text)
+        self.assertIn("C:\\msys64\\clangarm64\\bin\\python.exe", script_text)
+        self.assertIn('"meson-script.py"', script_text)
+        self.assertIn('"mesonbuild.mesonmain"', script_text)
+
+    def test_windows_runtime_build_script_falls_back_to_python_module_for_meson(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn('import mesonbuild', script_text)
+        self.assertIn('@("-m", "mesonbuild.mesonmain")', script_text)
 
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")

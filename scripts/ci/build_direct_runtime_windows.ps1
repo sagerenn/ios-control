@@ -71,6 +71,19 @@ function Resolve-PkgConfigExecutable {
     throw "pkg-config executable not found on PATH or in common MSYS2 locations"
 }
 
+function Test-PythonImportsMeson {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonExecutable
+    )
+
+    try {
+        & $PythonExecutable "-c" "import mesonbuild" 2>$null | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Resolve-MesonInvocation {
     $commandNames = @("meson.exe", "meson")
     foreach ($commandName in $commandNames) {
@@ -98,109 +111,51 @@ function Resolve-MesonInvocation {
         }
     }
 
-    $candidatePythonMesonPairs = @(
-        @{
-            Python = "C:\msys64\ucrt64\bin\python.exe"
-            Meson = "C:\msys64\ucrt64\bin\meson.py"
-        },
-        @{
-            Python = "C:\msys64\clangarm64\bin\python.exe"
-            Meson = "C:\msys64\clangarm64\bin\meson.py"
-        },
-        @{
-            Python = "C:\msys64\mingw64\bin\python.exe"
-            Meson = "C:\msys64\mingw64\bin\meson.py"
-        },
-        @{
-            Python = "C:\msys64\usr\bin\python.exe"
-            Meson = "C:\msys64\usr\bin\meson.py"
-        }
+    $candidatePythonExecutables = @(
+        "C:\msys64\ucrt64\bin\python.exe",
+        "C:\msys64\clangarm64\bin\python.exe",
+        "C:\msys64\mingw64\bin\python.exe",
+        "C:\msys64\usr\bin\python.exe"
     )
-    foreach ($candidatePair in $candidatePythonMesonPairs) {
-        if ((Test-Path $candidatePair.Python) -and (Test-Path $candidatePair.Meson)) {
+    foreach ($candidatePythonExecutable in $candidatePythonExecutables) {
+        if (-not (Test-Path $candidatePythonExecutable)) {
+            continue
+        }
+
+        $candidateMesonScripts = @("meson.py", "meson-script.py")
+        foreach ($candidateMesonScript in $candidateMesonScripts) {
+            $candidateMesonScriptPath = Join-Path (Split-Path $candidatePythonExecutable -Parent) $candidateMesonScript
+            if (Test-Path $candidateMesonScriptPath) {
+                return @{
+                    Command = $candidatePythonExecutable
+                    Arguments = @($candidateMesonScriptPath)
+                }
+            }
+        }
+    }
+
+    $pathCandidatePythonExecutables = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidatePythonExecutable in $candidatePythonExecutables) {
+        if ((Test-Path $candidatePythonExecutable) -and (-not $pathCandidatePythonExecutables.Contains($candidatePythonExecutable))) {
+            $pathCandidatePythonExecutables.Add($candidatePythonExecutable)
+        }
+    }
+    foreach ($commandName in @("python.exe", "python")) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($command -and -not $pathCandidatePythonExecutables.Contains($command.Source)) {
+            $pathCandidatePythonExecutables.Add($command.Source)
+        }
+    }
+    foreach ($candidatePythonExecutable in $pathCandidatePythonExecutables) {
+        if (Test-PythonImportsMeson -PythonExecutable $candidatePythonExecutable) {
             return @{
-                Command = $candidatePair.Python
-                Arguments = @($candidatePair.Meson)
+                Command = $candidatePythonExecutable
+                Arguments = @("-m", "mesonbuild.mesonmain")
             }
         }
     }
 
     throw "meson executable not found on PATH or in common MSYS2 locations"
-}
-
-function Invoke-DownloadFile {
-    param(
-        [Parameter(Mandatory = $true)][string]$Uri,
-        [Parameter(Mandatory = $true)][string]$OutFile
-    )
-
-    $headers = @{
-        "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-    }
-    $session = $null
-    $currentUri = $Uri
-
-    for ($attempt = 0; $attempt -lt 5; $attempt++) {
-        if (Test-Path $OutFile) {
-            Remove-Item $OutFile -Force
-        }
-
-        if ($null -eq $session) {
-            $response = Invoke-WebRequest `
-                -Uri $currentUri `
-                -Headers $headers `
-                -MaximumRedirection 10 `
-                -OutFile $OutFile `
-                -PassThru `
-                -SessionVariable session
-        } else {
-            $response = Invoke-WebRequest `
-                -Uri $currentUri `
-                -Headers $headers `
-                -MaximumRedirection 10 `
-                -OutFile $OutFile `
-                -PassThru `
-                -WebSession $session
-        }
-
-        $contentType = [string]$response.Headers["Content-Type"]
-        if ((Get-Item $OutFile).Length -gt 0 -and -not $contentType.StartsWith("text/html", [System.StringComparison]::OrdinalIgnoreCase)) {
-            return
-        }
-
-        $html = Get-Content -Raw -Path $OutFile
-        if ($html -match '(?is)<meta[^>]+http-equiv=["'']refresh["''][^>]+content=["''][^;]+;\s*url=([^"''>]+)') {
-            $redirectUri = [System.Net.WebUtility]::HtmlDecode($matches[1]).Trim()
-            $currentUri = [System.Uri]::new([System.Uri]$currentUri, $redirectUri).AbsoluteUri
-            continue
-        }
-        if ($html -match '(?is)location\.(?:href|replace)\(["'']([^"'']+)') {
-            $redirectUri = [System.Net.WebUtility]::HtmlDecode($matches[1]).Trim()
-            $currentUri = [System.Uri]::new([System.Uri]$currentUri, $redirectUri).AbsoluteUri
-            continue
-        }
-
-        throw "failed to download ${Uri}: received HTML instead of a binary payload"
-    }
-
-    throw "failed to download $Uri after following anti-bot redirects"
-}
-
-function Install-MsiToDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$MsiPath,
-        [Parameter(Mandatory = $true)][string]$InstallDir
-    )
-
-    $process = Start-Process `
-        -FilePath "msiexec.exe" `
-        -ArgumentList @("/i", $MsiPath, "/qn", "/norestart", "INSTALLDIR=$InstallDir") `
-        -PassThru `
-        -Wait
-
-    if ($process.ExitCode -ne 0) {
-        throw "msiexec failed for $MsiPath with exit code $($process.ExitCode)"
-    }
 }
 
 if (-not $env:UXPLAY_REF) {
@@ -226,62 +181,36 @@ New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
 
 git clone --depth 1 --branch $env:UXPLAY_REF https://github.com/FDH2/UxPlay.git $UxPlaySrc
 
-$pkgConfigExecutable = $null
-
-if ($GstreamerSource -eq "download") {
-    if ($Target -ne "x86_64-pc-windows-msvc") {
-        throw "download is only supported for x86_64-pc-windows-msvc"
-    }
-
-    $runtimeInstallerPath = Join-Path $WorkRoot "gstreamer-runtime.msi"
-    $develInstallerPath = Join-Path $WorkRoot "gstreamer-devel.msi"
-    $baseUri = "https://gstreamer.freedesktop.org/data/pkg/windows/$($env:GSTREAMER_VERSION)/msvc"
-
-    Invoke-DownloadFile -Uri "$baseUri/gstreamer-1.0-msvc-x86_64-$($env:GSTREAMER_VERSION).msi" -OutFile $runtimeInstallerPath
-    Invoke-DownloadFile -Uri "$baseUri/gstreamer-1.0-devel-msvc-x86_64-$($env:GSTREAMER_VERSION).msi" -OutFile $develInstallerPath
-
-    Install-MsiToDirectory -MsiPath $runtimeInstallerPath -InstallDir $GstRoot
-    Install-MsiToDirectory -MsiPath $develInstallerPath -InstallDir $GstRoot
-
-    foreach ($candidate in @(
-        (Join-Path $GstRoot "bin\pkg-config.exe"),
-        (Join-Path $GstRoot "bin\pkgconf.exe")
-    )) {
-        if (Test-Path $candidate) {
-            $pkgConfigExecutable = $candidate
-            break
-        }
-    }
-} elseif ($GstreamerSource -eq "source") {
-    Add-PathEntries -Entries (Get-Msys2BinDirectories -Target $Target)
-    $pkgConfigExecutable = Resolve-PkgConfigExecutable
-    $env:PKG_CONFIG = $pkgConfigExecutable
-    $mesonInvocation = Resolve-MesonInvocation
-
-    Write-Host "Using pkg-config executable: $pkgConfigExecutable"
-    Write-Host "Using Meson command: $($mesonInvocation.Command)"
-
-    git clone --depth 1 --branch $env:GSTREAMER_VERSION https://gitlab.freedesktop.org/gstreamer/gstreamer.git $GstSrc
-    $mesonSetupArgs = @($mesonInvocation.Arguments + @(
-        "setup",
-        $GstBuild,
-        $GstSrc,
-        "--prefix",
-        $GstRoot,
-        "--libdir",
-        "lib",
-        "-Ddefault_library=shared",
-        "-Dexamples=disabled",
-        "-Dtests=disabled",
-        "-Ddevtools=enabled",
-        "-Ddoc=disabled"
-    ))
-    & $mesonInvocation.Command @mesonSetupArgs
-    & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
-    & $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))
-} else {
-    throw "unsupported GStreamerSource=$GstreamerSource"
+if ($GstreamerSource -ne "source") {
+    throw "unsupported Windows GStreamerSource=$GstreamerSource"
 }
+
+Add-PathEntries -Entries (Get-Msys2BinDirectories -Target $Target)
+$pkgConfigExecutable = Resolve-PkgConfigExecutable
+$env:PKG_CONFIG = $pkgConfigExecutable
+$mesonInvocation = Resolve-MesonInvocation
+
+Write-Host "Using pkg-config executable: $pkgConfigExecutable"
+Write-Host "Using Meson command: $($mesonInvocation.Command)"
+
+git clone --depth 1 --branch $env:GSTREAMER_VERSION https://gitlab.freedesktop.org/gstreamer/gstreamer.git $GstSrc
+$mesonSetupArgs = @($mesonInvocation.Arguments + @(
+    "setup",
+    $GstBuild,
+    $GstSrc,
+    "--prefix",
+    $GstRoot,
+    "--libdir",
+    "lib",
+    "-Ddefault_library=shared",
+    "-Dexamples=disabled",
+    "-Dtests=disabled",
+    "-Ddevtools=enabled",
+    "-Ddoc=disabled"
+))
+& $mesonInvocation.Command @mesonSetupArgs
+& $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
+& $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))
 
 if (-not $pkgConfigExecutable) {
     throw "pkg-config executable could not be resolved for GStreamerSource=$GstreamerSource"

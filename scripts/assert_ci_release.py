@@ -251,7 +251,7 @@ def assert_runtime_matrix_rows(text: str) -> None:
     expected = [
         ("ubuntu-latest", "x86_64-unknown-linux-gnu", "native", "source"),
         ("ubuntu-latest", "aarch64-unknown-linux-gnu", "cross", "source"),
-        ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "download"),
+        ("windows-latest", "x86_64-pc-windows-msvc", "msys2", "source"),
         ("windows-latest", "aarch64-pc-windows-msvc", "msys2", "source"),
     ]
     actual = _extract_runtime_matrix_rows(text)
