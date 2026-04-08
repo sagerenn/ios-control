@@ -330,6 +330,58 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_d3d11_winrt_capture_namespace_usage_for_mingw_headers(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerD3D11WinRTCaptureNamespaceUsage", script_text)
+        self.assertIn("subprojects\\gst-plugins-bad\\sys\\d3d11\\gstd3d11winrtcapture.cpp", script_text)
+        self.assertIn("using namespace Windows::Graphics::DirectX::Direct3D11;", script_text)
+        self.assertIn(
+            '$patchedWinRTCaptureSource = $winRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")',
+            script_text,
+        )
+        first_patch_index = script_text.index("Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
+    def test_windows_runtime_build_script_links_gstcheck_against_threads_for_clangarm64(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerGstCheckThreadDependencyUsage", script_text)
+        self.assertIn("subprojects\\gstreamer\\libs\\gst\\check\\meson.build", script_text)
+        self.assertIn("gstcheck_link_deps = [gst_dep]", script_text)
+        self.assertIn("gstcheck_link_deps += dependency('threads')", script_text)
+        self.assertIn("dependencies : gstcheck_link_deps,", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
     def test_windows_runtime_build_script_patches_gobject_introspection_for_python_312(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerIntrospectionDistutilsUsage", script_text)

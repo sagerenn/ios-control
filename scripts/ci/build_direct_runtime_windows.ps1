@@ -439,6 +439,93 @@ function Repair-GstreamerD3D11WinApiAppHeaderUsage {
     }
 }
 
+function Repair-GstreamerD3D11WinRTCaptureNamespaceUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot
+    )
+
+    $winRTCapturePath = Join-Path $GstreamerRoot "subprojects\gst-plugins-bad\sys\d3d11\gstd3d11winrtcapture.cpp"
+    if (-not (Test-Path $winRTCapturePath)) {
+        return
+    }
+
+    $winRTCaptureSource = Get-Content -Raw -Path $winRTCapturePath
+    $newline = if ($winRTCaptureSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $legacyNamespaceImport = "using namespace Windows::Graphics::DirectX::Direct3D11;"
+    if (-not $winRTCaptureSource.Contains($legacyNamespaceImport)) {
+        return
+    }
+
+    # MinGW's WinRT headers expose the ABI interfaces used below but not this projected namespace.
+    $patchedWinRTCaptureSource = $winRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")
+    if ($patchedWinRTCaptureSource -eq $winRTCaptureSource) {
+        $patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyNamespaceImport, "")
+    }
+
+    if ($patchedWinRTCaptureSource -ne $winRTCaptureSource) {
+        Set-Content -Path $winRTCapturePath -Value $patchedWinRTCaptureSource -NoNewline
+    }
+}
+
+function Repair-GstreamerGstCheckThreadDependencyUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    if ($Target -ne "aarch64-pc-windows-msvc") {
+        return
+    }
+
+    $mesonPath = Join-Path $GstreamerRoot "subprojects\gstreamer\libs\gst\check\meson.build"
+    if (-not (Test-Path $mesonPath)) {
+        return
+    }
+
+    $mesonSource = Get-Content -Raw -Path $mesonPath
+    if ($mesonSource.Contains("gstcheck_link_deps = [gst_dep]")) {
+        return
+    }
+
+    $newline = if ($mesonSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $legacyLibraryDefinition = [string]::Join($newline, @(
+        "gst_check = library('gstcheck-@0@'.format(api_version),",
+        "  gst_check_sources,",
+        "  version : libversion,",
+        "  soversion : soversion,",
+        "  darwin_versions : osxversion,",
+        "  install : true,",
+        "  dependencies : [gst_dep],",
+        "  link_with : [libcheck],",
+        ")"
+    ))
+    if (-not $mesonSource.Contains($legacyLibraryDefinition)) {
+        return
+    }
+
+    # clangarm64's winpthreads headers route clock_gettime() through clock_gettime64 in the threads runtime.
+    $patchedLibraryDefinition = [string]::Join($newline, @(
+        "gstcheck_link_deps = [gst_dep]",
+        "if host_system == 'windows' and host_machine.cpu_family() == 'aarch64'",
+        "  gstcheck_link_deps += dependency('threads')",
+        "endif",
+        "",
+        "gst_check = library('gstcheck-@0@'.format(api_version),",
+        "  gst_check_sources,",
+        "  version : libversion,",
+        "  soversion : soversion,",
+        "  darwin_versions : osxversion,",
+        "  install : true,",
+        "  dependencies : gstcheck_link_deps,",
+        "  link_with : [libcheck],",
+        ")"
+    ))
+    $patchedMesonSource = $mesonSource.Replace($legacyLibraryDefinition, $patchedLibraryDefinition)
+    if ($patchedMesonSource -ne $mesonSource) {
+        Set-Content -Path $mesonPath -Value $patchedMesonSource -NoNewline
+    }
+}
+
 function Repair-GstreamerLibcheckClockGettimeUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -1132,6 +1219,8 @@ Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.o
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
 Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
+Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc
+Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
@@ -1163,6 +1252,8 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
     Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
+    Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc
+    Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
