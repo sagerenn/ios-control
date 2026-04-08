@@ -340,6 +340,37 @@ function Repair-GstreamerLibffiFfsUsage {
     Set-Content -Path $dlmallocPath -Value $patchedSource -NoNewline
 }
 
+function Repair-GstreamerFilesinkFtruncateUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot
+    )
+
+    $filesinkPath = Join-Path $GstreamerRoot "subprojects\gstreamer\plugins\elements\gstfilesink.c"
+    if (-not (Test-Path $filesinkPath)) {
+        return
+    }
+
+    $filesinkSource = Get-Content -Raw -Path $filesinkPath
+    $newline = if ($filesinkSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $legacyFtruncateMacro = [string]::Join($newline, @(
+        "#undef ftruncate",
+        "#define ftruncate _chsize"
+    ))
+    $guardedFtruncateMacro = [string]::Join($newline, @(
+        "#undef ftruncate",
+        "#if !defined(__MINGW32__)",
+        "#define ftruncate _chsize",
+        "#endif"
+    ))
+    if ($filesinkSource.Contains($guardedFtruncateMacro) -or -not $filesinkSource.Contains($legacyFtruncateMacro)) {
+        return
+    }
+
+    # MinGW's unistd.h already exposes a 64-bit ftruncate when _FILE_OFFSET_BITS=64.
+    $patchedFilesinkSource = $filesinkSource.Replace($legacyFtruncateMacro, $guardedFtruncateMacro)
+    Set-Content -Path $filesinkPath -Value $patchedFilesinkSource -NoNewline
+}
+
 function Repair-GstreamerLibcheckClockGettimeUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -354,7 +385,6 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
     if (Test-Path $libcompatHeaderPath) {
         $libcompatHeaderSource = Get-Content -Raw -Path $libcompatHeaderPath
         $newline = if ($libcompatHeaderSource.Contains("`r`n")) { "`r`n" } else { "`n" }
-        $clockGettime64Name = "clock_gettime64"
         $legacyDeclaration = [string]::Join($newline, @(
             "#ifndef HAVE_CLOCK_GETTIME",
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
@@ -365,32 +395,38 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
-        $patchedDeclaration = [string]::Join($newline, @(
+        $clockGettime64Declaration = [string]::Join($newline, @(
+            "#if defined(__MINGW32__) && defined(__aarch64__)",
+            "CK_DLL_EXP int clock_gettime64 (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
+        ))
+        $previousAliasedDeclaration = [string]::Join($newline, @(
+            $guardedDeclaration,
+            $clockGettime64Declaration
+        ))
+        $badPatchedDeclaration = [string]::Join($newline, @(
             "#ifndef HAVE_CLOCK_GETTIME",
             "#if defined(__MINGW32__) && defined(__aarch64__) && defined(clock_gettime)",
             "#undef clock_gettime",
             "#endif",
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
-            "#if defined(__MINGW32__) && defined(__aarch64__)",
-            "CK_DLL_EXP int $clockGettime64Name (clockid_t clk_id, struct timespec *ts);",
-            "#endif",
-            "#endif"
-        ))
-        $previousAliasedDeclaration = [string]::Join($newline, @(
-            $guardedDeclaration,
-            "#if defined(__MINGW32__) && defined(__aarch64__)",
-            "CK_DLL_EXP int $clockGettime64Name (clockid_t clk_id, struct timespec *ts);",
+            $clockGettime64Declaration,
             "#endif"
         ))
 
+        # winpthreads already declares clock_gettime on clangarm64, so libcheck's fallback must stay disabled there.
         $patchedLibcompatHeaderSource = $libcompatHeaderSource
-        if ($patchedLibcompatHeaderSource.Contains($previousAliasedDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $patchedDeclaration)
-        } elseif ($patchedLibcompatHeaderSource.Contains($guardedDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($guardedDeclaration, $patchedDeclaration)
+        if ($patchedLibcompatHeaderSource.Contains($badPatchedDeclaration)) {
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $guardedDeclaration)
+        } elseif ($patchedLibcompatHeaderSource.Contains($previousAliasedDeclaration)) {
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $guardedDeclaration)
         } elseif ($patchedLibcompatHeaderSource.Contains($legacyDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $guardedDeclaration)
         }
+        $clockGettime64DeclarationPattern = '(?ms)^#if defined\(__MINGW32__\) && defined\(__aarch64__\)\r?\nCK_DLL_EXP int clock_gettime64 \(clockid_t clk_id, struct [^\r\n]*\*ts\);\r?\n#endif\r?\n?'
+        $clockGettime64DeclarationLinePattern = '(?m)^CK_DLL_EXP int clock_gettime64 \(clockid_t clk_id, struct [^\r\n]*\*ts\);\r?\n?'
+        $patchedLibcompatHeaderSource = [regex]::Replace($patchedLibcompatHeaderSource, $clockGettime64DeclarationPattern, "")
+        $patchedLibcompatHeaderSource = [regex]::Replace($patchedLibcompatHeaderSource, $clockGettime64DeclarationLinePattern, "")
 
         if ($patchedLibcompatHeaderSource -ne $libcompatHeaderSource) {
             Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
@@ -405,8 +441,16 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
     $clockGettimeSource = Get-Content -Raw -Path $clockGettimePath
     $newline = if ($clockGettimeSource.Contains("`r`n")) { "`r`n" } else { "`n" }
     $guard = "#if !(defined(__MINGW32__) && defined(__aarch64__))"
-    $clockGettime64Name = "clock_gettime64"
-    $macroUndefGuard = [string]::Join($newline, @(
+    $clockGettime64Wrapper = [string]::Join($newline, @(
+        "#if defined(__MINGW32__) && defined(__aarch64__)",
+        "int",
+        "clock_gettime64 (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
+        "{",
+        "  return check_clock_gettime_fallback (clk_id, ts);",
+        "}",
+        "#endif"
+    ))
+    $badPatchedFunctionPrefix = [string]::Join($newline, @(
         "#if defined(__MINGW32__) && defined(__aarch64__) && defined(clock_gettime)",
         "#undef clock_gettime",
         "#endif",
@@ -425,8 +469,8 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
         "static int",
         "check_clock_gettime_fallback (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-    $patchedFunctionStart = [string]::Join($newline, @(
-        $macroUndefGuard.TrimEnd(),
+    $worsePatchedFunctionStart = [string]::Join($newline, @(
+        $badPatchedFunctionPrefix.TrimEnd(),
         "static int",
         "check_clock_gettime_fallback (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
@@ -435,19 +479,19 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
         -not $clockGettimeSource.Contains($legacyFunctionStart) -and
         -not $clockGettimeSource.Contains($guardedFunctionStart) -and
         -not $clockGettimeSource.Contains($badPatchedFunctionStart) -and
-        -not $clockGettimeSource.Contains($patchedFunctionStart)
+        -not $clockGettimeSource.Contains($worsePatchedFunctionStart)
     ) {
         return
     }
 
     $patchedClockGettimeSource = $clockGettimeSource
-    if (-not $patchedClockGettimeSource.Contains($patchedFunctionStart)) {
-        if ($patchedClockGettimeSource.Contains($guardedFunctionStart)) {
-            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($guardedFunctionStart, $patchedFunctionStart)
+    if (-not $patchedClockGettimeSource.Contains($guardedFunctionStart)) {
+        if ($patchedClockGettimeSource.Contains($worsePatchedFunctionStart)) {
+            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($worsePatchedFunctionStart, $guardedFunctionStart)
         } elseif ($patchedClockGettimeSource.Contains($badPatchedFunctionStart)) {
-            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($badPatchedFunctionStart, $patchedFunctionStart)
+            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($badPatchedFunctionStart, $guardedFunctionStart)
         } else {
-            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionStart, $patchedFunctionStart)
+            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionStart, $guardedFunctionStart)
         }
     }
 
@@ -460,7 +504,7 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
         "}",
         "#endif"
     ))
-    $patchedFunctionEnd = [string]::Join($newline, @(
+    $badPatchedFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}",
         "",
@@ -470,21 +514,19 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
         "  return check_clock_gettime_fallback (clk_id, ts);",
         "}",
         "",
-        "#if defined(__MINGW32__) && defined(__aarch64__)",
-        "int",
-        "$clockGettime64Name (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
-        "{",
-        "  return check_clock_gettime_fallback (clk_id, ts);",
-        "}",
-        "#endif"
+        $clockGettime64Wrapper
     ))
-    if (-not $patchedClockGettimeSource.Contains($patchedFunctionEnd)) {
-        if ($patchedClockGettimeSource.Contains($guardedFunctionEnd)) {
-            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($guardedFunctionEnd, $patchedFunctionEnd)
+    if (-not $patchedClockGettimeSource.Contains($guardedFunctionEnd)) {
+        if ($patchedClockGettimeSource.Contains($badPatchedFunctionEnd)) {
+            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($badPatchedFunctionEnd, $guardedFunctionEnd)
         } else {
-            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $patchedFunctionEnd)
+            $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $guardedFunctionEnd)
         }
     }
+    $clockGettime64WrapperPattern = '(?ms)^#if defined\(__MINGW32__\) && defined\(__aarch64__\)\r?\nint\r?\nclock_gettime64 \(clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct [^\r\n]*\*ts\)\r?\n\{\r?\n  return check_clock_gettime_fallback \(clk_id, ts\);\r?\n\}\r?\n#endif\r?\n?'
+    $clockGettime64WrapperBodyPattern = '(?ms)^int\r?\nclock_gettime64 \(clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct [^\r\n]*\*ts\)\r?\n\{\r?\n  return check_clock_gettime_fallback \(clk_id, ts\);\r?\n\}\r?\n?'
+    $patchedClockGettimeSource = [regex]::Replace($patchedClockGettimeSource, $clockGettime64WrapperPattern, "")
+    $patchedClockGettimeSource = [regex]::Replace($patchedClockGettimeSource, $clockGettime64WrapperBodyPattern, "")
 
     if ($patchedClockGettimeSource -ne $clockGettimeSource) {
         Set-Content -Path $clockGettimePath -Value $patchedClockGettimeSource -NoNewline
@@ -1005,6 +1047,7 @@ Write-Host "Using Meson command: $($mesonInvocation.Command)"
 Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
 Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
@@ -1034,6 +1077,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
     & $mesonInvocation.Command @mesonSetupArgs
     Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+    Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
     Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
