@@ -359,15 +359,32 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
-        $patchedDeclaration = [string]::Join($newline, @(
+        $clockGettime64Declaration = [string]::Join($newline, @(
+            "#if defined(__MINGW32__) && defined(__aarch64__)",
+            "CK_DLL_EXP int clock_gettime64 (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
+        ))
+        $legacyPatchedDeclaration = [string]::Join($newline, @(
             "#if !defined(HAVE_CLOCK_GETTIME) && !(defined(__MINGW32__) && defined(__aarch64__))",
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
+        $patchedDeclaration = [string]::Join($newline, @(
+            $legacyPatchedDeclaration,
+            $clockGettime64Declaration
+        ))
 
-        if (-not $libcompatHeaderSource.Contains($patchedDeclaration) -and $libcompatHeaderSource.Contains($legacyDeclaration)) {
-            $patchedLibcompatHeaderSource = $libcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
-            Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
+        if (-not $libcompatHeaderSource.Contains($patchedDeclaration)) {
+            $patchedLibcompatHeaderSource = $libcompatHeaderSource
+            if ($patchedLibcompatHeaderSource.Contains($legacyPatchedDeclaration)) {
+                $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyPatchedDeclaration, $patchedDeclaration)
+            } elseif ($patchedLibcompatHeaderSource.Contains($legacyDeclaration)) {
+                $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
+            }
+
+            if ($patchedLibcompatHeaderSource -ne $libcompatHeaderSource) {
+                Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
+            }
         }
     }
 
@@ -378,35 +395,124 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
 
     $clockGettimeSource = Get-Content -Raw -Path $clockGettimePath
     $newline = if ($clockGettimeSource.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $guard = "#if !(defined(__MINGW32__) && defined(__aarch64__))"
+    $clockGettime64Guard = "#if defined(__MINGW32__) && defined(__aarch64__)"
     $legacyFunctionStart = [string]::Join($newline, @(
         "int",
         "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-    $guardedFunctionStart = [string]::Join($newline, @(
-        $guard,
+    $legacyPatchedFunctionStart = [string]::Join($newline, @(
+        "#if !(defined(__MINGW32__) && defined(__aarch64__))",
         "int",
         "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-
-    if ($clockGettimeSource.Contains($guardedFunctionStart) -or -not $clockGettimeSource.Contains($legacyFunctionStart)) {
+    $patchedFunctionStart = [string]::Join($newline, @(
+        "static int",
+        "check_clock_gettime_fallback (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
+    ))
+    $clockGettime64Wrapper = [string]::Join($newline, @(
+        $clockGettime64Guard,
+        "int",
+        "clock_gettime64 (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
+        "{",
+        "  return check_clock_gettime_fallback (clk_id, ts);",
+        "}",
+        "#endif"
+    ))
+    if ($clockGettimeSource.Contains($clockGettime64Wrapper)) {
         return
     }
 
-    $patchedClockGettimeSource = $clockGettimeSource.Replace($legacyFunctionStart, $guardedFunctionStart)
+    if (-not $clockGettimeSource.Contains($legacyPatchedFunctionStart) -and -not $clockGettimeSource.Contains($legacyFunctionStart)) {
+        return
+    }
+
+    $patchedClockGettimeSource = $clockGettimeSource
+    if ($patchedClockGettimeSource.Contains($legacyPatchedFunctionStart)) {
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyPatchedFunctionStart, $patchedFunctionStart)
+    } else {
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionStart, $patchedFunctionStart)
+    }
+
     $legacyFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}"
     ))
-    $guardedFunctionEnd = [string]::Join($newline, @(
+    $legacyPatchedFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}",
         "#endif"
     ))
-    $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $guardedFunctionEnd)
+    $patchedFunctionEnd = [string]::Join($newline, @(
+        "  return 0;",
+        "}",
+        "",
+        "int",
+        "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
+        "{",
+        "  return check_clock_gettime_fallback (clk_id, ts);",
+        "}",
+        "",
+        $clockGettime64Wrapper
+    ))
+    if ($patchedClockGettimeSource.Contains($legacyPatchedFunctionEnd)) {
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyPatchedFunctionEnd, $patchedFunctionEnd)
+    } else {
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $patchedFunctionEnd)
+    }
 
     if ($patchedClockGettimeSource -ne $clockGettimeSource) {
         Set-Content -Path $clockGettimePath -Value $patchedClockGettimeSource -NoNewline
+    }
+}
+
+function Repair-GstreamerWebRtcTraceEventUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [string]$BuildRoot
+    )
+
+    $candidateRoots = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateRoot in @($GstreamerRoot, $BuildRoot)) {
+        if (-not $candidateRoot -or $candidateRoots.Contains($candidateRoot) -or -not (Test-Path $candidateRoot)) {
+            continue
+        }
+
+        $candidateRoots.Add($candidateRoot)
+    }
+
+    foreach ($candidateRoot in $candidateRoots) {
+        $subprojectsRoot = Join-Path $candidateRoot "subprojects"
+        if (-not (Test-Path $subprojectsRoot)) {
+            continue
+        }
+
+        $traceEventPaths = Get-ChildItem -Path $subprojectsRoot -Directory -Filter "webrtc-audio-processing*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "webrtc\rtc_base\trace_event.h" }
+
+        foreach ($traceEventPath in $traceEventPaths) {
+            if (-not (Test-Path $traceEventPath)) {
+                continue
+            }
+
+            $traceEventSource = Get-Content -Raw -Path $traceEventPath
+            if ($traceEventSource.Contains("#include <cstdint>")) {
+                continue
+            }
+
+            $newline = if ($traceEventSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+            $legacyInclude = "#include <inttypes.h>$newline"
+            if (-not $traceEventSource.Contains($legacyInclude)) {
+                continue
+            }
+
+            $patchedTraceEventSource = $traceEventSource.Replace(
+                $legacyInclude,
+                "#include <inttypes.h>$newline#include <cstdint>$newline"
+            )
+            if ($patchedTraceEventSource -ne $traceEventSource) {
+                Set-Content -Path $traceEventPath -Value $patchedTraceEventSource -NoNewline
+            }
+        }
     }
 }
 
@@ -815,6 +921,7 @@ Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/U
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
+Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 
@@ -842,6 +949,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     & $mesonInvocation.Command @mesonSetupArgs
     Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
+    Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
