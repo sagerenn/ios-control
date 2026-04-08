@@ -359,32 +359,28 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
-        $clockGettime64Declaration = [string]::Join($newline, @(
-            "#if defined(__MINGW32__) && defined(__aarch64__)",
-            "CK_DLL_EXP int clock_gettime64 (clockid_t clk_id, struct timespec *ts);",
-            "#endif"
-        ))
-        $legacyPatchedDeclaration = [string]::Join($newline, @(
+        $patchedDeclaration = [string]::Join($newline, @(
             "#if !defined(HAVE_CLOCK_GETTIME) && !(defined(__MINGW32__) && defined(__aarch64__))",
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
-        $patchedDeclaration = [string]::Join($newline, @(
-            $legacyPatchedDeclaration,
-            $clockGettime64Declaration
+        $clockGettime64Name = "clock_gettime64"
+        $badPatchedDeclaration = [string]::Join($newline, @(
+            $patchedDeclaration,
+            "#if defined(__MINGW32__) && defined(__aarch64__)",
+            "CK_DLL_EXP int $clockGettime64Name (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
         ))
 
-        if (-not $libcompatHeaderSource.Contains($patchedDeclaration)) {
-            $patchedLibcompatHeaderSource = $libcompatHeaderSource
-            if ($patchedLibcompatHeaderSource.Contains($legacyPatchedDeclaration)) {
-                $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyPatchedDeclaration, $patchedDeclaration)
-            } elseif ($patchedLibcompatHeaderSource.Contains($legacyDeclaration)) {
-                $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
-            }
+        $patchedLibcompatHeaderSource = $libcompatHeaderSource
+        if ($patchedLibcompatHeaderSource.Contains($badPatchedDeclaration)) {
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $patchedDeclaration)
+        } elseif ($patchedLibcompatHeaderSource.Contains($legacyDeclaration)) {
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
+        }
 
-            if ($patchedLibcompatHeaderSource -ne $libcompatHeaderSource) {
-                Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
-            }
+        if ($patchedLibcompatHeaderSource -ne $libcompatHeaderSource) {
+            Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
         }
     }
 
@@ -395,54 +391,45 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
 
     $clockGettimeSource = Get-Content -Raw -Path $clockGettimePath
     $newline = if ($clockGettimeSource.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $clockGettime64Guard = "#if defined(__MINGW32__) && defined(__aarch64__)"
+    $guard = "#if !(defined(__MINGW32__) && defined(__aarch64__))"
+    $clockGettime64Name = "clock_gettime64"
     $legacyFunctionStart = [string]::Join($newline, @(
         "int",
         "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-    $legacyPatchedFunctionStart = [string]::Join($newline, @(
-        "#if !(defined(__MINGW32__) && defined(__aarch64__))",
+    $guardedFunctionStart = [string]::Join($newline, @(
+        $guard,
         "int",
         "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-    $patchedFunctionStart = [string]::Join($newline, @(
+    $badPatchedFunctionStart = [string]::Join($newline, @(
         "static int",
         "check_clock_gettime_fallback (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
     ))
-    $clockGettime64Wrapper = [string]::Join($newline, @(
-        $clockGettime64Guard,
-        "int",
-        "clock_gettime64 (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
-        "{",
-        "  return check_clock_gettime_fallback (clk_id, ts);",
-        "}",
-        "#endif"
-    ))
-    if ($clockGettimeSource.Contains($clockGettime64Wrapper)) {
+    if ($clockGettimeSource.Contains($guardedFunctionStart)) {
         return
     }
 
-    if (-not $clockGettimeSource.Contains($legacyPatchedFunctionStart) -and -not $clockGettimeSource.Contains($legacyFunctionStart)) {
+    if (-not $clockGettimeSource.Contains($legacyFunctionStart) -and -not $clockGettimeSource.Contains($badPatchedFunctionStart)) {
         return
     }
 
-    $patchedClockGettimeSource = $clockGettimeSource
-    if ($patchedClockGettimeSource.Contains($legacyPatchedFunctionStart)) {
-        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyPatchedFunctionStart, $patchedFunctionStart)
+    $patchedClockGettimeSource = if ($clockGettimeSource.Contains($badPatchedFunctionStart)) {
+        $clockGettimeSource.Replace($badPatchedFunctionStart, $guardedFunctionStart)
     } else {
-        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionStart, $patchedFunctionStart)
+        $clockGettimeSource.Replace($legacyFunctionStart, $guardedFunctionStart)
     }
 
     $legacyFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}"
     ))
-    $legacyPatchedFunctionEnd = [string]::Join($newline, @(
+    $guardedFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}",
         "#endif"
     ))
-    $patchedFunctionEnd = [string]::Join($newline, @(
+    $badPatchedFunctionEnd = [string]::Join($newline, @(
         "  return 0;",
         "}",
         "",
@@ -452,12 +439,18 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
         "  return check_clock_gettime_fallback (clk_id, ts);",
         "}",
         "",
-        $clockGettime64Wrapper
+        "#if defined(__MINGW32__) && defined(__aarch64__)",
+        "int",
+        "$clockGettime64Name (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)",
+        "{",
+        "  return check_clock_gettime_fallback (clk_id, ts);",
+        "}",
+        "#endif"
     ))
-    if ($patchedClockGettimeSource.Contains($legacyPatchedFunctionEnd)) {
-        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyPatchedFunctionEnd, $patchedFunctionEnd)
+    if ($patchedClockGettimeSource.Contains($badPatchedFunctionEnd)) {
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($badPatchedFunctionEnd, $guardedFunctionEnd)
     } else {
-        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $patchedFunctionEnd)
+        $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $guardedFunctionEnd)
     }
 
     if ($patchedClockGettimeSource -ne $clockGettimeSource) {
@@ -500,15 +493,23 @@ function Repair-GstreamerWebRtcTraceEventUsage {
             }
 
             $newline = if ($traceEventSource.Contains("`r`n")) { "`r`n" } else { "`n" }
-            $legacyInclude = "#include <inttypes.h>$newline"
-            if (-not $traceEventSource.Contains($legacyInclude)) {
+            $inttypesInclude = "#include <inttypes.h>$newline"
+            $stringInclude = "#include <string>$newline"
+            $patchedTraceEventSource = $null
+            if ($traceEventSource.Contains($inttypesInclude)) {
+                $patchedTraceEventSource = $traceEventSource.Replace(
+                    $inttypesInclude,
+                    "#include <inttypes.h>$newline#include <cstdint>$newline"
+                )
+            } elseif ($traceEventSource.Contains($stringInclude)) {
+                $patchedTraceEventSource = $traceEventSource.Replace(
+                    $stringInclude,
+                    "#include <string>$newline#include <cstdint>$newline"
+                )
+            } else {
                 continue
             }
 
-            $patchedTraceEventSource = $traceEventSource.Replace(
-                $legacyInclude,
-                "#include <inttypes.h>$newline#include <cstdint>$newline"
-            )
             if ($patchedTraceEventSource -ne $traceEventSource) {
                 Set-Content -Path $traceEventPath -Value $patchedTraceEventSource -NoNewline
             }
