@@ -371,6 +371,74 @@ function Repair-GstreamerFilesinkFtruncateUsage {
     Set-Content -Path $filesinkPath -Value $patchedFilesinkSource -NoNewline
 }
 
+function Repair-GstreamerD3D11WinApiAppHeaderUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot
+    )
+
+    $mesonPath = Join-Path $GstreamerRoot "subprojects\gst-plugins-bad\sys\d3d11\meson.build"
+    if (-not (Test-Path $mesonPath)) {
+        return
+    }
+
+    $mesonSource = Get-Content -Raw -Path $mesonPath
+    $newline = if ($mesonSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $patchedMesonSource = $mesonSource
+
+    $legacyHeaderProbe = [string]::Join($newline, @(
+        "runtimeobject_lib = cc.find_library('runtimeobject', required : false)",
+        "winmm_lib = cc.find_library('winmm', required: false)"
+    ))
+    $guardedHeaderProbe = [string]::Join($newline, @(
+        "runtimeobject_lib = cc.find_library('runtimeobject', required : false)",
+        "winmm_lib = cc.find_library('winmm', required: false)",
+        "have_winapi_app_xaml_dxinterop_h = cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)"
+    ))
+    if (
+        -not $patchedMesonSource.Contains("have_winapi_app_xaml_dxinterop_h = cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)") -and
+        $patchedMesonSource.Contains($legacyHeaderProbe)
+    ) {
+        $patchedMesonSource = $patchedMesonSource.Replace($legacyHeaderProbe, $guardedHeaderProbe)
+    }
+
+    $legacyWinApiAppBlock = [string]::Join($newline, @(
+        "# if build target is Windows 10 and WINAPI_PARTITION_APP is allowed,",
+        "# we can build UWP only modules as well",
+        "if d3d11_winapi_app",
+        "  d3d11_sources += winapi_app_sources",
+        "  extra_dep += [runtimeobject_lib]",
+        "  if cc.get_id() == 'msvc' and get_option('b_sanitize') == 'address'",
+        "    extra_args += ['/bigobj']",
+        "  endif",
+        "endif"
+    ))
+    $guardedWinApiAppBlock = [string]::Join($newline, @(
+        "# if build target is Windows 10 and WINAPI_PARTITION_APP is allowed,",
+        "# we can build UWP only modules as well",
+        "if d3d11_winapi_app and not have_winapi_app_xaml_dxinterop_h and d3d11_winapi_only_app",
+        "  error('The d3d11 WinAPI app sources require windows.ui.xaml.media.dxinterop.h')",
+        "endif",
+        "",
+        "if d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h",
+        "  d3d11_sources += winapi_app_sources",
+        "  extra_dep += [runtimeobject_lib]",
+        "  if cc.get_id() == 'msvc' and get_option('b_sanitize') == 'address'",
+        "    extra_args += ['/bigobj']",
+        "  endif",
+        "endif"
+    ))
+    if (
+        -not $patchedMesonSource.Contains("if d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h") -and
+        $patchedMesonSource.Contains($legacyWinApiAppBlock)
+    ) {
+        $patchedMesonSource = $patchedMesonSource.Replace($legacyWinApiAppBlock, $guardedWinApiAppBlock)
+    }
+
+    if ($patchedMesonSource -ne $mesonSource) {
+        Set-Content -Path $mesonPath -Value $patchedMesonSource -NoNewline
+    }
+}
+
 function Repair-GstreamerLibcheckClockGettimeUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -395,6 +463,18 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
             "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
             "#endif"
         ))
+        $compatibilityDeclaration = [string]::Join($newline, @(
+            "#if defined(__MINGW32__) && defined(__aarch64__) && defined(clock_gettime)",
+            "#undef clock_gettime",
+            "#endif",
+            "#if defined(__MINGW32__) && defined(__aarch64__)",
+            "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
+        ))
+        $desiredDeclaration = [string]::Join($newline, @(
+            $compatibilityDeclaration,
+            $guardedDeclaration
+        ))
         $clockGettime64Declaration = [string]::Join($newline, @(
             "#if defined(__MINGW32__) && defined(__aarch64__)",
             "CK_DLL_EXP int clock_gettime64 (clockid_t clk_id, struct timespec *ts);",
@@ -414,14 +494,17 @@ function Repair-GstreamerLibcheckClockGettimeUsage {
             "#endif"
         ))
 
-        # winpthreads already declares clock_gettime on clangarm64, so libcheck's fallback must stay disabled there.
+        # clangarm64's pthread_time.h rewrites clock_gettime to clock_gettime64, but libcheck needs
+        # the plain clock_gettime symbol name while still keeping its fallback disabled there.
         $patchedLibcompatHeaderSource = $libcompatHeaderSource
         if ($patchedLibcompatHeaderSource.Contains($badPatchedDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $guardedDeclaration)
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $desiredDeclaration)
         } elseif ($patchedLibcompatHeaderSource.Contains($previousAliasedDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $guardedDeclaration)
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $desiredDeclaration)
+        } elseif ($patchedLibcompatHeaderSource.Contains($guardedDeclaration)) {
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($guardedDeclaration, $desiredDeclaration)
         } elseif ($patchedLibcompatHeaderSource.Contains($legacyDeclaration)) {
-            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $guardedDeclaration)
+            $patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $desiredDeclaration)
         }
         $clockGettime64DeclarationPattern = '(?ms)^#if defined\(__MINGW32__\) && defined\(__aarch64__\)\r?\nCK_DLL_EXP int clock_gettime64 \(clockid_t clk_id, struct [^\r\n]*\*ts\);\r?\n#endif\r?\n?'
         $clockGettime64DeclarationLinePattern = '(?m)^CK_DLL_EXP int clock_gettime64 \(clockid_t clk_id, struct [^\r\n]*\*ts\);\r?\n?'
@@ -1048,6 +1131,7 @@ Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/U
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
+Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
 Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
@@ -1078,6 +1162,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     & $mesonInvocation.Command @mesonSetupArgs
     Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
+    Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
     Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild

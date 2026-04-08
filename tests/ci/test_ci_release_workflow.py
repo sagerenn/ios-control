@@ -305,6 +305,31 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_d3d11_winapi_app_sources_for_missing_xaml_interop_headers(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerD3D11WinApiAppHeaderUsage", script_text)
+        self.assertIn("subprojects\\gst-plugins-bad\\sys\\d3d11\\meson.build", script_text)
+        self.assertIn("have_winapi_app_xaml_dxinterop_h", script_text)
+        self.assertIn("cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)", script_text)
+        self.assertIn("if d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
     def test_windows_runtime_build_script_patches_gobject_introspection_for_python_312(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerIntrospectionDistutilsUsage", script_text)
@@ -454,11 +479,11 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("#if !defined(HAVE_CLOCK_GETTIME) && !(defined(__MINGW32__) && defined(__aarch64__))", script_text)
         self.assertIn("#if !(defined(__MINGW32__) && defined(__aarch64__))", script_text)
         self.assertIn(
-            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $guardedDeclaration)",
+            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($badPatchedDeclaration, $desiredDeclaration)",
             script_text,
         )
         self.assertIn(
-            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $guardedDeclaration)",
+            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($previousAliasedDeclaration, $desiredDeclaration)",
             script_text,
         )
         self.assertIn(
@@ -501,6 +526,21 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("$clockGettime64WrapperPattern", script_text)
         self.assertIn(
             '$patchedClockGettimeSource = [regex]::Replace($patchedClockGettimeSource, $clockGettime64WrapperPattern, "")',
+            script_text,
+        )
+
+    def test_windows_runtime_build_script_normalizes_clangarm64_clock_gettime_macro_in_libcheck_header(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("$compatibilityDeclaration = [string]::Join($newline, @(", script_text)
+        self.assertIn("#if defined(__MINGW32__) && defined(__aarch64__) && defined(clock_gettime)", script_text)
+        self.assertIn("#undef clock_gettime", script_text)
+        self.assertIn("$desiredDeclaration = [string]::Join($newline, @(", script_text)
+        self.assertIn(
+            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($guardedDeclaration, $desiredDeclaration)",
+            script_text,
+        )
+        self.assertIn(
+            "$patchedLibcompatHeaderSource = $patchedLibcompatHeaderSource.Replace($legacyDeclaration, $desiredDeclaration)",
             script_text,
         )
 
