@@ -339,9 +339,40 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('Join-Path $_.FullName "absl\\time\\internal\\cctz\\src\\time_zone_lookup.cc"', script_text)
         self.assertIn('::LoadLibraryExW(L"icu.dll"', script_text)
         self.assertIn("ucal_getTimeZoneIDForWindowsID", script_text)
+        self.assertIn("using UcalGetTimeZoneIDForWindowsIDFn = int32_t(WINAPI*)(", script_text)
+        self.assertIn("std::array<wchar_t, 128> buffer;", script_text)
+        self.assertIn("int status = 0;", script_text)
+        self.assertNotIn("#if __has_include(<icu.h>)", script_text)
+        self.assertNotIn("#include <icu.h>", script_text)
+        self.assertNotIn("decltype(ucal_getTimeZoneIDForWindowsID)", script_text)
         first_patch_index = script_text.index("Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc")
         second_patch_index = script_text.index(
             "Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
+    def test_windows_runtime_build_script_patches_libcheck_clock_gettime_for_clangarm64(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerLibcheckClockGettimeUsage", script_text)
+        self.assertIn('if ($Target -ne "aarch64-pc-windows-msvc") {', script_text)
+        self.assertIn("subprojects\\gstreamer\\libs\\gst\\check\\libcheck\\libcompat\\libcompat.h", script_text)
+        self.assertIn("subprojects\\gstreamer\\libs\\gst\\check\\libcheck\\libcompat\\clock_gettime.c", script_text)
+        self.assertIn("defined(__MINGW32__) && defined(__aarch64__)", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc",
             first_patch_index + 1,
         )
         self.assertLess(

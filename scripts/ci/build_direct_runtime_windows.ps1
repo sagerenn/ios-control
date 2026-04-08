@@ -340,6 +340,76 @@ function Repair-GstreamerLibffiFfsUsage {
     Set-Content -Path $dlmallocPath -Value $patchedSource -NoNewline
 }
 
+function Repair-GstreamerLibcheckClockGettimeUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    if ($Target -ne "aarch64-pc-windows-msvc") {
+        return
+    }
+
+    $libcompatHeaderPath = Join-Path $GstreamerRoot "subprojects\gstreamer\libs\gst\check\libcheck\libcompat\libcompat.h"
+    if (Test-Path $libcompatHeaderPath) {
+        $libcompatHeaderSource = Get-Content -Raw -Path $libcompatHeaderPath
+        $newline = if ($libcompatHeaderSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $legacyDeclaration = [string]::Join($newline, @(
+            "#ifndef HAVE_CLOCK_GETTIME",
+            "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
+        ))
+        $patchedDeclaration = [string]::Join($newline, @(
+            "#if !defined(HAVE_CLOCK_GETTIME) && !(defined(__MINGW32__) && defined(__aarch64__))",
+            "CK_DLL_EXP int clock_gettime (clockid_t clk_id, struct timespec *ts);",
+            "#endif"
+        ))
+
+        if (-not $libcompatHeaderSource.Contains($patchedDeclaration) -and $libcompatHeaderSource.Contains($legacyDeclaration)) {
+            $patchedLibcompatHeaderSource = $libcompatHeaderSource.Replace($legacyDeclaration, $patchedDeclaration)
+            Set-Content -Path $libcompatHeaderPath -Value $patchedLibcompatHeaderSource -NoNewline
+        }
+    }
+
+    $clockGettimePath = Join-Path $GstreamerRoot "subprojects\gstreamer\libs\gst\check\libcheck\libcompat\clock_gettime.c"
+    if (-not (Test-Path $clockGettimePath)) {
+        return
+    }
+
+    $clockGettimeSource = Get-Content -Raw -Path $clockGettimePath
+    $newline = if ($clockGettimeSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $guard = "#if !(defined(__MINGW32__) && defined(__aarch64__))"
+    $legacyFunctionStart = [string]::Join($newline, @(
+        "int",
+        "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
+    ))
+    $guardedFunctionStart = [string]::Join($newline, @(
+        $guard,
+        "int",
+        "clock_gettime (clockid_t clk_id CK_ATTRIBUTE_UNUSED, struct timespec *ts)"
+    ))
+
+    if ($clockGettimeSource.Contains($guardedFunctionStart) -or -not $clockGettimeSource.Contains($legacyFunctionStart)) {
+        return
+    }
+
+    $patchedClockGettimeSource = $clockGettimeSource.Replace($legacyFunctionStart, $guardedFunctionStart)
+    $legacyFunctionEnd = [string]::Join($newline, @(
+        "  return 0;",
+        "}"
+    ))
+    $guardedFunctionEnd = [string]::Join($newline, @(
+        "  return 0;",
+        "}",
+        "#endif"
+    ))
+    $patchedClockGettimeSource = $patchedClockGettimeSource.Replace($legacyFunctionEnd, $guardedFunctionEnd)
+
+    if ($patchedClockGettimeSource -ne $clockGettimeSource) {
+        Set-Content -Path $clockGettimePath -Value $patchedClockGettimeSource -NoNewline
+    }
+}
+
 function Repair-GstreamerIntrospectionDistutilsUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -479,28 +549,13 @@ function Repair-GstreamerAbseilTimeZoneLookupUsage {
                 )),
                 [string]::Join($newline, @(
                     "#if defined(_WIN32)",
-                    "// Include only when <icu.h> is available.",
-                    "// https://learn.microsoft.com/en-us/windows/win32/intl/international-components-for-unicode--icu-",
-                    "// https://devblogs.microsoft.com/oldnewthing/20210527-00/?p=105255",
-                    "#if defined(__has_include)",
-                    "#if __has_include(<icu.h>)",
+                    "// Load the Windows ICU entry point dynamically instead of depending on",
+                    "// whichever <icu.h> happens to appear first on the MinGW include path.",
                     "#define USE_WIN32_LOCAL_TIME_ZONE",
                     "#include <windows.h>",
-                    '#pragma push_macro("_WIN32_WINNT")',
-                    '#pragma push_macro("NTDDI_VERSION")',
-                    "// Minimum _WIN32_WINNT and NTDDI_VERSION to use ucal_getTimeZoneIDForWindowsID",
-                    "#undef _WIN32_WINNT",
-                    "#define _WIN32_WINNT 0x0A00  // == _WIN32_WINNT_WIN10",
-                    "#undef NTDDI_VERSION",
-                    "#define NTDDI_VERSION 0x0A000004  // == NTDDI_WIN10_RS3",
-                    "#include <icu.h>",
-                    '#pragma pop_macro("NTDDI_VERSION")',
-                    '#pragma pop_macro("_WIN32_WINNT")',
                     "#include <timezoneapi.h>",
                     "",
                     "#include <atomic>",
-                    "#endif  // __has_include(<icu.h>)",
-                    "#endif  // __has_include",
                     "#endif  // _WIN32"
                 ))
             )
@@ -596,11 +651,14 @@ function Repair-GstreamerAbseilTimeZoneLookupUsage {
                 )),
                 [string]::Join($newline, @(
                     "// MSYS2's MinGW headers do not reliably expose the WinRT string helpers that",
-                    "// this older Abseil release expects. Update the vendored file to the newer",
-                    "// ICU-based upstream implementation before compiling GStreamer on Windows.",
+                    "// this older Abseil release expects, and some toolchains resolve <icu.h> to",
+                    "// a header that does not declare the Windows ICU API we need here.",
+                    "using UcalGetTimeZoneIDForWindowsIDFn = int32_t(WINAPI*)(",
+                    "    const wchar_t*, int32_t, const char*, wchar_t*, int32_t, int*);",
+                    "",
                     "// True if we have already failed to load the API.",
                     "static std::atomic_bool g_ucal_getTimeZoneIDForWindowsIDUnavailable;",
-                    "static std::atomic<decltype(ucal_getTimeZoneIDForWindowsID)*>",
+                    "static std::atomic<UcalGetTimeZoneIDForWindowsIDFn>",
                     "    g_ucal_getTimeZoneIDForWindowsIDRef;",
                     "",
                     "std::string win32_local_time_zone() {",
@@ -626,7 +684,7 @@ function Repair-GstreamerAbseilTimeZoneLookupUsage {
                     "    }",
                     "",
                     "    ucal_getTimeZoneIDForWindowsIDFunc =",
-                    "        reinterpret_cast<decltype(ucal_getTimeZoneIDForWindowsID)*>(",
+                    "        reinterpret_cast<UcalGetTimeZoneIDForWindowsIDFn>(",
                     '            ::GetProcAddress(icudll, "ucal_getTimeZoneIDForWindowsID"));',
                     "",
                     "    if (ucal_getTimeZoneIDForWindowsIDFunc == nullptr) {",
@@ -648,23 +706,23 @@ function Repair-GstreamerAbseilTimeZoneLookupUsage {
                     '    return "";',
                     "  }",
                     "",
-                    "  std::array<UChar, 128> buffer;",
-                    "  UErrorCode status = U_ZERO_ERROR;",
+                    "  std::array<wchar_t, 128> buffer;",
+                    "  int status = 0;",
                     "  const auto num_chars_in_buffer = ucal_getTimeZoneIDForWindowsIDFunc(",
-                    "      reinterpret_cast<const UChar*>(info.TimeZoneKeyName), -1, nullptr,",
+                    "      info.TimeZoneKeyName, -1, nullptr,",
                     "      buffer.data(), static_cast<int32_t>(buffer.size()), &status);",
-                    "  if (status != U_ZERO_ERROR || num_chars_in_buffer <= 0 ||",
+                    "  if (status != 0 || num_chars_in_buffer <= 0 ||",
                     "      num_chars_in_buffer > static_cast<int32_t>(buffer.size())) {",
                     '    return "";',
                     "  }",
                     "",
                     "  const int num_bytes_in_utf8 = ::WideCharToMultiByte(",
-                    "      CP_UTF8, 0, reinterpret_cast<const wchar_t*>(buffer.data()),",
+                    "      CP_UTF8, 0, buffer.data(),",
                     "      static_cast<int>(num_chars_in_buffer), nullptr, 0, nullptr, nullptr);",
                     "  std::string local_time_str;",
                     "  local_time_str.resize(static_cast<size_t>(num_bytes_in_utf8));",
                     "  ::WideCharToMultiByte(",
-                    "      CP_UTF8, 0, reinterpret_cast<const wchar_t*>(buffer.data()),",
+                    "      CP_UTF8, 0, buffer.data(),",
                     "      static_cast<int>(num_chars_in_buffer), &local_time_str[0],",
                     "      num_bytes_in_utf8, nullptr, nullptr);",
                     "  return local_time_str;",
@@ -756,6 +814,7 @@ Write-Host "Using Meson command: $($mesonInvocation.Command)"
 Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 
@@ -782,6 +841,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     New-Item -ItemType Directory -Force -Path $GstRoot | Out-Null
     & $mesonInvocation.Command @mesonSetupArgs
     Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
+    Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
