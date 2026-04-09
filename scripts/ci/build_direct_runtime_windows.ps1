@@ -467,6 +467,68 @@ function Repair-GstreamerD3D11WinRTCaptureNamespaceUsage {
     }
 }
 
+function Repair-GstreamerD3D12GraphicsCaptureHeaderUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot
+    )
+
+    $graphicsCapturePath = Join-Path $GstreamerRoot "subprojects\gst-plugins-bad\sys\d3d12\gstd3d12graphicscapture.cpp"
+    if (-not (Test-Path $graphicsCapturePath)) {
+        return
+    }
+
+    $graphicsCaptureSource = Get-Content -Raw -Path $graphicsCapturePath
+    $newline = if ($graphicsCaptureSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $patchedGraphicsCaptureSource = $graphicsCaptureSource
+
+    $legacyWrlInclude = "#include <wrl.h>"
+    $portableWrlInclude = [string]::Join($newline, @(
+        "#include <wrl.h>",
+        "#include <wrl/implements.h>"
+    ))
+    if (
+        -not $patchedGraphicsCaptureSource.Contains("#include <wrl/implements.h>") -and
+        $patchedGraphicsCaptureSource.Contains($legacyWrlInclude)
+    ) {
+        $patchedGraphicsCaptureSource = $patchedGraphicsCaptureSource.Replace($legacyWrlInclude, $portableWrlInclude)
+    }
+
+    $legacyNamespaceImport = "using namespace Windows::Graphics::DirectX::Direct3D11;"
+    if ($patchedGraphicsCaptureSource.Contains($legacyNamespaceImport + $newline)) {
+        $patchedGraphicsCaptureSource = $patchedGraphicsCaptureSource.Replace($legacyNamespaceImport + $newline, "")
+    } elseif ($patchedGraphicsCaptureSource.Contains($legacyNamespaceImport)) {
+        $patchedGraphicsCaptureSource = $patchedGraphicsCaptureSource.Replace($legacyNamespaceImport, "")
+    }
+
+    $legacyFrameArrivedHandler = [string]::Join($newline, @(
+        "typedef ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CGraphics__CCapture__CDirect3D11CaptureFramePool_IInspectable_t",
+        "    IFrameArrivedHandler;"
+    ))
+    $portableFrameArrivedHandler = [string]::Join($newline, @(
+        "typedef ABI::Windows::Foundation::ITypedEventHandler<ABI::Windows::Graphics::Capture::Direct3D11CaptureFramePool*, IInspectable*>",
+        "    IFrameArrivedHandler;"
+    ))
+    if ($patchedGraphicsCaptureSource.Contains($legacyFrameArrivedHandler)) {
+        $patchedGraphicsCaptureSource = $patchedGraphicsCaptureSource.Replace($legacyFrameArrivedHandler, $portableFrameArrivedHandler)
+    }
+
+    $legacyItemClosedHandler = [string]::Join($newline, @(
+        "typedef ABI::Windows::Foundation::__FITypedEventHandler_2_Windows__CGraphics__CCapture__CGraphicsCaptureItem_IInspectable_t",
+        "    IItemClosedHandler;"
+    ))
+    $portableItemClosedHandler = [string]::Join($newline, @(
+        "typedef ABI::Windows::Foundation::ITypedEventHandler<ABI::Windows::Graphics::Capture::GraphicsCaptureItem*, IInspectable*>",
+        "    IItemClosedHandler;"
+    ))
+    if ($patchedGraphicsCaptureSource.Contains($legacyItemClosedHandler)) {
+        $patchedGraphicsCaptureSource = $patchedGraphicsCaptureSource.Replace($legacyItemClosedHandler, $portableItemClosedHandler)
+    }
+
+    if ($patchedGraphicsCaptureSource -ne $graphicsCaptureSource) {
+        Set-Content -Path $graphicsCapturePath -Value $patchedGraphicsCaptureSource -NoNewline
+    }
+}
+
 function Repair-GstreamerGstCheckThreadDependencyUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -483,7 +545,7 @@ function Repair-GstreamerGstCheckThreadDependencyUsage {
     }
 
     $mesonSource = Get-Content -Raw -Path $mesonPath
-    if ($mesonSource.Contains("gstcheck_link_deps = [gst_dep]")) {
+    if ($mesonSource.Contains("winpthread_dep = cc.find_library('winpthread', required : false)")) {
         return
     }
 
@@ -503,8 +565,7 @@ function Repair-GstreamerGstCheckThreadDependencyUsage {
         return
     }
 
-    # clangarm64's winpthreads headers route clock_gettime() through clock_gettime64 in the threads runtime.
-    $patchedLibraryDefinition = [string]::Join($newline, @(
+    $previousPatchedLibraryDefinition = [string]::Join($newline, @(
         "gstcheck_link_deps = [gst_dep]",
         "if host_system == 'windows' and host_machine.cpu_family() == 'aarch64'",
         "  gstcheck_link_deps += dependency('threads')",
@@ -520,7 +581,36 @@ function Repair-GstreamerGstCheckThreadDependencyUsage {
         "  link_with : [libcheck],",
         ")"
     ))
-    $patchedMesonSource = $mesonSource.Replace($legacyLibraryDefinition, $patchedLibraryDefinition)
+
+    # clangarm64's winpthreads headers route clock_gettime() through clock_gettime64, but Meson's
+    # generic threads dependency does not emit the required winpthread link flag here.
+    $patchedLibraryDefinition = [string]::Join($newline, @(
+        "gstcheck_link_deps = [gst_dep]",
+        "if host_system == 'windows' and host_machine.cpu_family() == 'aarch64'",
+        "  winpthread_dep = cc.find_library('winpthread', required : false)",
+        "  if winpthread_dep.found()",
+        "    gstcheck_link_deps += winpthread_dep",
+        "  else",
+        "    gstcheck_link_deps += dependency('threads')",
+        "  endif",
+        "endif",
+        "",
+        "gst_check = library('gstcheck-@0@'.format(api_version),",
+        "  gst_check_sources,",
+        "  version : libversion,",
+        "  soversion : soversion,",
+        "  darwin_versions : osxversion,",
+        "  install : true,",
+        "  dependencies : gstcheck_link_deps,",
+        "  link_with : [libcheck],",
+        ")"
+    ))
+    $patchedMesonSource = $mesonSource
+    if ($patchedMesonSource.Contains($legacyLibraryDefinition)) {
+        $patchedMesonSource = $patchedMesonSource.Replace($legacyLibraryDefinition, $patchedLibraryDefinition)
+    } elseif ($patchedMesonSource.Contains($previousPatchedLibraryDefinition)) {
+        $patchedMesonSource = $patchedMesonSource.Replace($previousPatchedLibraryDefinition, $patchedLibraryDefinition)
+    }
     if ($patchedMesonSource -ne $mesonSource) {
         Set-Content -Path $mesonPath -Value $patchedMesonSource -NoNewline
     }
@@ -1220,6 +1310,7 @@ Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
 Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
 Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc
+Repair-GstreamerD3D12GraphicsCaptureHeaderUsage -GstreamerRoot $GstSrc
 Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
@@ -1253,6 +1344,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
     Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc
     Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc
+    Repair-GstreamerD3D12GraphicsCaptureHeaderUsage -GstreamerRoot $GstSrc
     Repair-GstreamerGstCheckThreadDependencyUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
