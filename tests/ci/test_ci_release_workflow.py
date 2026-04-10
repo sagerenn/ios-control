@@ -282,6 +282,17 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn('import mesonbuild', script_text)
         self.assertIn('@("-m", "mesonbuild.mesonmain")', script_text)
 
+    def test_windows_runtime_build_script_disables_opus_rtcd_for_windows_arm64(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertRegex(
+            script_text,
+            r'if \(\$Target -eq "aarch64-pc-windows-msvc"\) \{\s+\$mesonSetupArgs \+= "-Dopus:rtcd=disabled"\s+\}',
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
     def test_windows_runtime_build_script_patches_libffi_ffs_for_clangarm64(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerLibffiFfsUsage", script_text)
@@ -335,8 +346,21 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Repair-GstreamerD3D11WinRTCaptureNamespaceUsage", script_text)
         self.assertIn("subprojects\\gst-plugins-bad\\sys\\d3d11\\gstd3d11winrtcapture.cpp", script_text)
         self.assertIn("using namespace Windows::Graphics::DirectX::Direct3D11;", script_text)
+        self.assertIn("ComPtr < IDirect3DDxgiInterfaceAccess > access;", script_text)
         self.assertIn(
-            '$patchedWinRTCaptureSource = $winRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")',
+            "ComPtr < Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess > access;",
+            script_text,
+        )
+        self.assertIn(
+            '$patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")',
+            script_text,
+        )
+        self.assertIn(
+            "} elseif ($patchedWinRTCaptureSource.Contains($legacyNamespaceImport)) {",
+            script_text,
+        )
+        self.assertIn(
+            "$patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyInteropAccess, $portableInteropAccess)",
             script_text,
         )
         first_patch_index = script_text.index("Repair-GstreamerD3D11WinRTCaptureNamespaceUsage -GstreamerRoot $GstSrc")

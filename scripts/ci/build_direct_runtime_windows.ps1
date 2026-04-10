@@ -451,15 +451,18 @@ function Repair-GstreamerD3D11WinRTCaptureNamespaceUsage {
 
     $winRTCaptureSource = Get-Content -Raw -Path $winRTCapturePath
     $newline = if ($winRTCaptureSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $patchedWinRTCaptureSource = $winRTCaptureSource
     $legacyNamespaceImport = "using namespace Windows::Graphics::DirectX::Direct3D11;"
-    if (-not $winRTCaptureSource.Contains($legacyNamespaceImport)) {
-        return
+    if ($patchedWinRTCaptureSource.Contains($legacyNamespaceImport + $newline)) {
+        $patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")
+    } elseif ($patchedWinRTCaptureSource.Contains($legacyNamespaceImport)) {
+        $patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyNamespaceImport, "")
     }
 
-    # MinGW's WinRT headers expose the ABI interfaces used below but not this projected namespace.
-    $patchedWinRTCaptureSource = $winRTCaptureSource.Replace($legacyNamespaceImport + $newline, "")
-    if ($patchedWinRTCaptureSource -eq $winRTCaptureSource) {
-        $patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyNamespaceImport, "")
+    $legacyInteropAccess = "ComPtr < IDirect3DDxgiInterfaceAccess > access;"
+    $portableInteropAccess = "ComPtr < Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess > access;"
+    if ($patchedWinRTCaptureSource.Contains($legacyInteropAccess)) {
+        $patchedWinRTCaptureSource = $patchedWinRTCaptureSource.Replace($legacyInteropAccess, $portableInteropAccess)
     }
 
     if ($patchedWinRTCaptureSource -ne $winRTCaptureSource) {
@@ -1344,6 +1347,11 @@ $mesonSetupArgs = @($mesonInvocation.Arguments + @(
     "-Ddevtools=enabled",
     "-Ddoc=disabled"
 ))
+# Opus only implements Windows ARM RTCD via _MSC_VER, but the MSYS2 clangarm64
+# toolchain uses GNU-style compilation and trips armcpu.c's unsupported path.
+if ($Target -eq "aarch64-pc-windows-msvc") {
+    $mesonSetupArgs += "-Dopus:rtcd=disabled"
+}
 if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     foreach ($resetPath in @($GstBuild, $GstRoot)) {
         if (Test-Path $resetPath) {
