@@ -998,6 +998,345 @@ function Repair-GstreamerIntrospectionDistutilsUsage {
     }
 }
 
+function Repair-GstreamerPycairoBufferApiUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [string]$BuildRoot
+    )
+
+    $candidateRoots = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateRoot in @($GstreamerRoot, $BuildRoot)) {
+        if (-not $candidateRoot -or $candidateRoots.Contains($candidateRoot) -or -not (Test-Path $candidateRoot)) {
+            continue
+        }
+
+        $candidateRoots.Add($candidateRoot)
+    }
+
+    foreach ($candidateRoot in $candidateRoots) {
+        $subprojectsRoot = Join-Path $candidateRoot "subprojects"
+        if (-not (Test-Path $subprojectsRoot)) {
+            continue
+        }
+
+        $surfacePaths = Get-ChildItem -Path $subprojectsRoot -Directory -Filter "pycairo*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "cairo\surface.c" }
+
+        foreach ($surfacePath in $surfacePaths) {
+            if (-not (Test-Path $surfacePath)) {
+                continue
+            }
+
+            $surfaceSource = Get-Content -Raw -Path $surfacePath
+            $newline = if ($surfaceSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+            $patchedSurfaceSource = $surfaceSource
+            $regexOptions = [System.Text.RegularExpressions.RegexOptions]::Singleline -bor
+                [System.Text.RegularExpressions.RegexOptions]::Multiline -bor
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+            $replacePycairoBlock = {
+                param(
+                    [Parameter(Mandatory = $true)][string]$Source,
+                    [Parameter(Mandatory = $true)][string]$Pattern,
+                    [Parameter(Mandatory = $true)][string]$Replacement
+                )
+
+                $regex = [regex]::new($Pattern, $regexOptions)
+                if (-not $regex.IsMatch($Source)) {
+                    return $Source
+                }
+
+                return $regex.Replace(
+                    $Source,
+                    [System.Text.RegularExpressions.MatchEvaluator]{
+                        param($match)
+                        $Replacement
+                    },
+                    1
+                )
+            }
+
+            if (-not $patchedSurfaceSource.Contains("static const cairo_user_data_key_t surface_buffer_view_key;")) {
+                $patchedSurfaceSource = & $replacePycairoBlock `
+                    $patchedSurfaceSource `
+                    '(?m)^static const cairo_user_data_key_t surface_is_mapped_image;\r?$' `
+                    [string]::Join($newline, @(
+                        "static const cairo_user_data_key_t surface_is_mapped_image;",
+                        "static const cairo_user_data_key_t surface_buffer_view_key;"
+                    ))
+            }
+
+            $bufferAwareSurfaceFinish = [string]::Join($newline, @(
+                "static PyObject *",
+                "surface_finish (PycairoSurface *o, PyObject *ignored) {",
+                "  cairo_surface_finish (o->surface);",
+                "  Py_CLEAR(o->base);",
+                "",
+                "  /* After an image surface is finished it won't access the buffer and",
+                "  we can release it */",
+                "  cairo_surface_set_user_data(",
+                "    o->surface, &surface_buffer_view_key, NULL, NULL);",
+                "",
+                "  RETURN_NULL_IF_CAIRO_SURFACE_ERROR(o->surface);",
+                "  Py_RETURN_NONE;",
+                "}"
+            ))
+            $patchedSurfaceSource = & $replacePycairoBlock `
+                $patchedSurfaceSource `
+                '(?ms)^static PyObject \*\r?\nsurface_finish \(PycairoSurface \*o, PyObject \*ignored\) \{.*?^\}' `
+                $bufferAwareSurfaceFinish
+
+            $bufferAwareMimeBlock = [string]::Join($newline, @(
+                "static void",
+                "_destroy_mime_data_func (PyObject *user_data) {",
+                "  cairo_surface_t *surface;",
+                "  Py_buffer *view;",
+                "  PyObject *mime_intern;",
+                "",
+                "  PyGILState_STATE gstate = PyGILState_Ensure();",
+                "",
+                "  /* Remove the user data holding the source object */",
+                "  surface = PyCapsule_GetPointer(PyTuple_GET_ITEM(user_data, 0), NULL);",
+                "  view = PyCapsule_GetPointer(PyTuple_GET_ITEM(user_data, 1), NULL);",
+                "  mime_intern = PyTuple_GET_ITEM(user_data, 3);",
+                "  cairo_surface_set_user_data(",
+                "    surface, (cairo_user_data_key_t *)mime_intern, NULL, NULL);",
+                "",
+                "  /* Destroy the user data */",
+                "  PyBuffer_Release (view);",
+                "  PyMem_Free (view);",
+                "  Py_DECREF(user_data);",
+                "",
+                "  PyGILState_Release(gstate);",
+                "}",
+                "",
+                "static PyObject *",
+                "surface_set_mime_data (PycairoSurface *o, PyObject *args) {",
+                "  PyObject *obj, *user_data, *mime_intern, *surface_capsule, *view_capsule;",
+                "  Py_buffer *view;",
+                "  const char *mime_type;",
+                "  int res;",
+                "  cairo_status_t status;",
+                "",
+                "  if (!PyArg_ParseTuple(args, ""sO:Surface.set_mime_data"", &mime_type, &obj))",
+                "    return NULL;",
+                "",
+                "  if (obj == Py_None) {",
+                "    status = cairo_surface_set_mime_data (",
+                "      o->surface, mime_type, NULL, 0, NULL, NULL);",
+                "",
+                "    RETURN_NULL_IF_CAIRO_ERROR(status);",
+                "    Py_RETURN_NONE;",
+                "  }",
+                "",
+                "  view = PyMem_Malloc (sizeof (Py_buffer));",
+                "  if (view == NULL) {",
+                "    PyErr_NoMemory ();",
+                "    return NULL;",
+                "  }",
+                "",
+                "  res = PyObject_GetBuffer (obj, view, PyBUF_SIMPLE);",
+                "  if (res == -1) {",
+                "    PyMem_Free (view);",
+                "    return NULL;",
+                "  }",
+                "",
+                "  /* We use the interned mime type string as user data key and store the",
+                "   * passed in object with it. This allows us to return the same object in",
+                "   * surface_get_mime_data().",
+                "   */",
+                "  mime_intern = PYCAIRO_PyUnicode_InternFromString(mime_type);",
+                "  surface_capsule = PyCapsule_New(o->surface, NULL, NULL);",
+                "  view_capsule = PyCapsule_New(view, NULL, NULL);",
+                "  user_data = Py_BuildValue(""(NNOO)"", surface_capsule, view_capsule, obj, mime_intern);",
+                "  if (user_data == NULL) {",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    return NULL;",
+                "  }",
+                "",
+                "  status = cairo_surface_set_user_data(",
+                "    o->surface, (cairo_user_data_key_t *)mime_intern, user_data,",
+                "    (cairo_destroy_func_t)_destroy_mime_user_data_func);",
+                "  if (status != CAIRO_STATUS_SUCCESS) {",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    Py_DECREF(user_data);",
+                "    Pycairo_Check_Status (status);",
+                "    return NULL;",
+                "  }",
+                "",
+                "  Py_INCREF(user_data);",
+                "  status = cairo_surface_set_mime_data (",
+                "    o->surface, mime_type, view->buf, (unsigned long)view->len,",
+                "    (cairo_destroy_func_t)_destroy_mime_data_func, user_data);",
+                "  if (status != CAIRO_STATUS_SUCCESS) {",
+                "    cairo_surface_set_user_data(",
+                "      o->surface, (cairo_user_data_key_t *)mime_intern, NULL, NULL);",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    Py_DECREF(user_data);",
+                "    Pycairo_Check_Status (status);",
+                "    return NULL;",
+                "  }",
+                "",
+                "  Py_RETURN_NONE;",
+                "}",
+                "",
+                "static PyObject *",
+                "surface_get_mime_data (PycairoSurface *o, PyObject *args) {",
+                "  PyObject *user_data, *obj, *mime_intern;",
+                "  const char *mime_type;",
+                "  const unsigned char *buffer;",
+                "  unsigned long buffer_len;",
+                "",
+                "  if (!PyArg_ParseTuple(args, ""s:Surface.get_mime_data"", &mime_type))",
+                "    return NULL;",
+                "",
+                "  cairo_surface_get_mime_data (o->surface, mime_type, &buffer, &buffer_len);",
+                "  if (buffer == NULL) {",
+                "    Py_RETURN_NONE;",
+                "  }",
+                "",
+                "  mime_intern = PYCAIRO_PyUnicode_InternFromString(mime_type);",
+                "  user_data = cairo_surface_get_user_data(",
+                "    o->surface, (cairo_user_data_key_t *)mime_intern);",
+                "",
+                "  if (user_data == NULL) {",
+                "    /* In case the mime data wasn't set through the Python API just copy it */",
+                "    return Py_BuildValue(PYCAIRO_DATA_FORMAT ""#"", buffer, buffer_len);",
+                "  } else {",
+                "    obj = PyTuple_GET_ITEM(user_data, 2);",
+                "    Py_INCREF(obj);",
+                "    return obj;",
+                "  }",
+                "}"
+            ))
+            $patchedSurfaceSource = & $replacePycairoBlock `
+                $patchedSurfaceSource `
+                '(?ms)^static void\r?\n_destroy_mime_data_func \(PyObject \*user_data\) \{.*?^\}\r?\n\r?\nstatic PyObject \*\r?\nsurface_set_mime_data \(PycairoSurface \*o, PyObject \*args\) \{.*?^\}\r?\n\r?\nstatic PyObject \*\r?\nsurface_get_mime_data \(PycairoSurface \*o, PyObject \*args\) \{.*?^\}' `
+                $bufferAwareMimeBlock
+
+            $bufferAwareImageSurfaceBlock = [string]::Join($newline, @(
+                "static void",
+                "_release_buffer_destroy_func(void *user_data) {",
+                "  Py_buffer *view = (Py_buffer *)user_data;",
+                "  PyGILState_STATE gstate = PyGILState_Ensure();",
+                "  PyBuffer_Release (view);",
+                "  PyMem_Free (view);",
+                "  PyGILState_Release(gstate);",
+                "}",
+                "",
+                "/* METH_CLASS */",
+                "static PyObject *",
+                "image_surface_create_for_data (PyTypeObject *type, PyObject *args) {",
+                "  cairo_surface_t *surface;",
+                "  cairo_format_t format;",
+                "  unsigned char *buffer;",
+                "  int width, height, stride = -1, res, format_arg;",
+                "  Py_buffer *view;",
+                "  PyObject *obj;",
+                "  cairo_status_t status;",
+                "",
+                "  if (!PyArg_ParseTuple (args, ""Oiii|i:ImageSurface.create_for_data"",",
+                "                         &obj, &format_arg, &width, &height, &stride))",
+                "    return NULL;",
+                "",
+                "  format = (cairo_format_t)format_arg;",
+                "",
+                "  view = PyMem_Malloc (sizeof (Py_buffer));",
+                "  if (view == NULL) {",
+                "    PyErr_NoMemory ();",
+                "    return NULL;",
+                "  }",
+                "",
+                "  res = PyObject_GetBuffer (obj, view, PyBUF_WRITABLE);",
+                "  if (res == -1) {",
+                "    PyMem_Free (view);",
+                "    return NULL;",
+                "  }",
+                "  buffer = (unsigned char *)view->buf;",
+                "",
+                "  if (width <= 0) {",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    PyErr_SetString(PyExc_ValueError, ""width must be positive"");",
+                "    return NULL;",
+                "  }",
+                "  if (height <= 0) {",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    PyErr_SetString(PyExc_ValueError, ""height must be positive"");",
+                "    return NULL;",
+                "  }",
+                "  /* if stride is missing, calculate it from width */",
+                "  if (stride < 0) {",
+                "    stride = cairo_format_stride_for_width (format, width);",
+                "    if (stride == -1){",
+                "      PyBuffer_Release (view);",
+                "      PyMem_Free (view);",
+                "      PyErr_SetString(PyExc_ValueError,",
+                "		      ""format is invalid or the width too large"");",
+                "      return NULL;",
+                "    }",
+                "  }",
+                "  if (height * stride > view->len) {",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    PyErr_SetString(PyExc_TypeError, ""buffer is not long enough"");",
+                "    return NULL;",
+                "  }",
+                "  Py_BEGIN_ALLOW_THREADS;",
+                "  surface = cairo_image_surface_create_for_data (buffer, format, width,",
+                "						 height, stride);",
+                "  Py_END_ALLOW_THREADS;",
+                "",
+                "  status = cairo_surface_set_user_data(",
+                "    surface, &surface_buffer_view_key, view,",
+                "    (cairo_destroy_func_t)_release_buffer_destroy_func);",
+                "  if (Pycairo_Check_Status (status)) {",
+                "    cairo_surface_destroy (surface);",
+                "    PyBuffer_Release (view);",
+                "    PyMem_Free (view);",
+                "    return NULL;",
+                "  }",
+                "",
+                "  return _surface_create_with_object(surface, obj);",
+                "}"
+            ))
+            $patchedSurfaceSource = & $replacePycairoBlock `
+                $patchedSurfaceSource `
+                '(?ms)^(?:static void\r?\n_release_buffer_destroy_func\(void \*user_data\) \{.*?^\}\r?\n\r?\n)?/\* METH_CLASS \*/\r?\nstatic PyObject \*\r?\nimage_surface_create_for_data \(PyTypeObject \*type, PyObject \*args\) \{.*?^\}' `
+                $bufferAwareImageSurfaceBlock
+
+            $guardedXpybBufferAccess = [string]::Join($newline, @(
+                "const void *",
+                "xpyb2struct(PyObject *obj, Py_ssize_t *len)",
+                "{",
+                "    const void *data;",
+                "",
+                "#if PY_MAJOR_VERSION < 3",
+                "    if (PyObject_AsReadBuffer(obj, &data, len) < 0)",
+                "        return NULL;",
+                "",
+                "    return data;",
+                "#endif",
+                "",
+                "  // buffer function disabled",
+                "  return NULL;",
+                "}"
+            ))
+            $patchedSurfaceSource = & $replacePycairoBlock `
+                $patchedSurfaceSource `
+                '(?ms)^const void \*\r?\nxpyb2struct\(PyObject \*obj, Py_ssize_t \*len\)\r?\n\{.*?^\}' `
+                $guardedXpybBufferAccess
+
+            if ($patchedSurfaceSource -ne $surfaceSource) {
+                Set-Content -Path $surfacePath -Value $patchedSurfaceSource -NoNewline
+            }
+        }
+    }
+}
+
 function Repair-GstreamerAbseilTimeZoneLookupUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -1331,6 +1670,7 @@ Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
+Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 
 $mesonSetupArgs = @($mesonInvocation.Arguments + @(
@@ -1371,6 +1711,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
+    Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("install", "-C", $GstBuild))

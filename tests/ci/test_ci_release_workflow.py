@@ -495,6 +495,45 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_pycairo_for_python_314(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerPycairoBufferApiUsage", script_text)
+        self.assertIn('Get-ChildItem -Path $subprojectsRoot -Directory -Filter "pycairo*"', script_text)
+        self.assertIn('Join-Path $_.FullName "cairo\\surface.c"', script_text)
+        self.assertIn("static const cairo_user_data_key_t surface_buffer_view_key;", script_text)
+        self.assertIn("PyObject_GetBuffer (obj, view, PyBUF_SIMPLE)", script_text)
+        self.assertIn("PyObject_GetBuffer (obj, view, PyBUF_WRITABLE)", script_text)
+        self.assertIn("PyBuffer_Release (view);", script_text)
+        self.assertIn("#if PY_MAJOR_VERSION < 3", script_text)
+        self.assertIn("if (PyObject_AsReadBuffer(obj, &data, len) < 0)", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
+    def test_windows_runtime_build_script_uses_signature_based_pycairo_rewrites(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("[regex]::new(", script_text)
+        self.assertIn("surface_finish \\(PycairoSurface \\*o, PyObject \\*ignored\\)", script_text)
+        self.assertIn("surface_set_mime_data \\(PycairoSurface \\*o, PyObject \\*args\\)", script_text)
+        self.assertIn("image_surface_create_for_data \\(PyTypeObject \\*type, PyObject \\*args\\)", script_text)
+        self.assertNotIn("$patchedSurfaceSource.Contains($legacySurfaceFinish)", script_text)
+        self.assertNotIn("$patchedSurfaceSource.Contains($legacyMimeBlock)", script_text)
+        self.assertNotIn("$patchedSurfaceSource.Contains($legacyImageSurfaceBlock)", script_text)
+
     def test_windows_runtime_build_script_patches_abseil_time_zone_lookup_for_mingw(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerAbseilTimeZoneLookupUsage", script_text)
