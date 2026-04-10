@@ -388,6 +388,34 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_d3d12_wgc_probe_for_wrl_implements_header(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerD3D12WgcProbeUsage", script_text)
+        self.assertIn("subprojects\\gst-plugins-bad\\sys\\d3d12\\meson.build", script_text)
+        self.assertIn("#include<wrl.h>", script_text)
+        self.assertIn("#include<wrl/implements.h>", script_text)
+        self.assertIn(
+            "$patchedMesonSource = $patchedMesonSource.Replace($legacyWrlInclude, $portableWrlInclude)",
+            script_text,
+        )
+        first_patch_index = script_text.index("Repair-GstreamerD3D12WgcProbeUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerD3D12WgcProbeUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
     def test_windows_runtime_build_script_links_gstcheck_against_winpthread_for_clangarm64(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerGstCheckThreadDependencyUsage", script_text)
@@ -528,6 +556,13 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             second_patch_index,
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
+
+    def test_windows_runtime_build_script_matches_current_gstcheck_library_block_shape(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("$gstCheckLibraryPattern = '(?ms)^gst_check = library", script_text)
+        self.assertIn("$libraryMatch = [regex]::Match($mesonSource, $gstCheckLibraryPattern)", script_text)
+        self.assertIn("$replacementLibraryBlock = $patchedLibraryBlock", script_text)
+        self.assertIn("$patchedMesonSource = $patchedMesonSource.Replace($libraryMatch.Value, $replacementLibraryBlock)", script_text)
 
     def test_windows_runtime_build_script_patches_gstfilesink_ftruncate_for_mingw(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
