@@ -1,4 +1,8 @@
 import re
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -533,6 +537,96 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("$patchedSurfaceSource.Contains($legacySurfaceFinish)", script_text)
         self.assertNotIn("$patchedSurfaceSource.Contains($legacyMimeBlock)", script_text)
         self.assertNotIn("$patchedSurfaceSource.Contains($legacyImageSurfaceBlock)", script_text)
+
+    def test_windows_runtime_build_script_runs_pycairo_patch_under_powershell(self) -> None:
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        if not pwsh:
+            self.skipTest("PowerShell is not available")
+
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        function_start = script_text.index("function Repair-GstreamerPycairoBufferApiUsage")
+        function_end = script_text.index("function Repair-GstreamerAbseilTimeZoneLookupUsage")
+        pycairo_patch_function = script_text[function_start:function_end].rstrip()
+
+        surface_fixture = textwrap.dedent(
+            """\
+            static const cairo_user_data_key_t surface_is_mapped_image;
+
+            static PyObject *
+            surface_finish (PycairoSurface *o, PyObject *ignored) {
+            }
+
+            static void
+            _destroy_mime_data_func (PyObject *user_data) {
+            }
+
+            static PyObject *
+            surface_set_mime_data (PycairoSurface *o, PyObject *args) {
+            }
+
+            static PyObject *
+            surface_get_mime_data (PycairoSurface *o, PyObject *args) {
+            }
+
+            /* METH_CLASS */
+            static PyObject *
+            image_surface_create_for_data (PyTypeObject *type, PyObject *args) {
+            }
+
+            const void *
+            xpyb2struct(PyObject *obj, Py_ssize_t *len)
+            {
+            }
+            """
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_root = temp_root / "src"
+            build_root = temp_root / "build"
+            patched_files: list[Path] = []
+            for root in (source_root, build_root):
+                surface_path = root / "subprojects" / "pycairo-test" / "cairo" / "surface.c"
+                surface_path.parent.mkdir(parents=True, exist_ok=True)
+                surface_path.write_text(surface_fixture, encoding="utf-8")
+                patched_files.append(surface_path)
+
+            repro_script = "\n".join(
+                [
+                    "Set-StrictMode -Version Latest",
+                    "$ErrorActionPreference = 'Stop'",
+                    pycairo_patch_function,
+                    (
+                        "Repair-GstreamerPycairoBufferApiUsage "
+                        f"-GstreamerRoot '{source_root.as_posix()}' "
+                        f"-BuildRoot '{build_root.as_posix()}'"
+                    ),
+                    "",
+                ]
+            )
+            repro_script_path = temp_root / "repro.ps1"
+            repro_script_path.write_text(repro_script, encoding="utf-8")
+
+            result = subprocess.run(
+                [pwsh, "-NoLogo", "-NoProfile", "-File", str(repro_script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                msg=(
+                    "PowerShell repro failed.\n"
+                    f"stdout:\n{result.stdout}\n"
+                    f"stderr:\n{result.stderr}"
+                ),
+            )
+
+            for patched_file in patched_files:
+                patched_text = patched_file.read_text(encoding="utf-8")
+                self.assertIn("surface_buffer_view_key", patched_text)
+                self.assertIn("PyObject_GetBuffer (obj, view, PyBUF_WRITABLE)", patched_text)
 
     def test_windows_runtime_build_script_patches_abseil_time_zone_lookup_for_mingw(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")

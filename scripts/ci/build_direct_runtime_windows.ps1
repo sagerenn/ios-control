@@ -1055,14 +1055,15 @@ function Repair-GstreamerPycairoBufferApiUsage {
                 )
             }
 
+            $surfaceBufferViewKeyDefinition = [string]::Join($newline, @(
+                "static const cairo_user_data_key_t surface_is_mapped_image;",
+                "static const cairo_user_data_key_t surface_buffer_view_key;"
+            ))
             if (-not $patchedSurfaceSource.Contains("static const cairo_user_data_key_t surface_buffer_view_key;")) {
                 $patchedSurfaceSource = & $replacePycairoBlock `
                     $patchedSurfaceSource `
                     '(?m)^static const cairo_user_data_key_t surface_is_mapped_image;\r?$' `
-                    [string]::Join($newline, @(
-                        "static const cairo_user_data_key_t surface_is_mapped_image;",
-                        "static const cairo_user_data_key_t surface_buffer_view_key;"
-                    ))
+                    $surfaceBufferViewKeyDefinition
             }
 
             $bufferAwareSurfaceFinish = [string]::Join($newline, @(
