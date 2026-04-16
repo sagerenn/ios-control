@@ -345,6 +345,12 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_d3d11_winapi_app_config_for_missing_xaml_interop_headers(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("subprojects\\gst-plugins-bad\\gst-libs\\gst\\d3d11\\meson.build", script_text)
+        self.assertIn("have_winapi_app_xaml_dxinterop_h = cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)", script_text)
+        self.assertIn("d3d11_winapi_app = d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h", script_text)
+
     def test_windows_runtime_build_script_patches_d3d11_winrt_capture_namespace_usage_for_mingw_headers(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerD3D11WinRTCaptureNamespaceUsage", script_text)

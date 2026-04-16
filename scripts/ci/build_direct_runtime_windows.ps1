@@ -376,6 +376,52 @@ function Repair-GstreamerD3D11WinApiAppHeaderUsage {
         [Parameter(Mandatory = $true)][string]$GstreamerRoot
     )
 
+    $libraryMesonPath = Join-Path $GstreamerRoot "subprojects\gst-plugins-bad\gst-libs\gst\d3d11\meson.build"
+    if (Test-Path $libraryMesonPath) {
+        $libraryMesonSource = Get-Content -Raw -Path $libraryMesonPath
+        $newline = if ($libraryMesonSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $patchedLibraryMesonSource = $libraryMesonSource
+
+        $legacyLibraryHeaderProbe = [string]::Join($newline, @(
+            "d3dcompiler_lib = cc.find_library('d3dcompiler', required: false)",
+            "runtimeobject_lib = cc.find_library('runtimeobject', required: false)"
+        ))
+        $guardedLibraryHeaderProbe = [string]::Join($newline, @(
+            "d3dcompiler_lib = cc.find_library('d3dcompiler', required: false)",
+            "runtimeobject_lib = cc.find_library('runtimeobject', required: false)",
+            "have_winapi_app_xaml_dxinterop_h = cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)"
+        ))
+        if (
+            -not $patchedLibraryMesonSource.Contains("have_winapi_app_xaml_dxinterop_h = cxx.has_header('windows.ui.xaml.media.dxinterop.h', required: false)") -and
+            $patchedLibraryMesonSource.Contains($legacyLibraryHeaderProbe)
+        ) {
+            $patchedLibraryMesonSource = $patchedLibraryMesonSource.Replace($legacyLibraryHeaderProbe, $guardedLibraryHeaderProbe)
+        }
+
+        $legacyLibraryWinApiAppResult = [string]::Join($newline, @(
+            "endif",
+            "",
+            "if not d3d11_winapi_desktop and not d3d11_winapi_app"
+        ))
+        $guardedLibraryWinApiAppResult = [string]::Join($newline, @(
+            "endif",
+            "",
+            "d3d11_winapi_app = d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h",
+            "",
+            "if not d3d11_winapi_desktop and not d3d11_winapi_app"
+        ))
+        if (
+            -not $patchedLibraryMesonSource.Contains("d3d11_winapi_app = d3d11_winapi_app and have_winapi_app_xaml_dxinterop_h") -and
+            $patchedLibraryMesonSource.Contains($legacyLibraryWinApiAppResult)
+        ) {
+            $patchedLibraryMesonSource = $patchedLibraryMesonSource.Replace($legacyLibraryWinApiAppResult, $guardedLibraryWinApiAppResult)
+        }
+
+        if ($patchedLibraryMesonSource -ne $libraryMesonSource) {
+            Set-Content -Path $libraryMesonPath -Value $patchedLibraryMesonSource -NoNewline
+        }
+    }
+
     $mesonPath = Join-Path $GstreamerRoot "subprojects\gst-plugins-bad\sys\d3d11\meson.build"
     if (-not (Test-Path $mesonPath)) {
         return
