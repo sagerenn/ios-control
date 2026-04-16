@@ -499,6 +499,149 @@ class CiReleaseWorkflowTests(unittest.TestCase):
             script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
         )
 
+    def test_windows_runtime_build_script_patches_pygobject_for_python_314_trashcan_api(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-GstreamerPygobjectTrashcanApiUsage", script_text)
+        self.assertIn('Get-ChildItem -Path $subprojectsRoot -Directory -Filter "pygobject-*"', script_text)
+        self.assertIn('Join-Path $pygobjectRoot.FullName "gi\\pygi-resulttuple.c"', script_text)
+        self.assertIn('Join-Path $pygobjectRoot.FullName "gi\\pygi-util.h"', script_text)
+        self.assertIn("Py_TRASHCAN_SAFE_BEGIN (self)", script_text)
+        self.assertIn("CPy_TRASHCAN_BEGIN (self, resulttuple_dealloc)", script_text)
+        self.assertIn("Py_TRASHCAN_SAFE_END (self)", script_text)
+        self.assertIn("CPy_TRASHCAN_END (self)", script_text)
+        self.assertIn("#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_BEGIN(op, dealloc)", script_text)
+        self.assertIn("#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_END", script_text)
+        self.assertIn("#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_SAFE_BEGIN(op)", script_text)
+        self.assertIn("#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_SAFE_END(op)", script_text)
+        first_patch_index = script_text.index("Repair-GstreamerPygobjectTrashcanApiUsage -GstreamerRoot $GstSrc")
+        second_patch_index = script_text.index(
+            "Repair-GstreamerPygobjectTrashcanApiUsage -GstreamerRoot $GstSrc",
+            first_patch_index + 1,
+        )
+        self.assertLess(
+            first_patch_index,
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+        )
+        self.assertLess(
+            script_text.index("& $mesonInvocation.Command @mesonSetupArgs"),
+            second_patch_index,
+        )
+        self.assertLess(
+            second_patch_index,
+            script_text.index("& $mesonInvocation.Command @($mesonInvocation.Arguments + @(\"compile\", \"-C\", $GstBuild))"),
+        )
+
+    def test_windows_runtime_build_script_runs_pygobject_patch_under_powershell(self) -> None:
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        if not pwsh:
+            self.skipTest("PowerShell is not available")
+
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        function_start = script_text.index("function Repair-GstreamerPygobjectTrashcanApiUsage")
+        function_end = script_text.index("function Repair-GstreamerPycairoBufferApiUsage")
+        pygobject_patch_function = script_text[function_start:function_end].rstrip()
+
+        resulttuple_fixture = textwrap.dedent(
+            """\
+            static void
+            resulttuple_dealloc(PyObject *self)
+            {
+                Py_TRASHCAN_SAFE_BEGIN (self)
+                Py_SIZE(self);
+                Py_TRASHCAN_SAFE_END (self)
+            }
+            """
+        )
+        util_header_fixture = textwrap.dedent(
+            """\
+            #ifndef __PYGI_UTIL_H__
+            #define __PYGI_UTIL_H__
+
+            #include <Python.h>
+            #include <glib.h>
+
+            G_BEGIN_DECLS
+
+            gboolean pygi_guint_from_pyssize (Py_ssize_t pyval, guint *result);
+
+            #if PY_VERSION_HEX < 0x030900A4
+            #  define Py_SET_TYPE(obj, type) ((Py_TYPE(obj) = (type)), (void)0)
+            #endif
+
+            #define PYGI_DEFINE_TYPE(typename, symbol, csymbol) \\
+            PyTypeObject symbol = {                                 \\
+                PyVarObject_HEAD_INIT(NULL, 0)                      \\
+                typename,                                           \\
+                sizeof(csymbol)                                     \\
+            };
+
+            G_END_DECLS
+
+            #endif /* __PYGI_UTIL_H__ */
+            """
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            source_root = temp_root / "src"
+            build_root = temp_root / "build"
+            patched_resulttuple_files: list[Path] = []
+            patched_util_header_files: list[Path] = []
+            for root in (source_root, build_root):
+                resulttuple_path = root / "subprojects" / "pygobject-test" / "gi" / "pygi-resulttuple.c"
+                util_header_path = root / "subprojects" / "pygobject-test" / "gi" / "pygi-util.h"
+                resulttuple_path.parent.mkdir(parents=True, exist_ok=True)
+                resulttuple_path.write_text(resulttuple_fixture, encoding="utf-8")
+                util_header_path.write_text(util_header_fixture, encoding="utf-8")
+                patched_resulttuple_files.append(resulttuple_path)
+                patched_util_header_files.append(util_header_path)
+
+            repro_script = "\n".join(
+                [
+                    "Set-StrictMode -Version Latest",
+                    "$ErrorActionPreference = 'Stop'",
+                    pygobject_patch_function,
+                    (
+                        "Repair-GstreamerPygobjectTrashcanApiUsage "
+                        f"-GstreamerRoot '{source_root.as_posix()}' "
+                        f"-BuildRoot '{build_root.as_posix()}'"
+                    ),
+                    "",
+                ]
+            )
+            repro_script_path = temp_root / "repro.ps1"
+            repro_script_path.write_text(repro_script, encoding="utf-8")
+
+            result = subprocess.run(
+                [pwsh, "-NoLogo", "-NoProfile", "-File", str(repro_script_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                msg=(
+                    "PowerShell repro failed.\n"
+                    f"stdout:\n{result.stdout}\n"
+                    f"stderr:\n{result.stderr}"
+                ),
+            )
+
+            for patched_file in patched_resulttuple_files:
+                patched_text = patched_file.read_text(encoding="utf-8")
+                self.assertIn("CPy_TRASHCAN_BEGIN (self, resulttuple_dealloc)", patched_text)
+                self.assertIn("CPy_TRASHCAN_END (self)", patched_text)
+                self.assertNotIn("Py_TRASHCAN_SAFE_BEGIN (self)", patched_text)
+                self.assertNotIn("Py_TRASHCAN_SAFE_END (self)", patched_text)
+
+            for patched_file in patched_util_header_files:
+                patched_text = patched_file.read_text(encoding="utf-8")
+                self.assertIn("#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_BEGIN(op, dealloc)", patched_text)
+                self.assertIn("#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_END", patched_text)
+                self.assertIn("#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_SAFE_BEGIN(op)", patched_text)
+                self.assertIn("#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_SAFE_END(op)", patched_text)
+
     def test_windows_runtime_build_script_patches_pycairo_for_python_314(self) -> None:
         script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
         self.assertIn("Repair-GstreamerPycairoBufferApiUsage", script_text)

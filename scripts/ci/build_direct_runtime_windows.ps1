@@ -998,6 +998,92 @@ function Repair-GstreamerIntrospectionDistutilsUsage {
     }
 }
 
+function Repair-GstreamerPygobjectTrashcanApiUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [string]$BuildRoot
+    )
+
+    $candidateRoots = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateRoot in @($GstreamerRoot, $BuildRoot)) {
+        if (-not $candidateRoot -or $candidateRoots.Contains($candidateRoot) -or -not (Test-Path $candidateRoot)) {
+            continue
+        }
+
+        $candidateRoots.Add($candidateRoot)
+    }
+
+    foreach ($candidateRoot in $candidateRoots) {
+        $subprojectsRoot = Join-Path $candidateRoot "subprojects"
+        if (-not (Test-Path $subprojectsRoot)) {
+            continue
+        }
+
+        $pygobjectRoots = Get-ChildItem -Path $subprojectsRoot -Directory -Filter "pygobject-*" -ErrorAction SilentlyContinue
+
+        foreach ($pygobjectRoot in $pygobjectRoots) {
+            $resultTuplePath = Join-Path $pygobjectRoot.FullName "gi\pygi-resulttuple.c"
+            if (Test-Path $resultTuplePath) {
+                $resultTupleSource = Get-Content -Raw -Path $resultTuplePath
+                $patchedResultTupleSource = $resultTupleSource.Replace(
+                    "    Py_TRASHCAN_SAFE_BEGIN (self)",
+                    "    CPy_TRASHCAN_BEGIN (self, resulttuple_dealloc)"
+                )
+                $patchedResultTupleSource = $patchedResultTupleSource.Replace(
+                    "    Py_TRASHCAN_BEGIN (self, resulttuple_dealloc)",
+                    "    CPy_TRASHCAN_BEGIN (self, resulttuple_dealloc)"
+                )
+                $patchedResultTupleSource = $patchedResultTupleSource.Replace(
+                    "    Py_TRASHCAN_SAFE_END (self)",
+                    "    CPy_TRASHCAN_END (self)"
+                )
+                $patchedResultTupleSource = $patchedResultTupleSource.Replace(
+                    "    Py_TRASHCAN_END",
+                    "    CPy_TRASHCAN_END (self)"
+                )
+
+                if ($patchedResultTupleSource -ne $resultTupleSource) {
+                    Set-Content -Path $resultTuplePath -Value $patchedResultTupleSource -NoNewline
+                }
+            }
+
+            $utilHeaderPath = Join-Path $pygobjectRoot.FullName "gi\pygi-util.h"
+            if (Test-Path $utilHeaderPath) {
+                $utilHeaderSource = Get-Content -Raw -Path $utilHeaderPath
+                if (-not $utilHeaderSource.Contains("CPy_TRASHCAN_BEGIN(op, dealloc)")) {
+                    $newline = if ($utilHeaderSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+                    $pySetTypeCompatBlock = [string]::Join($newline, @(
+                        "#if PY_VERSION_HEX < 0x030900A4",
+                        "#  define Py_SET_TYPE(obj, type) ((Py_TYPE(obj) = (type)), (void)0)",
+                        "#endif"
+                    ))
+                    $trashcanCompatBlock = [string]::Join($newline, @(
+                        "#if PY_VERSION_HEX >= 0x03080000",
+                        "#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_BEGIN(op, dealloc)",
+                        "#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_END",
+                        "#else",
+                        "#  define CPy_TRASHCAN_BEGIN(op, dealloc) Py_TRASHCAN_SAFE_BEGIN(op)",
+                        "#  define CPy_TRASHCAN_END(op) Py_TRASHCAN_SAFE_END(op)",
+                        "#endif"
+                    ))
+                    $patchedUtilHeaderSource = $utilHeaderSource.Replace(
+                        $pySetTypeCompatBlock,
+                        [string]::Join($newline, @(
+                            $pySetTypeCompatBlock,
+                            "",
+                            $trashcanCompatBlock
+                        ))
+                    )
+
+                    if ($patchedUtilHeaderSource -ne $utilHeaderSource) {
+                        Set-Content -Path $utilHeaderPath -Value $patchedUtilHeaderSource -NoNewline
+                    }
+                }
+            }
+        }
+    }
+}
+
 function Repair-GstreamerPycairoBufferApiUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -1671,6 +1757,7 @@ Repair-GstreamerLibcheckClockGettimeUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
+Repair-GstreamerPygobjectTrashcanApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
 
@@ -1712,6 +1799,7 @@ if (-not (Test-GstreamerInstallReady -InstallRoot $GstRoot)) {
     Repair-GstreamerWebRtcTraceEventUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerWebRtcMultiChannelContentDetectorUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerIntrospectionDistutilsUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
+    Repair-GstreamerPygobjectTrashcanApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerPycairoBufferApiUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     Repair-GstreamerAbseilTimeZoneLookupUsage -GstreamerRoot $GstSrc -BuildRoot $GstBuild
     & $mesonInvocation.Command @($mesonInvocation.Arguments + @("compile", "-C", $GstBuild))
