@@ -88,6 +88,7 @@ jobs:
               mingw-w64-ucrt-x86_64-python
               mingw-w64-ucrt-x86_64-python-setuptools
               mingw-w64-ucrt-x86_64-pkgconf
+              mingw-w64-ucrt-x86_64-libplist
               unzip
             beacon_helper_relpath: ../../../helpers/direct-beacon.exe
           - runner: windows-11-arm
@@ -105,6 +106,7 @@ jobs:
               mingw-w64-clang-aarch64-python
               mingw-w64-clang-aarch64-python-setuptools
               mingw-w64-clang-aarch64-pkgconf
+              mingw-w64-clang-aarch64-libplist
               unzip
             beacon_helper_relpath: ../../../helpers/direct-beacon.exe
     runs-on: ${{ matrix.runner }}

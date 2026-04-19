@@ -313,6 +313,49 @@ function Stage-CachedRuntimeIfAvailable {
     return $true
 }
 
+function Repair-UxPlayDnsSdHeaderUsage {
+    param(
+        [Parameter(Mandatory = $true)][string]$UxPlayRoot
+    )
+
+    $compatHeaderSource = Join-Path $PSScriptRoot "uxplay-compat\dns_sd.h"
+    if (-not (Test-Path $compatHeaderSource)) {
+        throw "dns_sd compatibility header missing: $compatHeaderSource"
+    }
+
+    $uxPlayLibRoot = Join-Path $UxPlayRoot "lib"
+    $compatHeaderDestination = Join-Path $uxPlayLibRoot "dns_sd.h"
+    New-Item -ItemType Directory -Force -Path $uxPlayLibRoot | Out-Null
+    Copy-Item -Path $compatHeaderSource -Destination $compatHeaderDestination -Force
+
+    $cmakePath = Join-Path $uxPlayLibRoot "CMakeLists.txt"
+    if (-not (Test-Path $cmakePath)) {
+        return
+    }
+
+    $cmakeSource = Get-Content -Raw -Path $cmakePath
+    $newline = if ($cmakeSource.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $legacyWindowsDnsSdBlock = [string]::Join($newline, @(
+        '      message( STATUS "BONJOUR_SDK_HOME " ${BONJOUR_SDK} )',
+        '      set(DNSSD "${BONJOUR_SDK}/Lib/x64/dnssd.lib")',
+        '      target_link_libraries(airplay ${DNSSD} )',
+        '      message( STATUS "dns_sd: using " ${DNSSD} )',
+        '      find_path(DNSSD_INCLUDE_DIR dns_sd.h HINTS ${BONJOUR_SDK}/Include )'
+    ))
+    $patchedWindowsDnsSdBlock = [string]::Join($newline, @(
+        '      message( STATUS "BONJOUR_SDK_HOME " ${BONJOUR_SDK} )',
+        '      message( STATUS "dns_sd: using runtime-loaded dnssd.dll on Windows" )',
+        '      find_path(DNSSD_INCLUDE_DIR dns_sd.h HINTS ${BONJOUR_SDK}/Include ${CMAKE_CURRENT_SOURCE_DIR})'
+    ))
+    if (
+        -not $cmakeSource.Contains($patchedWindowsDnsSdBlock) -and
+        $cmakeSource.Contains($legacyWindowsDnsSdBlock)
+    ) {
+        $cmakeSource = $cmakeSource.Replace($legacyWindowsDnsSdBlock, $patchedWindowsDnsSdBlock)
+        Set-Content -Path $cmakePath -Value $cmakeSource -NoNewline
+    }
+}
+
 function Repair-GstreamerLibffiFfsUsage {
     param(
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
@@ -1792,6 +1835,7 @@ Write-Host "Using Meson command: $($mesonInvocation.Command)"
 
 Ensure-GitCheckoutAtRef -RepoPath $UxPlaySrc -RepoUrl "https://github.com/FDH2/UxPlay.git" -Ref $env:UXPLAY_REF -MarkerPath $UxPlayRefFile -ResetPaths @($UxPlaySrc, $UxPlayBuild)
 Ensure-GitCheckoutAtRef -RepoPath $GstSrc -RepoUrl "https://gitlab.freedesktop.org/gstreamer/gstreamer.git" -Ref $env:GSTREAMER_VERSION -MarkerPath $GstreamerRefFile -ResetPaths @($GstSrc, $GstBuild, $GstRoot)
+Repair-UxPlayDnsSdHeaderUsage -UxPlayRoot $UxPlaySrc
 Repair-GstreamerLibffiFfsUsage -GstreamerRoot $GstSrc -Target $Target
 Repair-GstreamerFilesinkFtruncateUsage -GstreamerRoot $GstSrc
 Repair-GstreamerD3D11WinApiAppHeaderUsage -GstreamerRoot $GstSrc

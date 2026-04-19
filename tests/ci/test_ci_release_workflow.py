@@ -1008,6 +1008,32 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("mingw-w64-ucrt-x86_64-python-setuptools", workflow_text)
         self.assertIn("mingw-w64-clang-aarch64-python-setuptools", workflow_text)
 
+    def test_windows_runtime_build_workflow_installs_libplist_for_msys2_targets(self) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn("mingw-w64-ucrt-x86_64-libplist", workflow_text)
+        self.assertIn("mingw-w64-clang-aarch64-libplist", workflow_text)
+
+    def test_windows_runtime_build_script_repairs_uxplay_dns_sd_header_usage(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Repair-UxPlayDnsSdHeaderUsage", script_text)
+        self.assertIn(
+            'find_path(DNSSD_INCLUDE_DIR dns_sd.h HINTS ${BONJOUR_SDK}/Include ${CMAKE_CURRENT_SOURCE_DIR})',
+            script_text,
+        )
+        self.assertIn('message( STATUS "dns_sd: using runtime-loaded dnssd.dll on Windows" )', script_text)
+        self.assertLess(
+            script_text.index("Repair-UxPlayDnsSdHeaderUsage -UxPlayRoot $UxPlaySrc"),
+            script_text.index("cmake @cmakeArgs"),
+        )
+
+    def test_windows_runtime_build_script_ships_dns_sd_compatibility_header(self) -> None:
+        header_text = (REPO_ROOT / "scripts" / "ci" / "uxplay-compat" / "dns_sd.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("typedef struct _DNSServiceRef_t *DNSServiceRef;", header_text)
+        self.assertIn("typedef union _TXTRecordRef_t", header_text)
+        self.assertIn("typedef int32_t DNSServiceErrorType;", header_text)
+
     def test_full_workflow_contains_publish_jobs(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         assert_ci_release.assert_full_workflow(workflow_text)
