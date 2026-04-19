@@ -186,32 +186,7 @@ fn spawn_child(
 }
 
 fn apply_runtime_env(command: &mut Command, bundle: &DirectRuntimeBundle) {
-    let gst_root = bundle.root.join("gstreamer");
-    if cfg!(target_os = "windows") {
-        let gst_bin = gst_root.join("bin");
-        if gst_bin.is_dir() {
-            let path = std::env::var_os("PATH").unwrap_or_default();
-            let mut composed = gst_bin.into_os_string();
-            if !path.is_empty() {
-                composed.push(";");
-                composed.push(path);
-            }
-            command.env("PATH", composed);
-        }
-        let gst_plugins = gst_root.join("plugins");
-        if gst_plugins.is_dir() {
-            command.env("GST_PLUGIN_PATH_1_0", gst_plugins);
-        }
-    } else {
-        let gst_plugins = gst_root.join("plugins");
-        if gst_plugins.is_dir() {
-            command.env("GST_PLUGIN_PATH", gst_plugins);
-        }
-        let gst_lib = gst_root.join("lib");
-        if gst_lib.is_dir() {
-            command.env("LD_LIBRARY_PATH", gst_lib);
-        }
-    }
+    bundle.apply_runtime_env(command);
 }
 
 fn kill_child(child: &mut Child) -> Result<()> {

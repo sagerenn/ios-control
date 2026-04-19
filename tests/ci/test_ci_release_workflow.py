@@ -1003,6 +1003,16 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("id: msys2", workflow_text)
         self.assertIn("MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}", workflow_text)
 
+    def test_windows_runtime_build_script_stages_uxplay_support_dlls_from_msys2(self) -> None:
+        script_text = BUILD_DIRECT_RUNTIME_WINDOWS_PATH.read_text(encoding="utf-8")
+        self.assertIn("Resolve-UxPlaySupportPaths", script_text)
+        self.assertIn("Get-Msys2BinDirectories -Target $Target", script_text)
+        self.assertIn("--uxplay-support-path", script_text)
+        self.assertLess(
+            script_text.index("Resolve-UxPlaySupportPaths"),
+            script_text.index("Invoke-PrepareDirectRuntime"),
+        )
+
     def test_windows_runtime_build_workflow_installs_python_distutils_compatibility(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn("mingw-w64-ucrt-x86_64-python-setuptools", workflow_text)

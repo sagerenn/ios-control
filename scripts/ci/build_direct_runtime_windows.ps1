@@ -67,6 +67,146 @@ function Get-Msys2BinDirectories {
     return $binDirectories
 }
 
+function Resolve-ObjdumpExecutable {
+    $commandNames = @("objdump.exe", "objdump", "llvm-objdump.exe", "llvm-objdump")
+    foreach ($commandName in $commandNames) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    $candidatePaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($msys2Root in Get-Msys2RootDirectories) {
+        foreach ($candidatePath in @(
+            (Join-Path $msys2Root "ucrt64\bin\objdump.exe"),
+            (Join-Path $msys2Root "ucrt64\bin\llvm-objdump.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\objdump.exe"),
+            (Join-Path $msys2Root "clangarm64\bin\llvm-objdump.exe"),
+            (Join-Path $msys2Root "mingw64\bin\objdump.exe"),
+            (Join-Path $msys2Root "mingw64\bin\llvm-objdump.exe"),
+            (Join-Path $msys2Root "usr\bin\objdump.exe"),
+            (Join-Path $msys2Root "usr\bin\llvm-objdump.exe")
+        )) {
+            if (-not $candidatePaths.Contains($candidatePath)) {
+                $candidatePaths.Add($candidatePath)
+            }
+        }
+    }
+    foreach ($candidatePath in $candidatePaths) {
+        if (Test-Path $candidatePath) {
+            return $candidatePath
+        }
+    }
+
+    throw "objdump executable not found on PATH or in common MSYS2 locations"
+}
+
+function Resolve-BinaryPathFromDirectories {
+    param(
+        [Parameter(Mandatory = $true)][string]$BinaryName,
+        [Parameter(Mandatory = $true)][string[]]$SearchDirectories
+    )
+
+    foreach ($searchDirectory in $SearchDirectories) {
+        if (-not $searchDirectory) {
+            continue
+        }
+
+        $candidatePath = Join-Path $searchDirectory $BinaryName
+        if (Test-Path $candidatePath) {
+            return (Resolve-Path $candidatePath).Path
+        }
+    }
+
+    return $null
+}
+
+function Get-PeImportedDllNames {
+    param(
+        [Parameter(Mandatory = $true)][string]$BinaryPath,
+        [Parameter(Mandatory = $true)][string]$ObjdumpExecutable
+    )
+
+    $dllNames = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in (& $ObjdumpExecutable -p $BinaryPath 2>$null)) {
+        $match = [regex]::Match($line, '^\s*DLL Name:\s*(?<name>[^\s]+)\s*$')
+        if (-not $match.Success) {
+            continue
+        }
+
+        $dllName = $match.Groups["name"].Value
+        if (-not $dllNames.Contains($dllName)) {
+            $dllNames.Add($dllName)
+        }
+    }
+
+    return $dllNames
+}
+
+function Resolve-UxPlaySupportPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$UxPlayExecutable,
+        [Parameter(Mandatory = $true)][string]$GstreamerRoot,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $uxPlayExecutablePath = (Resolve-Path $UxPlayExecutable).Path
+    $gstreamerBin = Join-Path $GstreamerRoot "bin"
+    $resolvedGstreamerBin = $null
+    if (Test-Path $gstreamerBin) {
+        $resolvedGstreamerBin = (Resolve-Path $gstreamerBin).Path
+    }
+
+    $searchDirectories = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidateDirectory in @(
+        (Split-Path $uxPlayExecutablePath -Parent),
+        $resolvedGstreamerBin
+    ) + @(Get-Msys2BinDirectories -Target $Target)) {
+        if (-not $candidateDirectory -or -not (Test-Path $candidateDirectory) -or $searchDirectories.Contains($candidateDirectory)) {
+            continue
+        }
+        $searchDirectories.Add($candidateDirectory)
+    }
+
+    $objdumpExecutable = Resolve-ObjdumpExecutable
+    $supportPaths = [System.Collections.Generic.List[string]]::new()
+    $inspectedBinaries = [System.Collections.Generic.List[string]]::new()
+    $pendingBinaries = [System.Collections.Generic.Queue[string]]::new()
+    $pendingBinaries.Enqueue($uxPlayExecutablePath)
+
+    while ($pendingBinaries.Count -gt 0) {
+        $binaryPath = $pendingBinaries.Dequeue()
+        if ($inspectedBinaries.Contains($binaryPath)) {
+            continue
+        }
+        $inspectedBinaries.Add($binaryPath)
+
+        foreach ($dllName in Get-PeImportedDllNames -BinaryPath $binaryPath -ObjdumpExecutable $objdumpExecutable) {
+            $resolvedPath = Resolve-BinaryPathFromDirectories -BinaryName $dllName -SearchDirectories $searchDirectories
+            if (-not $resolvedPath -or $resolvedPath -eq $uxPlayExecutablePath) {
+                continue
+            }
+
+            if (
+                $resolvedGstreamerBin -and
+                $resolvedPath.StartsWith($resolvedGstreamerBin, [System.StringComparison]::OrdinalIgnoreCase)
+            ) {
+                continue
+            }
+
+            if (-not $supportPaths.Contains($resolvedPath)) {
+                $supportPaths.Add($resolvedPath)
+            }
+            if (-not $inspectedBinaries.Contains($resolvedPath)) {
+                $pendingBinaries.Enqueue($resolvedPath)
+            }
+        }
+    }
+
+    return $supportPaths
+}
+
 function Resolve-PkgConfigExecutable {
     $commandNames = @("pkg-config.exe", "pkgconf.exe", "pkg-config", "pkgconf")
     foreach ($commandName in $commandNames) {
@@ -270,21 +410,31 @@ function Invoke-PrepareDirectRuntime {
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$OutDir,
         [Parameter(Mandatory = $true)][string]$UxPlayExecutable,
+        [string[]]$UxPlaySupportPaths = @(),
         [Parameter(Mandatory = $true)][string]$GstreamerRoot,
         [Parameter(Mandatory = $true)][string]$BeaconScript,
         [Parameter(Mandatory = $true)][string]$BeaconHelperRelpath
     )
 
-    python scripts/prepare_direct_runtime.py `
-      --target $Target `
-      --out-dir $OutDir `
-      --uxplay-path $UxPlayExecutable `
-      --gst-root $GstreamerRoot `
-      --beacon-script $BeaconScript `
-      --beacon-helper-relpath $BeaconHelperRelpath `
-      --python-path "python" `
-      --uxplay-version $env:UXPLAY_REF `
-      --gstreamer-version $env:GSTREAMER_VERSION
+    $prepareArgs = @(
+        "scripts/prepare_direct_runtime.py",
+        "--target", $Target,
+        "--out-dir", $OutDir,
+        "--uxplay-path", $UxPlayExecutable
+    )
+    foreach ($supportPath in $UxPlaySupportPaths) {
+        $prepareArgs += @("--uxplay-support-path", $supportPath)
+    }
+    $prepareArgs += @(
+        "--gst-root", $GstreamerRoot,
+        "--beacon-script", $BeaconScript,
+        "--beacon-helper-relpath", $BeaconHelperRelpath,
+        "--python-path", "python",
+        "--uxplay-version", $env:UXPLAY_REF,
+        "--gstreamer-version", $env:GSTREAMER_VERSION
+    )
+
+    python @prepareArgs
 }
 
 function Stage-CachedRuntimeIfAvailable {
@@ -302,11 +452,16 @@ function Stage-CachedRuntimeIfAvailable {
     if (-not (Test-Path $uxPlayExecutable) -or -not (Test-GstreamerInstallReady -InstallRoot $GstRoot) -or -not (Test-Path $beaconScript)) {
         return $false
     }
+    $uxPlaySupportPaths = Resolve-UxPlaySupportPaths `
+      -UxPlayExecutable $uxPlayExecutable `
+      -GstreamerRoot $GstRoot `
+      -Target $Target
 
     Invoke-PrepareDirectRuntime `
       -Target $Target `
       -OutDir $OutDir `
       -UxPlayExecutable $uxPlayExecutable `
+      -UxPlaySupportPaths $uxPlaySupportPaths `
       -GstreamerRoot $GstRoot `
       -BeaconScript $beaconScript `
       -BeaconHelperRelpath $BeaconHelperRelpath
@@ -1933,11 +2088,16 @@ if (-not (Test-Path $UxPlayExecutable)) {
     cmake --build $UxPlayBuild --config Release --parallel
     $UxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
 }
+$UxPlaySupportPaths = Resolve-UxPlaySupportPaths `
+  -UxPlayExecutable $UxPlayExecutable `
+  -GstreamerRoot $GstRoot `
+  -Target $Target
 
 Invoke-PrepareDirectRuntime `
   -Target $Target `
   -OutDir $OutDir `
   -UxPlayExecutable $UxPlayExecutable `
+  -UxPlaySupportPaths $UxPlaySupportPaths `
   -GstreamerRoot $GstRoot `
   -BeaconScript (Join-Path $UxPlaySrc "Bluetooth_LE_beacon\uxplay-beacon.py") `
   -BeaconHelperRelpath $BeaconHelperRelpath

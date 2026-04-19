@@ -23,6 +23,7 @@ def stage_direct_runtime(
     target: str,
     out_dir: Path,
     uxplay_path: Path,
+    uxplay_support_paths: list[Path],
     gst_root: Path,
     beacon_script: Path,
     beacon_helper_relpath: str,
@@ -37,6 +38,8 @@ def stage_direct_runtime(
 
     staged_uxplay = target_root / executable_name("uxplay", target)
     shutil.copy2(uxplay_path, staged_uxplay)
+    for support_path in uxplay_support_paths:
+        shutil.copy2(support_path, target_root / support_path.name)
 
     staged_gst = target_root / "gstreamer"
     shutil.copytree(gst_root, staged_gst, dirs_exist_ok=True)
@@ -64,6 +67,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--target", required=True)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--uxplay-path", required=True, type=Path)
+    parser.add_argument(
+        "--uxplay-support-path",
+        dest="uxplay_support_paths",
+        action="append",
+        default=[],
+        type=Path,
+    )
     parser.add_argument("--gst-root", required=True, type=Path)
     parser.add_argument("--beacon-script", required=True, type=Path)
     parser.add_argument("--beacon-helper-relpath", required=True)
@@ -79,6 +89,7 @@ def main() -> None:
         target=args.target,
         out_dir=args.out_dir,
         uxplay_path=args.uxplay_path,
+        uxplay_support_paths=args.uxplay_support_paths,
         gst_root=args.gst_root,
         beacon_script=args.beacon_script,
         beacon_helper_relpath=args.beacon_helper_relpath,

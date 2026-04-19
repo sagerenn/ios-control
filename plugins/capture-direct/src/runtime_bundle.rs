@@ -111,16 +111,47 @@ impl DirectRuntimeBundle {
     }
 
     pub fn probe(&self) -> Result<()> {
-        let status = Command::new(&self.uxplay_path)
+        let mut command = Command::new(&self.uxplay_path);
+        command
             .arg("--help")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
+            .stderr(Stdio::null());
+        self.apply_runtime_env(&mut command);
+        let status = command.status()?;
         if status.success() {
             Ok(())
         } else {
             Err(anyhow!("uxplay probe failed with status {status}"))
+        }
+    }
+
+    pub fn apply_runtime_env(&self, command: &mut Command) {
+        let gst_root = self.root.join("gstreamer");
+        if cfg!(target_os = "windows") {
+            let gst_bin = gst_root.join("bin");
+            if gst_bin.is_dir() {
+                let path = std::env::var_os("PATH").unwrap_or_default();
+                let mut composed = gst_bin.into_os_string();
+                if !path.is_empty() {
+                    composed.push(";");
+                    composed.push(path);
+                }
+                command.env("PATH", composed);
+            }
+            let gst_plugins = gst_root.join("plugins");
+            if gst_plugins.is_dir() {
+                command.env("GST_PLUGIN_PATH_1_0", gst_plugins);
+            }
+        } else {
+            let gst_plugins = gst_root.join("plugins");
+            if gst_plugins.is_dir() {
+                command.env("GST_PLUGIN_PATH", gst_plugins);
+            }
+            let gst_lib = gst_root.join("lib");
+            if gst_lib.is_dir() {
+                command.env("LD_LIBRARY_PATH", gst_lib);
+            }
         }
     }
 }
