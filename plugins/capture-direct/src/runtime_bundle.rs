@@ -68,9 +68,9 @@ impl DirectRuntimeBundle {
         }
 
         let beacon_helper_path = root.join(
-            manifest.beacon_helper_path.unwrap_or_else(|| {
-                format!("beacon-helper{}", std::env::consts::EXE_SUFFIX)
-            }),
+            manifest
+                .beacon_helper_path
+                .unwrap_or_else(|| format!("beacon-helper{}", std::env::consts::EXE_SUFFIX)),
         );
         if !beacon_helper_path.is_file() {
             return Err(anyhow!(
@@ -129,20 +129,40 @@ impl DirectRuntimeBundle {
     pub fn apply_runtime_env(&self, command: &mut Command) {
         let gst_root = self.root.join("gstreamer");
         if cfg!(target_os = "windows") {
+            let mut path_entries = Vec::new();
+            path_entries.push(self.root.clone());
             let gst_bin = gst_root.join("bin");
             if gst_bin.is_dir() {
-                let path = std::env::var_os("PATH").unwrap_or_default();
-                let mut composed = gst_bin.into_os_string();
-                if !path.is_empty() {
-                    composed.push(";");
-                    composed.push(path);
-                }
-                command.env("PATH", composed);
+                path_entries.push(gst_bin);
             }
-            let gst_plugins = gst_root.join("plugins");
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            let mut composed = std::ffi::OsString::new();
+            for (index, entry) in path_entries.into_iter().enumerate() {
+                if index > 0 {
+                    composed.push(";");
+                }
+                composed.push(entry);
+            }
+            if !path.is_empty() {
+                composed.push(";");
+                composed.push(path);
+            }
+            command.env("PATH", composed);
+            let gst_plugins = gst_root.join("lib").join("gstreamer-1.0");
             if gst_plugins.is_dir() {
                 command.env("GST_PLUGIN_PATH_1_0", gst_plugins);
+                command.env(
+                    "GST_PLUGIN_SYSTEM_PATH_1_0",
+                    gst_root.join("lib").join("gstreamer-1.0"),
+                );
             }
+            command.env(
+                "GST_REGISTRY_1_0",
+                std::env::temp_dir().join(format!(
+                    "ios-control-gstreamer-registry-{}.bin",
+                    std::process::id()
+                )),
+            );
         } else {
             let gst_plugins = gst_root.join("plugins");
             if gst_plugins.is_dir() {

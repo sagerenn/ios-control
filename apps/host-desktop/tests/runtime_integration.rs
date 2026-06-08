@@ -8,7 +8,7 @@ use ios_control_session_orchestrator::CaptureBackend;
 mod support;
 use support::{
     build_plugins, host_plugin_paths, prepare_window_runtime_env, runtime_env_lock, target_dir,
-    workspace_root, EnvVarGuards, EnvVarGuard,
+    workspace_root, EnvVarGuard, EnvVarGuards,
 };
 
 #[test]
@@ -112,16 +112,18 @@ fn runtime_bootstrap_uses_repo_layout_without_env_vars() {
     build_plugins(&root);
 
     let bootstrap = host_desktop::bootstrap::bootstrap_startup(
-        target_dir(&root).join(format!("debug/host-desktop{}", std::env::consts::EXE_SUFFIX)),
+        target_dir(&root).join(format!(
+            "debug/host-desktop{}",
+            std::env::consts::EXE_SUFFIX
+        )),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")),
     )
     .unwrap();
 
-    assert!(bootstrap
-        .layout
-        .plugin_paths
-        .capture
-        .ends_with(format!("plugin-capture-window{}", std::env::consts::EXE_SUFFIX)));
+    assert!(bootstrap.layout.plugin_paths.capture.ends_with(format!(
+        "plugin-capture-window{}",
+        std::env::consts::EXE_SUFFIX
+    )));
     assert!(!bootstrap.startup.summary.is_empty());
 }
 
@@ -136,7 +138,10 @@ fn runtime_bootstrap_probes_embedded_window_helpers_without_env_vars() {
     ]);
 
     let bootstrap = host_desktop::bootstrap::bootstrap_startup(
-        target_dir(&root).join(format!("debug/host-desktop{}", std::env::consts::EXE_SUFFIX)),
+        target_dir(&root).join(format!(
+            "debug/host-desktop{}",
+            std::env::consts::EXE_SUFFIX
+        )),
         PathBuf::from(env!("CARGO_MANIFEST_DIR")),
     )
     .unwrap();

@@ -4,6 +4,8 @@ pub mod linux;
 pub mod state;
 #[cfg(target_os = "windows")]
 pub mod windows;
+#[cfg(target_os = "windows")]
+pub mod windows_hid;
 
 pub fn probe_host_capability() -> backend::HostCapability {
     #[cfg(target_os = "linux")]

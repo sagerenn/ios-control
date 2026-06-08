@@ -7,7 +7,8 @@ use ios_control_contracts::capture::{
     CaptureStatus, CaptureStreamDescriptor, SourceKind, VideoFrameDescriptor, VideoSource,
 };
 use ios_control_contracts::control::{
-    ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionPhase, ExecutionSummary,
+    ControlCapability, ControlInputEvent, ControlSessionPhase, ControlSetupChecklist,
+    ExecutionPhase, ExecutionSummary,
 };
 use ios_control_contracts::grounding::{
     GroundingFailure, GroundingPlan, GroundingRequest, TargetInput,
@@ -203,16 +204,15 @@ impl SessionOrchestrator {
             let mut grounding = RunningPlugin::spawn(path).await?;
             let grounding_descriptor = grounding.handshake().await?;
             let plan = request_grounding_plan(&mut grounding).await?;
-            let (execution_result, latest_frame) =
-                execute_grounding_plan(
-                    &mut capture,
-                    &mut control,
-                    &plan,
-                    latest_frame
-                        .as_ref()
-                        .expect("window sessions should have an initial frame"),
-                )
-                .await?;
+            let (execution_result, latest_frame) = execute_grounding_plan(
+                &mut capture,
+                &mut control,
+                &plan,
+                latest_frame
+                    .as_ref()
+                    .expect("window sessions should have an initial frame"),
+            )
+            .await?;
             staged_capabilities.push((grounding_descriptor.plugin_id.clone(), true, None));
             staged_telemetry.push(TelemetryEvent {
                 session_id: session_id.clone(),
@@ -360,6 +360,18 @@ impl SessionSupervisor {
         self.sessions.remove(device_id);
         shutdown_result
     }
+
+    pub async fn forward_control_input(
+        &mut self,
+        device_id: &str,
+        event: ControlInputEvent,
+    ) -> Result<ExecutionSummary> {
+        let active = self
+            .active
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow!("missing active session for {device_id}"))?;
+        active.forward_control_input(event).await
+    }
 }
 
 impl ActiveSessionState {
@@ -389,6 +401,17 @@ impl ActiveSessionState {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub async fn forward_control_input(
+        &mut self,
+        event: ControlInputEvent,
+    ) -> Result<ExecutionSummary> {
+        let control = self
+            .control_plugin
+            .as_mut()
+            .ok_or_else(|| anyhow!("missing control plugin"))?;
+        request_control_input(control, event).await
     }
 
     pub async fn shutdown(mut self) -> Result<()> {
@@ -739,6 +762,16 @@ async fn request_plan_execution(
     match request_plugin(control, &HostToPlugin::ExecutePlan { plan: plan.clone() }).await? {
         PluginToHost::ExecutionSummary { summary } => Ok(summary),
         other => Err(anyhow!("unexpected execution response: {other:?}")),
+    }
+}
+
+async fn request_control_input(
+    control: &mut RunningPlugin,
+    event: ControlInputEvent,
+) -> Result<ExecutionSummary> {
+    match request_plugin(control, &HostToPlugin::ForwardControlInput { event }).await? {
+        PluginToHost::ExecutionSummary { summary } => Ok(summary),
+        other => Err(anyhow!("unexpected live control response: {other:?}")),
     }
 }
 

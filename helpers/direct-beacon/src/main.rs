@@ -88,8 +88,14 @@ impl BeaconBundle {
 
 fn resolve_python_command() -> Option<String> {
     for candidate in python_candidates() {
-        let status = python_command(candidate).arg("--version").status().ok()?;
-        if status.success() {
+        if python_command(candidate)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+        {
             return Some(candidate.to_string());
         }
     }

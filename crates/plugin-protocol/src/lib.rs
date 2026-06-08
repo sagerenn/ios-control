@@ -4,7 +4,8 @@ use ios_control_contracts::capture::{
     CaptureCapability, CaptureStatus, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
 };
 use ios_control_contracts::control::{
-    ControlCapability, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
+    ControlCapability, ControlInputEvent, ControlSessionPhase, ControlSetupChecklist,
+    ExecutionSummary,
 };
 use ios_control_contracts::grounding::{GroundingPlan, GroundingRequest};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,7 @@ pub enum HostToPlugin {
     StartDirectCapture,
     PlanGrounding { request: GroundingRequest },
     ExecutePlan { plan: GroundingPlan },
+    ForwardControlInput { event: ControlInputEvent },
     Stop,
 }
 

@@ -38,7 +38,10 @@ impl DirectRuntimeSession {
             &bundle.gst_launch_path,
             &rtp_video::receiver_args(video_port, &frame_pattern),
             bundle,
-            Some(("IOS_CONTROL_DIRECT_FRAME_PATTERN", frame_pattern.as_os_str())),
+            Some((
+                "IOS_CONTROL_DIRECT_FRAME_PATTERN",
+                frame_pattern.as_os_str(),
+            )),
         )
         .context("failed to launch video receiver")?;
         let audio_receiver = spawn_child(
@@ -73,7 +76,8 @@ impl DirectRuntimeSession {
     pub fn next_frame(&mut self) -> Result<Option<DecodedFrame>> {
         let start = Instant::now();
         while start.elapsed() < FRAME_WAIT_TIMEOUT {
-            if let Some(frame) = rtp_video::next_frame(&self.frame_dir, &mut self.last_frame_index)? {
+            if let Some(frame) = rtp_video::next_frame(&self.frame_dir, &mut self.last_frame_index)?
+            {
                 return Ok(Some(frame));
             }
             if self.uxplay.try_wait()?.is_some() {
@@ -134,9 +138,11 @@ fn spawn_beacon(bundle: &DirectRuntimeBundle, ble_path: &std::path::Path) -> Res
         .env(BLE_PATH_ENV, ble_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     apply_runtime_env(&mut command, bundle);
-    command.spawn().context("failed to spawn direct beacon helper")
+    command
+        .spawn()
+        .context("failed to spawn direct beacon helper")
 }
 
 fn spawn_uxplay(
@@ -150,10 +156,15 @@ fn spawn_uxplay(
     let mut command = Command::new(&bundle.uxplay_path);
     command
         .args([
+            "-n",
+            "UxPlay receiver",
+            "-nh",
             "-vs",
-            "0",
+            "fakesink",
             "-ble",
-            ble_path.to_str().ok_or_else(|| anyhow!("invalid ble path"))?,
+            ble_path
+                .to_str()
+                .ok_or_else(|| anyhow!("invalid ble path"))?,
             "-vrtp",
             &video_pipeline,
             "-artp",
@@ -161,7 +172,7 @@ fn spawn_uxplay(
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     apply_runtime_env(&mut command, bundle);
     command.spawn().context("failed to spawn uxplay")
 }
@@ -177,12 +188,14 @@ fn spawn_child(
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     apply_runtime_env(&mut command, bundle);
     if let Some((key, value)) = extra_env {
         command.env(key, value);
     }
-    command.spawn().with_context(|| format!("failed to spawn {}", bundle_exe.display()))
+    command
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", bundle_exe.display()))
 }
 
 fn apply_runtime_env(command: &mut Command, bundle: &DirectRuntimeBundle) {

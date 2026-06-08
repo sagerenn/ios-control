@@ -1,6 +1,5 @@
 use ios_control_contracts::capture::{
-    AudioRoute, AudioStreamPhase, AudioStreamStatus, CaptureStatus, CaptureStreamPhase,
-    FrameHealth,
+    AudioRoute, AudioStreamPhase, AudioStreamStatus, CaptureStatus, CaptureStreamPhase, FrameHealth,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -35,7 +35,8 @@ pub fn discover_bluetooth_devices(
         return Vec::new();
     };
 
-    let preferred_control_state = map_control_state(probe_control_capability(&plugin_paths.control_ble).ok());
+    let preferred_control_state =
+        map_control_state(probe_control_capability(&plugin_paths.control_ble).ok());
 
     devices
         .into_iter()
@@ -58,7 +59,9 @@ pub fn discover_bluetooth_devices(
         .collect()
 }
 
-fn map_control_state(capability: Option<ios_control_contracts::control::ControlCapability>) -> CapabilityState {
+fn map_control_state(
+    capability: Option<ios_control_contracts::control::ControlCapability>,
+) -> CapabilityState {
     match capability {
         Some(capability) if capability.supported => CapabilityState::Ready,
         Some(capability) => CapabilityState::Blocked(

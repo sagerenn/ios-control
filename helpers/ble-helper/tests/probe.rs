@@ -40,7 +40,10 @@ fn linux_probe_reports_missing_system_bus() {
     let capability = ble_helper::probe_host_capability();
 
     assert!(!capability.supported);
-    assert_eq!(capability.reason.as_deref(), Some("system bus socket missing"));
+    assert_eq!(
+        capability.reason.as_deref(),
+        Some("system bus socket missing")
+    );
 
     match old_system_bus {
         Some(value) => std::env::set_var("IOS_CONTROL_BLE_TEST_SYSTEM_BUS", value),

@@ -58,8 +58,9 @@ fn resolve_packaged_ble_helper() -> Option<PathBuf> {
         return Some(sibling);
     }
 
-    let bundle_helper = exe_dir
-        .parent()
-        .map(|root| root.join("helpers").join(format!("ble-helper{}", std::env::consts::EXE_SUFFIX)));
+    let bundle_helper = exe_dir.parent().map(|root| {
+        root.join("helpers")
+            .join(format!("ble-helper{}", std::env::consts::EXE_SUFFIX))
+    });
     bundle_helper.filter(|path| path.is_file())
 }

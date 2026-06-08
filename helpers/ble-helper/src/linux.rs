@@ -67,7 +67,9 @@ fn probe_linux_capability_from_env() -> Option<HostCapability> {
         return Some(HostCapability::unsupported("system bus socket missing"));
     }
     if !adapter_present.unwrap_or(true) {
-        return Some(HostCapability::unsupported("bluetooth adapter not detected"));
+        return Some(HostCapability::unsupported(
+            "bluetooth adapter not detected",
+        ));
     }
     if !advertising_supported.unwrap_or(true) {
         return Some(HostCapability::unsupported(

@@ -1,5 +1,5 @@
-use crate::inventory::model::{InventoryDevice, InventoryEvidenceSource, Sessionability};
 use crate::inventory::model::CapabilityState;
+use crate::inventory::model::{InventoryDevice, InventoryEvidenceSource, Sessionability};
 use ios_control_contracts::session::DeviceSessionStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,10 +73,7 @@ impl FleetViewModel {
         }
     }
 
-    pub fn from_inventory(
-        devices: &[InventoryDevice],
-        statuses: &[DeviceSessionStatus],
-    ) -> Self {
+    pub fn from_inventory(devices: &[InventoryDevice], statuses: &[DeviceSessionStatus]) -> Self {
         let mut rows: Vec<FleetRow> = devices
             .iter()
             .map(|device| {
@@ -93,7 +90,8 @@ impl FleetViewModel {
                         Sessionability::StartableWithPreferredPath
                             | Sessionability::StartableWithFallback
                     ),
-                    operator_action: status.and_then(|status| status.operator_action().map(str::to_string)),
+                    operator_action: status
+                        .and_then(|status| status.operator_action().map(str::to_string)),
                     active_session: status.is_some(),
                 }
             })
@@ -129,12 +127,14 @@ fn launcher_control_ready(device: &InventoryDevice) -> bool {
 fn badges_for_device(device: &InventoryDevice, active_session: bool) -> Vec<String> {
     let mut badges = Vec::new();
     for source in &device.evidence_sources {
-        badges.push(match source {
-            InventoryEvidenceSource::Bluetooth => "Bluetooth",
-            InventoryEvidenceSource::Mirror => "Mirror",
-            InventoryEvidenceSource::Known => "Known",
-        }
-        .to_string());
+        badges.push(
+            match source {
+                InventoryEvidenceSource::Bluetooth => "Bluetooth",
+                InventoryEvidenceSource::Mirror => "Mirror",
+                InventoryEvidenceSource::Known => "Known",
+            }
+            .to_string(),
+        );
     }
     if active_session {
         badges.push("Active".into());

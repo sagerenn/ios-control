@@ -1,6 +1,6 @@
 use plugin_control_ble::helper_bridge::{
-    run_execute, run_forget_bond, run_prepare, run_probe, run_status, run_stop,
-    BleHelperAck, BleHelperExecution, BleHelperPrepare, BleHelperStatus,
+    run_execute, run_forget_bond, run_prepare, run_probe, run_status, run_stop, BleHelperAck,
+    BleHelperExecution, BleHelperPrepare, BleHelperStatus,
 };
 use std::{
     env, fs,
@@ -26,12 +26,34 @@ fn write_ble_helper_with_mode(
         .unwrap()
         .as_nanos();
     let counter = HELPER_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let extension = if cfg!(windows) { "cmd" } else { "sh" };
     let path = env::temp_dir().join(format!(
-        "ios-control-ble-helper-{}-{nanos}-{counter}.sh",
+        "ios-control-ble-helper-{}-{nanos}-{counter}.{extension}",
         std::process::id(),
     ));
-    let body = format!(
-        r#"#!/bin/sh
+    let body = if cfg!(windows) {
+        format!(
+            r#"@echo off
+if "%~1"=="probe" (
+  echo {probe}
+) else if "%~1"=="prepare" (
+  echo {prepare}
+) else if "%~1"=="status" (
+  echo {status}
+) else if "%~1"=="execute" (
+  echo {execute}
+) else if "%~1"=="stop" (
+  echo {{"ok":true,"message":"helper stopped"}}
+) else if "%~1"=="forget-bond" (
+  echo {{"ok":true,"message":"bond forgotten"}}
+) else (
+  exit /b 2
+)
+"#
+        )
+    } else {
+        format!(
+            r#"#!/bin/sh
 case "$1" in
   probe)
     printf '%s\n' '{probe}'
@@ -56,7 +78,8 @@ case "$1" in
     ;;
 esac
 "#
-    );
+        )
+    };
     fs::write(&path, body).unwrap();
     #[cfg(unix)]
     if executable {

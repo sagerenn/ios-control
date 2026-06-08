@@ -29,7 +29,10 @@ pub fn render(ui: &mut Ui, view_model: &StartupViewModel) -> StartupAction {
         }
     });
     for item in &view_model.items {
-        ui.label(format!("{} | {} | {}", item.label, item.status, item.detail));
+        ui.label(format!(
+            "{} | {} | {}",
+            item.label, item.status, item.detail
+        ));
     }
 
     action

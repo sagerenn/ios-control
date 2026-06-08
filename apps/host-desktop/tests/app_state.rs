@@ -1,8 +1,6 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::inventory::aggregator::aggregate_inventory;
-use host_desktop::inventory::model::{
-    CapabilityState, DeviceObservation, InventoryEvidenceSource,
-};
+use host_desktop::inventory::model::{CapabilityState, DeviceObservation, InventoryEvidenceSource};
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use host_desktop::preferences::HostPreferencesStore;
 use host_desktop::runtime::{HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
@@ -18,8 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 use support::{
-    build_plugins, host_plugin_paths, plugin_path, runtime_env_lock, workspace_root,
-    EnvVarGuard, EnvVarGuards,
+    build_plugins, host_plugin_paths, plugin_path, runtime_env_lock, workspace_root, EnvVarGuard,
+    EnvVarGuards,
 };
 
 struct RuntimeAppFixture {
@@ -45,6 +43,7 @@ fn host_app_with_runtime() -> RuntimeAppFixture {
     let root = workspace_root();
     build_plugins(&root);
     let guards = EnvVarGuards::new(vec![
+        EnvVarGuard::set("IOS_CONTROL_TEST_BLUETOOTH_DEVICES_JSON", "[]"),
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
             plugin_path(&root, "plugin-capture-window"),
@@ -78,6 +77,7 @@ fn host_app_with_runtime_and_waiting_direct_helper() -> RuntimeAppFixture {
     let state_path = direct_helper_delay_state_path("host-desktop-direct-helper-delay");
     let _ = std::fs::remove_file(&state_path);
     let guard_values = vec![
+        EnvVarGuard::set("IOS_CONTROL_TEST_BLUETOOTH_DEVICES_JSON", "[]"),
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
             plugin_path(&root, "plugin-capture-window"),
@@ -118,6 +118,7 @@ fn host_app_with_runtime_and_preferences(preferences_json: &str) -> RuntimeAppFi
     let root = workspace_root();
     build_plugins(&root);
     let guards = EnvVarGuards::new(vec![
+        EnvVarGuard::set("IOS_CONTROL_TEST_BLUETOOTH_DEVICES_JSON", "[]"),
         EnvVarGuard::set(
             "IOS_CONTROL_WINDOW_CAPTURE_HELPER",
             plugin_path(&root, "plugin-capture-window"),
@@ -152,6 +153,10 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
 ) -> RuntimeAppFixture {
     let lock = runtime_env_lock();
     let prefs_path = support::write_preferences_json(preferences_json);
+    let guards = EnvVarGuards::new(vec![EnvVarGuard::set(
+        "IOS_CONTROL_TEST_BLUETOOTH_DEVICES_JSON",
+        "[]",
+    )]);
     let app = HostDesktopApp::with_runtime_and_preferences(
         HostRuntimeConfig {
             plugin_paths: PluginPaths {
@@ -168,7 +173,7 @@ fn host_app_with_missing_runtime_plugins_and_preferences(
 
     RuntimeAppFixture {
         _lock: lock,
-        _guards: EnvVarGuards::new(vec![]),
+        _guards: guards,
         preferences_path: Some(prefs_path),
         app,
     }
@@ -361,7 +366,10 @@ fn partially_discovered_inventory() -> host_desktop::inventory::model::Inventory
         capture_state: CapabilityState::Unavailable,
         preferred_control_state: CapabilityState::Discovered,
         fallback_control_state: CapabilityState::Unavailable,
-        reasons: vec!["paired over bluetooth".into(), "no capture path observed".into()],
+        reasons: vec![
+            "paired over bluetooth".into(),
+            "no capture path observed".into(),
+        ],
     }])
 }
 
@@ -377,7 +385,10 @@ fn bluetooth_and_unlinked_mirror_inventory() -> host_desktop::inventory::model::
             capture_state: CapabilityState::Unavailable,
             preferred_control_state: CapabilityState::Ready,
             fallback_control_state: CapabilityState::Unavailable,
-            reasons: vec!["paired over bluetooth".into(), "no capture path observed".into()],
+            reasons: vec![
+                "paired over bluetooth".into(),
+                "no capture path observed".into(),
+            ],
         },
         DeviceObservation {
             provider: InventoryEvidenceSource::Mirror,
@@ -419,14 +430,20 @@ fn host_app_boots_without_inventing_a_mock_device() {
     assert!(app.selected_device_id.is_none());
     assert_eq!(app.device_detail.device_name, "No device selected");
     assert!(app.device_detail.capture_sources.is_empty());
-    assert_eq!(app.device_detail.control_checklist.items, Vec::<String>::new());
+    assert_eq!(
+        app.device_detail.control_checklist.items,
+        Vec::<String>::new()
+    );
     assert_eq!(app.session.ui_state, SessionUiState::Idle);
     assert!(app.session.selected_source.is_none());
     assert!(app.session.latest_frame.is_none());
     assert_eq!(app.diagnostics.host_error, None);
     assert_eq!(app.diagnostics.control_summary, "control not started");
     assert_eq!(app.diagnostics.grounding_summary, "grounding idle");
-    assert_eq!(app.startup.readiness, host_desktop::view_models::startup::StartupReadiness::Blocked);
+    assert_eq!(
+        app.startup.readiness,
+        host_desktop::view_models::startup::StartupReadiness::Blocked
+    );
     assert!(app.startup.summary.contains("Blocked"));
 }
 
@@ -470,7 +487,10 @@ fn host_app_start_direct_receiver_uses_direct_capture_source() {
 
     fixture.app.request_start_direct_receiver();
 
-    assert_eq!(fixture.app.selected_device_id.as_deref(), Some("direct-receiver"));
+    assert_eq!(
+        fixture.app.selected_device_id.as_deref(),
+        Some("direct-receiver")
+    );
     assert!(matches!(
         fixture.app.session.ui_state,
         SessionUiState::Streaming | SessionUiState::Starting
@@ -501,7 +521,9 @@ fn host_app_opens_blocked_session_window_for_not_startable_launcher_device() {
 #[test]
 fn host_app_defers_startable_session_window_until_direct_frame_is_live() {
     let mut fixture = host_app_with_runtime_and_waiting_direct_helper();
-    fixture.app.apply_inventory_snapshot(launcher_ready_bluetooth_inventory());
+    fixture
+        .app
+        .apply_inventory_snapshot(launcher_ready_bluetooth_inventory());
     fixture.app.select_device("bt:AA-BB");
 
     fixture.app.request_open_selected_device_session();
@@ -550,7 +572,10 @@ fn host_app_surfaces_observed_capture_sources_for_bluetooth_only_rows() {
 
     assert_eq!(
         app.device_detail.capture_sources,
-        vec![CaptureSourceOption::new("window-helper-1", "Operator Mirror")]
+        vec![CaptureSourceOption::new(
+            "window-helper-1",
+            "Operator Mirror"
+        )]
     );
 }
 
@@ -568,7 +593,9 @@ fn host_app_can_link_bluetooth_row_to_observed_capture_source_and_persist_identi
     fixture.app.request_start_session();
 
     let prefs_path = fixture.preferences_path.as_ref().unwrap();
-    let prefs = HostPreferencesStore::new(prefs_path.clone()).load().unwrap();
+    let prefs = HostPreferencesStore::new(prefs_path.clone())
+        .load()
+        .unwrap();
     let linked = prefs
         .known_devices
         .iter()
@@ -584,9 +611,15 @@ fn host_app_records_inventory_diagnostic_metrics_and_logs() {
     app.apply_inventory_snapshot(bluetooth_and_unlinked_mirror_inventory());
 
     let diagnostics = format!("{:?}", app.diagnostics);
-    assert!(diagnostics.contains("inventory_refreshes: 1"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("inventory_refreshes: 1"),
+        "{diagnostics}"
+    );
     assert!(diagnostics.contains("inventory_rows: 2"), "{diagnostics}");
-    assert!(diagnostics.contains("inventory_startable_rows: 1"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("inventory_startable_rows: 1"),
+        "{diagnostics}"
+    );
     assert!(
         diagnostics.contains("inventory snapshot total=2 startable=1 blocked=1"),
         "{diagnostics}"
@@ -604,8 +637,14 @@ fn host_app_records_session_start_diagnostic_metrics_and_logs() {
     fixture.app.request_start_session();
 
     let diagnostics = format!("{:?}", fixture.app.diagnostics);
-    assert!(diagnostics.contains("session_start_attempts: 1"), "{diagnostics}");
-    assert!(diagnostics.contains("session_start_successes: 1"), "{diagnostics}");
+    assert!(
+        diagnostics.contains("session_start_attempts: 1"),
+        "{diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("session_start_successes: 1"),
+        "{diagnostics}"
+    );
     assert!(
         diagnostics.contains("session start succeeded device=bt:AA-BB source=window-helper-1"),
         "{diagnostics}"
@@ -620,8 +659,12 @@ fn host_app_settings_surface_preferences_and_log_paths() {
     let prefs_path = fixture.preferences_path.as_ref().unwrap();
     let logs_dir = HostPreferencesStore::log_dir_for_preferences_path(prefs_path);
 
-    assert!(rows.iter().any(|row| row.contains(&prefs_path.display().to_string())));
-    assert!(rows.iter().any(|row| row.contains(&logs_dir.display().to_string())));
+    assert!(rows
+        .iter()
+        .any(|row| row.contains(&prefs_path.display().to_string())));
+    assert!(rows
+        .iter()
+        .any(|row| row.contains(&logs_dir.display().to_string())));
 }
 
 #[test]
@@ -644,19 +687,25 @@ fn host_app_writes_launch_logs_into_user_data_logs_folder() {
         .into_iter()
         .map(|entry| std::fs::read_to_string(entry.path()).expect("launch log should be readable"))
         .collect::<Vec<_>>();
-    assert!(!log_texts.is_empty(), "expected at least one launch log file");
+    assert!(
+        !log_texts.is_empty(),
+        "expected at least one launch log file"
+    );
     assert!(
         log_texts.iter().any(|text| text.contains("startup probe")),
         "{log_texts:?}"
     );
     assert!(
-        log_texts.iter().any(|text| text.contains("inventory snapshot")),
+        log_texts
+            .iter()
+            .any(|text| text.contains("inventory snapshot")),
         "{log_texts:?}"
     );
     assert!(
         log_texts
             .iter()
-            .any(|text| text.contains("session start succeeded device=bt:AA-BB source=window-helper-1")),
+            .any(|text| text
+                .contains("session start succeeded device=bt:AA-BB source=window-helper-1")),
         "{log_texts:?}"
     );
 }
@@ -680,9 +729,7 @@ fn host_app_merges_runtime_sessions_with_inventory_rows() {
 
     assert_eq!(app.fleet.rows.len(), 1);
     assert!(app.fleet.rows[0].active_session);
-    assert!(app
-        .fleet
-        .rows[0]
+    assert!(app.fleet.rows[0]
         .evidence_badges
         .iter()
         .any(|badge| badge == "Active"));
@@ -696,7 +743,9 @@ fn successful_runtime_start_persists_known_device_history() {
     fixture.app.request_start_session();
 
     let prefs_path = fixture.preferences_path.as_ref().unwrap();
-    let prefs = HostPreferencesStore::new(prefs_path.clone()).load().unwrap();
+    let prefs = HostPreferencesStore::new(prefs_path.clone())
+        .load()
+        .unwrap();
     assert!(prefs
         .known_devices
         .iter()
@@ -917,7 +966,10 @@ fn host_app_preflight_clears_unavailable_restored_source_before_start_call() {
         "control.window-bridge",
         None,
     )]);
-    assert_eq!(fixture.app.device_detail.active_source_id.as_deref(), Some("direct-1"));
+    assert_eq!(
+        fixture.app.device_detail.active_source_id.as_deref(),
+        Some("direct-1")
+    );
 
     fixture.app.request_start_session();
 

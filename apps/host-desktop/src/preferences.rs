@@ -205,12 +205,9 @@ mod tests {
         let xdg = PathBuf::from("/tmp/xdg-home");
         let home = PathBuf::from("/tmp/home");
 
-        let from_xdg = HostPreferencesStore::path_from_env(
-            Some(xdg.as_path()),
-            Some(home.as_path()),
-            None,
-        )
-        .unwrap();
+        let from_xdg =
+            HostPreferencesStore::path_from_env(Some(xdg.as_path()), Some(home.as_path()), None)
+                .unwrap();
         assert_eq!(
             from_xdg,
             xdg.join("ios-control").join("host-preferences.json")

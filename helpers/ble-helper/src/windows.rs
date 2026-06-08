@@ -9,15 +9,17 @@ pub fn probe_windows_capability() -> HostCapability {
         .and_then(|operation| operation.join())
     {
         Ok(adapter) => adapter,
-        Err(err) => return HostCapability::unsupported(format!("bluetooth radio not detected: {err}")),
+        Err(err) => {
+            return HostCapability::unsupported(format!("bluetooth radio not detected: {err}"))
+        }
     };
 
     match adapter.IsPeripheralRoleSupported() {
         Ok(true) => HostCapability::supported("windows"),
         Ok(false) => HostCapability::unsupported("bluetooth peripheral role not supported"),
-        Err(err) => HostCapability::unsupported(format!(
-            "failed to query bluetooth peripheral role: {err}"
-        )),
+        Err(err) => {
+            HostCapability::unsupported(format!("failed to query bluetooth peripheral role: {err}"))
+        }
     }
 }
 
@@ -37,7 +39,9 @@ fn probe_windows_capability_from_env() -> Option<HostCapability> {
         return Some(HostCapability::unsupported("bluetooth radio not detected"));
     }
     if !peripheral_role_supported.unwrap_or(true) {
-        return Some(HostCapability::unsupported("bluetooth peripheral role not supported"));
+        return Some(HostCapability::unsupported(
+            "bluetooth peripheral role not supported",
+        ));
     }
 
     Some(HostCapability::supported("windows"))

@@ -14,6 +14,27 @@ pub struct KeyPress {
     pub modifiers: KeyModifiers,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MouseInputReport {
+    pub buttons: u8,
+    pub dx: i16,
+    pub dy: i16,
+    pub wheel: i8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyboardInputReport {
+    pub usage_id: u8,
+    pub modifiers: KeyModifiers,
+    pub pressed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlInputEvent {
+    Mouse(MouseInputReport),
+    Keyboard(KeyboardInputReport),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ControlCapability {
     pub supported: bool,

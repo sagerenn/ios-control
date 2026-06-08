@@ -207,6 +207,108 @@ function Resolve-UxPlaySupportPaths {
     return $supportPaths
 }
 
+function Resolve-AdditionalRuntimeSupportPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $searchDirectories = Get-Msys2BinDirectories -Target $Target
+    $supportPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($dllName in @("libbz2-1.dll", "libintl-8.dll", "liblzma-5.dll", "zlib1.dll")) {
+        $resolvedPath = Resolve-BinaryPathFromDirectories -BinaryName $dllName -SearchDirectories $searchDirectories
+        if ($resolvedPath -and -not $supportPaths.Contains($resolvedPath)) {
+            $supportPaths.Add($resolvedPath)
+        }
+    }
+
+    return $supportPaths
+}
+
+function Resolve-Msys2BashExecutable {
+    foreach ($msys2Root in Get-Msys2RootDirectories) {
+        $candidatePath = Join-Path $msys2Root "usr\bin\bash.exe"
+        if (Test-Path $candidatePath) {
+            return (Resolve-Path $candidatePath).Path
+        }
+    }
+
+    $command = Get-Command "bash.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    throw "MSYS2 bash executable not found"
+}
+
+function Convert-PathToMsys2UnixPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (Test-Path $Path) {
+        $resolvedPath = (Resolve-Path $Path).Path
+    } else {
+        $parentPath = Split-Path $Path -Parent
+        $leafName = Split-Path $Path -Leaf
+        $resolvedParentPath = (Resolve-Path $parentPath).Path
+        $resolvedPath = Join-Path $resolvedParentPath $leafName
+    }
+    if ($resolvedPath -notmatch '^[A-Za-z]:\\') {
+        throw "cannot convert non-drive-qualified path to MSYS2 path: $resolvedPath"
+    }
+
+    $drive = $resolvedPath.Substring(0, 1).ToLowerInvariant()
+    $tail = $resolvedPath.Substring(2).Replace('\', '/')
+    return "/$drive$tail"
+}
+
+function Build-DnssdStubLibrary {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$WorkRoot
+    )
+
+    $sourcePath = Join-Path $PSScriptRoot "uxplay-compat\dnssd_stub.c"
+    if (-not (Test-Path $sourcePath)) {
+        throw "dnssd compatibility stub source missing: $sourcePath"
+    }
+
+    $outputPath = Join-Path $WorkRoot "dnssd.dll"
+    $msystem = switch ($Target) {
+        "x86_64-pc-windows-msvc" { "UCRT64" }
+        "aarch64-pc-windows-msvc" { "CLANGARM64" }
+        default { throw "unsupported target for dnssd compatibility stub: $Target" }
+    }
+    $toolchainBin = switch ($Target) {
+        "x86_64-pc-windows-msvc" { "/ucrt64/bin" }
+        "aarch64-pc-windows-msvc" { "/clangarm64/bin" }
+    }
+
+    $unixSourcePath = Convert-PathToMsys2UnixPath -Path $sourcePath
+    $unixOutputPath = Convert-PathToMsys2UnixPath -Path $outputPath
+    $bashExecutable = Resolve-Msys2BashExecutable
+
+    $previousMsystem = $env:MSYSTEM
+    $previousChereInvoking = $env:CHERE_INVOKING
+    try {
+        $env:MSYSTEM = $msystem
+        $env:CHERE_INVOKING = "1"
+        & $bashExecutable -lc "export PATH=${toolchainBin}:/usr/bin:`$PATH; cc -shared -O2 -Wall -Wextra -o '$unixOutputPath' '$unixSourcePath'"
+        if ($LASTEXITCODE -ne 0) {
+            throw "failed to build dnssd compatibility stub with MSYS2 $msystem"
+        }
+    } finally {
+        $env:MSYSTEM = $previousMsystem
+        $env:CHERE_INVOKING = $previousChereInvoking
+    }
+
+    if (-not (Test-Path $outputPath)) {
+        throw "dnssd compatibility stub was not produced: $outputPath"
+    }
+
+    return (Resolve-Path $outputPath).Path
+}
+
 function Resolve-PkgConfigExecutable {
     $commandNames = @("pkg-config.exe", "pkgconf.exe", "pkg-config", "pkgconf")
     foreach ($commandName in $commandNames) {
@@ -444,7 +546,8 @@ function Stage-CachedRuntimeIfAvailable {
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$UxPlaySrc,
         [Parameter(Mandatory = $true)][string]$UxPlayBuild,
-        [Parameter(Mandatory = $true)][string]$GstRoot
+        [Parameter(Mandatory = $true)][string]$GstRoot,
+        [Parameter(Mandatory = $true)][string]$DnssdSupportPath
     )
 
     $uxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
@@ -452,10 +555,23 @@ function Stage-CachedRuntimeIfAvailable {
     if (-not (Test-Path $uxPlayExecutable) -or -not (Test-GstreamerInstallReady -InstallRoot $GstRoot) -or -not (Test-Path $beaconScript)) {
         return $false
     }
-    $uxPlaySupportPaths = Resolve-UxPlaySupportPaths `
+    $uxPlaySupportPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($supportPath in Resolve-UxPlaySupportPaths `
       -UxPlayExecutable $uxPlayExecutable `
       -GstreamerRoot $GstRoot `
-      -Target $Target
+      -Target $Target) {
+        if (-not $uxPlaySupportPaths.Contains($supportPath)) {
+            $uxPlaySupportPaths.Add($supportPath)
+        }
+    }
+    foreach ($supportPath in Resolve-AdditionalRuntimeSupportPaths -Target $Target) {
+        if (-not $uxPlaySupportPaths.Contains($supportPath)) {
+            $uxPlaySupportPaths.Add($supportPath)
+        }
+    }
+    if (-not $uxPlaySupportPaths.Contains($DnssdSupportPath)) {
+        $uxPlaySupportPaths.Add($DnssdSupportPath)
+    }
 
     Invoke-PrepareDirectRuntime `
       -Target $Target `
@@ -1976,7 +2092,9 @@ if ($GstreamerSource -ne "source") {
     throw "unsupported Windows GStreamerSource=$GstreamerSource"
 }
 
-if (Stage-CachedRuntimeIfAvailable -OutDir $OutDir -BeaconHelperRelpath $BeaconHelperRelpath -Target $Target -UxPlaySrc $UxPlaySrc -UxPlayBuild $UxPlayBuild -GstRoot $GstRoot) {
+$DnssdSupportPath = Build-DnssdStubLibrary -Target $Target -WorkRoot $WorkRoot
+
+if (Stage-CachedRuntimeIfAvailable -OutDir $OutDir -BeaconHelperRelpath $BeaconHelperRelpath -Target $Target -UxPlaySrc $UxPlaySrc -UxPlayBuild $UxPlayBuild -GstRoot $GstRoot -DnssdSupportPath $DnssdSupportPath) {
     return
 }
 
@@ -2088,10 +2206,23 @@ if (-not (Test-Path $UxPlayExecutable)) {
     cmake --build $UxPlayBuild --config Release --parallel
     $UxPlayExecutable = Resolve-UxPlayExecutablePath -BuildRoot $UxPlayBuild
 }
-$UxPlaySupportPaths = Resolve-UxPlaySupportPaths `
+$UxPlaySupportPaths = [System.Collections.Generic.List[string]]::new()
+foreach ($supportPath in Resolve-UxPlaySupportPaths `
   -UxPlayExecutable $UxPlayExecutable `
   -GstreamerRoot $GstRoot `
-  -Target $Target
+  -Target $Target) {
+    if (-not $UxPlaySupportPaths.Contains($supportPath)) {
+        $UxPlaySupportPaths.Add($supportPath)
+    }
+}
+foreach ($supportPath in Resolve-AdditionalRuntimeSupportPaths -Target $Target) {
+    if (-not $UxPlaySupportPaths.Contains($supportPath)) {
+        $UxPlaySupportPaths.Add($supportPath)
+    }
+}
+if (-not $UxPlaySupportPaths.Contains($DnssdSupportPath)) {
+    $UxPlaySupportPaths.Add($DnssdSupportPath)
+}
 
 Invoke-PrepareDirectRuntime `
   -Target $Target `

@@ -28,11 +28,13 @@ pub fn startup_from_plugin_paths(plugin_paths: &PluginPaths) -> StartupViewModel
         items.push(item_for_path("Grounding", path));
     }
 
-    let capture_ready = direct_receiver.available || items
-        .iter()
-        .any(|item| item.label == "Window Capture" && item.status == "Ready");
+    let capture_ready = direct_receiver.available
+        || items
+            .iter()
+            .any(|item| item.label == "Window Capture" && item.status == "Ready");
     let control_ready = items.iter().any(|item| {
-        matches!(item.label.as_str(), "BLE Control" | "Window Input Bridge") && item.status == "Ready"
+        matches!(item.label.as_str(), "BLE Control" | "Window Input Bridge")
+            && item.status == "Ready"
     });
     let readiness = if capture_ready && control_ready {
         StartupReadiness::Ready
@@ -167,10 +169,10 @@ fn probe_direct_receiver(path: &Path, runtime_root: Option<&Path>) -> DirectRece
     }
 }
 
- fn probe_direct_capture_capability(
+fn probe_direct_capture_capability(
     path: &Path,
     runtime_root: Option<&Path>,
- ) -> anyhow::Result<CaptureCapability> {
+) -> anyhow::Result<CaptureCapability> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

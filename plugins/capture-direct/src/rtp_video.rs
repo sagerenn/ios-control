@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::{DIRECT_HEIGHT, DIRECT_WIDTH};
 
+const DIAGNOSTIC_FRAME_LIMIT: usize = 500;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedFrame {
     pub frame_index: u64,
@@ -28,10 +30,32 @@ pub fn receiver_args(port: u16, frame_pattern: &Path) -> Vec<String> {
         "!".into(),
         "videoconvert".into(),
         "!".into(),
+        "tee".into(),
+        "name=video_split".into(),
+        "video_split.".into(),
+        "!".into(),
+        "queue".into(),
+        "leaky=downstream".into(),
+        "max-size-buffers=1".into(),
+        "!".into(),
+        "autovideosink".into(),
+        "sync=false".into(),
+        "video_split.".into(),
+        "!".into(),
+        "queue".into(),
+        "leaky=downstream".into(),
+        "max-size-buffers=1".into(),
+        "!".into(),
         "pngenc".into(),
         "!".into(),
-        format!("multifilesink location={}", frame_pattern.display()),
+        "multifilesink".into(),
+        format!("max-files={DIAGNOSTIC_FRAME_LIMIT}"),
+        format!("location={}", gst_location(frame_pattern)),
     ]
+}
+
+fn gst_location(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub fn next_frame(frame_dir: &Path, last_index: &mut u64) -> Result<Option<DecodedFrame>> {
@@ -58,13 +82,17 @@ fn candidate_frames(frame_dir: &Path, last_index: u64) -> Result<Vec<(u64, PathB
             continue;
         }
         let index = parse_frame_index(&path)?;
-        if index <= last_index {
-            continue;
-        }
         frames.push((index, path));
     }
     frames.sort_unstable_by(|left, right| right.0.cmp(&left.0));
-    Ok(frames)
+    for (_, path) in frames.iter().skip(DIAGNOSTIC_FRAME_LIMIT) {
+        let _ = std::fs::remove_file(path);
+    }
+    frames.truncate(DIAGNOSTIC_FRAME_LIMIT);
+    Ok(frames
+        .into_iter()
+        .filter(|(index, _)| *index > last_index)
+        .collect())
 }
 
 fn decode_frame(path: &Path, frame_index: u64) -> image::ImageResult<DecodedFrame> {
@@ -111,9 +139,10 @@ fn parse_frame_index(path: &Path) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::next_frame;
+    use super::{next_frame, receiver_args};
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
+    use std::path::Path;
 
     fn sample_png_bytes() -> Vec<u8> {
         let image = RgbaImage::from_pixel(1, 1, Rgba([0, 255, 0, 255]));
@@ -142,5 +171,36 @@ mod tests {
         assert_eq!(frame.frame_index, 1);
         assert_eq!(last_index, 1);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn receiver_args_use_gstreamer_safe_frame_location() {
+        let args = receiver_args(12345, Path::new(r"C:\Temp\frames\frame-%09d.png"));
+
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("location=C:/Temp/frames/frame-%09d.png")
+        );
+        assert!(args.iter().any(|arg| arg == "max-files=500"));
+        assert!(args.iter().any(|arg| arg == "autovideosink"));
+    }
+
+    #[test]
+    fn next_frame_prunes_diagnostic_frames_to_latest_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = sample_png_bytes();
+        for index in 1..=505 {
+            std::fs::write(dir.path().join(format!("frame-{index:09}.png")), &png).unwrap();
+        }
+
+        let mut last_index = 0;
+        let frame = next_frame(dir.path(), &mut last_index)
+            .unwrap()
+            .expect("newest frame should decode");
+
+        assert_eq!(frame.frame_index, 505);
+        assert!(!dir.path().join("frame-000000001.png").exists());
+        let retained = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(retained, 499);
     }
 }

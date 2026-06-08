@@ -1,19 +1,23 @@
 use egui::{TextureHandle, Ui};
 use ios_control_contracts::capture::VideoFrameDescriptor;
+use ios_control_contracts::control::ControlInputEvent;
 
+use crate::preview::PreviewInputBridge;
 use crate::view_models::session::{SessionUiState, SessionViewModel};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAction {
     None,
     Start,
     Stop,
+    ControlInput(Vec<ControlInputEvent>),
 }
 
 pub fn render(
     ui: &mut Ui,
     view_model: &SessionViewModel,
     texture: Option<&TextureHandle>,
+    input_bridge: &mut PreviewInputBridge,
 ) -> SessionAction {
     let mut action = SessionAction::None;
 
@@ -43,14 +47,28 @@ pub fn render(
             if let Some(frame) = &view_model.latest_frame {
                 render_frame_summary(ui, frame);
             }
-            if let Some(texture) = texture {
-                ui.image(texture);
+            if let (Some(texture), Some(frame)) = (texture, view_model.latest_frame.as_ref()) {
+                let response =
+                    ui.add(egui::Image::new(texture).sense(egui::Sense::click_and_drag()));
+                let events = input_bridge.collect(
+                    ui.ctx(),
+                    &response,
+                    [frame.width.max(1), frame.height.max(1)],
+                );
+                if !events.is_empty() {
+                    action = SessionAction::ControlInput(events);
+                }
             }
         }
         SessionUiState::Starting => {
+            input_bridge.reset();
             ui.label("Waiting for runtime session status");
         }
-        SessionUiState::WaitingForMirror | SessionUiState::Idle | SessionUiState::Blocked(_) | SessionUiState::Error(_) => {
+        SessionUiState::WaitingForMirror
+        | SessionUiState::Idle
+        | SessionUiState::Blocked(_)
+        | SessionUiState::Error(_) => {
+            input_bridge.reset();
             if let Some(source) = &view_model.selected_source {
                 ui.label(format!("Source: {}", source.label()));
             }
@@ -98,7 +116,12 @@ mod tests {
                     ColorImage::new([1, 1], Color32::WHITE),
                     egui::TextureOptions::LINEAR,
                 );
-                render(ui, &view_model, Some(&texture));
+                render(
+                    ui,
+                    &view_model,
+                    Some(&texture),
+                    &mut PreviewInputBridge::default(),
+                );
             });
         });
 

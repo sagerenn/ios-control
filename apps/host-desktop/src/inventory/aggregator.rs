@@ -37,14 +37,20 @@ fn should_merge(device: &InventoryDevice, observation: &DeviceObservation) -> bo
         }
     }
 
-    if let (Some(existing), Some(incoming)) = (&device.known_device_id, &observation.known_device_id)
+    if let (Some(existing), Some(incoming)) =
+        (&device.known_device_id, &observation.known_device_id)
     {
         if existing == incoming && (device.live || observation.live) {
             return true;
         }
     }
 
-    if let (Some(existing_known), Some(incoming_known), Some(existing_source), Some(incoming_source)) = (
+    if let (
+        Some(existing_known),
+        Some(incoming_known),
+        Some(existing_source),
+        Some(incoming_source),
+    ) = (
         &device.known_device_id,
         &observation.known_device_id,
         &device.mirror_source_id,
@@ -138,7 +144,10 @@ fn compose_sessionability(
     }
 }
 
-fn best_state<'a>(current: &'a CapabilityState, incoming: &'a CapabilityState) -> &'a CapabilityState {
+fn best_state<'a>(
+    current: &'a CapabilityState,
+    incoming: &'a CapabilityState,
+) -> &'a CapabilityState {
     if score_state(incoming) > score_state(current) {
         incoming
     } else {
@@ -155,7 +164,10 @@ fn score_state(state: &CapabilityState) -> u8 {
     }
 }
 
-fn push_evidence_source(sources: &mut Vec<crate::inventory::model::InventoryEvidenceSource>, source: crate::inventory::model::InventoryEvidenceSource) {
+fn push_evidence_source(
+    sources: &mut Vec<crate::inventory::model::InventoryEvidenceSource>,
+    source: crate::inventory::model::InventoryEvidenceSource,
+) {
     let mut set: BTreeSet<_> = sources.iter().copied().collect();
     set.insert(source);
     *sources = set.into_iter().collect();

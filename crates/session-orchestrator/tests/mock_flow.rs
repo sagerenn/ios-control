@@ -5,11 +5,11 @@ use ios_control_session_orchestrator::{
 };
 
 mod support;
-use support::{
-    EnvVarGuard, EnvVarGuards, build_plugins, plugin_path, prepare_window_runtime_env,
-    runtime_env_lock, workspace_root, write_ble_helper,
-};
 use std::time::{SystemTime, UNIX_EPOCH};
+use support::{
+    build_plugins, plugin_path, prepare_window_runtime_env, runtime_env_lock, workspace_root,
+    write_ble_helper, EnvVarGuard, EnvVarGuards,
+};
 
 #[tokio::test]
 async fn start_session_collects_mock_plugin_state() {
@@ -321,9 +321,18 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
         .await
         .unwrap();
 
-    assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.direct"));
+    assert_eq!(
+        state.summary.capture_plugin.as_deref(),
+        Some("capture.direct")
+    );
     assert_eq!(state.selected_source_id.as_deref(), Some("direct-1"));
-    assert_eq!(state.latest_frame.as_ref().map(|frame| frame.source_id.as_str()), Some("direct-1"));
+    assert_eq!(
+        state
+            .latest_frame
+            .as_ref()
+            .map(|frame| frame.source_id.as_str()),
+        Some("direct-1")
+    );
 
     state.shutdown().await.unwrap();
 }
@@ -372,7 +381,10 @@ async fn start_session_with_direct_backend_can_wait_for_first_frame() {
         .unwrap();
 
     assert_eq!(state.summary.phase, SessionPhase::Connecting);
-    assert_eq!(state.summary.capture_plugin.as_deref(), Some("capture.direct"));
+    assert_eq!(
+        state.summary.capture_plugin.as_deref(),
+        Some("capture.direct")
+    );
     assert!(state.capture_stream.is_some());
     assert!(state.latest_frame.is_none());
 

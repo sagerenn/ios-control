@@ -10,10 +10,8 @@ fn prepare_reports_unavailable_when_capability_probe_fails() {
     let old_adapter = std::env::var_os("IOS_CONTROL_BLE_TEST_ADAPTER");
     let old_state_dir = std::env::var_os("IOS_CONTROL_BLE_HELPER_STATE_DIR");
 
-    let state_dir = std::env::temp_dir().join(format!(
-        "ios-control-ble-helper-cli-{}",
-        std::process::id()
-    ));
+    let state_dir =
+        std::env::temp_dir().join(format!("ios-control-ble-helper-cli-{}", std::process::id()));
 
     std::env::set_var("IOS_CONTROL_BLE_TEST_SYSTEM_BUS", "0");
     std::env::set_var("IOS_CONTROL_BLE_TEST_ADAPTER", "1");

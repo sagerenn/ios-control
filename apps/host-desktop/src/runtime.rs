@@ -2,7 +2,9 @@ use anyhow::{anyhow, Result};
 use ios_control_contracts::capture::{
     CaptureStatus, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
 };
-use ios_control_contracts::control::{ControlSessionPhase, ControlSetupChecklist};
+use ios_control_contracts::control::{
+    ControlInputEvent, ControlSessionPhase, ControlSetupChecklist, ExecutionSummary,
+};
 use ios_control_contracts::session::{DeviceSessionStatus, DeviceSessionSummary};
 use ios_control_session_orchestrator::{
     CaptureBackend, PluginPaths, SessionDiagnostics, SessionSupervisor, StartSessionRequest,
@@ -119,5 +121,14 @@ impl HostRuntime {
         self.tokio
             .block_on(self.supervisor.refresh_session(device_id))?;
         self.snapshot(device_id)
+    }
+
+    pub fn forward_control_input(
+        &mut self,
+        device_id: &str,
+        event: ControlInputEvent,
+    ) -> Result<ExecutionSummary> {
+        self.tokio
+            .block_on(self.supervisor.forward_control_input(device_id, event))
     }
 }

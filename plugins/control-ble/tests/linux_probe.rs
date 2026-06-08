@@ -1,11 +1,15 @@
-use plugin_control_ble::linux_backend::{probe_linux_backend, LinuxProbeResult};
 use plugin_control_ble::helper_bridge::{BleHelperExecution, BleHelperProbe};
 use plugin_control_ble::helper_config::probe_ble_helper;
+use plugin_control_ble::linux_backend::{probe_linux_backend, LinuxProbeResult};
 use std::env;
 use std::path::PathBuf;
 use std::sync::Mutex;
 #[cfg(unix)]
-use std::{fs, os::unix::fs::PermissionsExt, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -150,7 +154,10 @@ fn ble_probe_uses_helper_reason_when_helper_reports_unsupported() {
 
     let capability = probe_ble_helper(Some(helper.clone()));
     assert!(!capability.supported);
-    assert_eq!(capability.reason.as_deref(), Some("org.bluez not available"));
+    assert_eq!(
+        capability.reason.as_deref(),
+        Some("org.bluez not available")
+    );
 
     let _ = fs::remove_file(helper);
 }

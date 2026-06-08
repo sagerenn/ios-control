@@ -3,17 +3,17 @@ use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
 use ios_control_session_orchestrator::CaptureBackend;
 use std::time::{Duration, Instant};
 
+use crate::bootstrap::capability_probe::startup_from_plugin_paths;
+use crate::inventory::collect_inventory_snapshot;
+use crate::inventory::model::{InventoryDevice, InventorySnapshot, Sessionability};
+use crate::logging::HostLogWriter;
 use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::launcher::LauncherAction;
 use crate::panels::session_view::SessionAction;
 use crate::panels::{launcher, session_view, settings};
-use crate::logging::HostLogWriter;
 use crate::preferences::{HostPreferences, HostPreferencesStore, KnownDevicePreference};
-use crate::preview::color_image_from_slot;
+use crate::preview::{color_image_from_slot, PreviewInputBridge};
 use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
-use crate::bootstrap::capability_probe::startup_from_plugin_paths;
-use crate::inventory::collect_inventory_snapshot;
-use crate::inventory::model::{InventoryDevice, InventorySnapshot, Sessionability};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
@@ -46,6 +46,7 @@ pub struct HostDesktopApp {
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
+    preview_input_bridge: PreviewInputBridge,
     session_window_open: bool,
     session_window_deferred_until_streaming: bool,
     session_window_device_id: Option<String>,
@@ -83,6 +84,7 @@ impl HostDesktopApp {
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
             preview_texture: None,
+            preview_input_bridge: PreviewInputBridge::default(),
             session_window_open: false,
             session_window_deferred_until_streaming: false,
             session_window_device_id: None,
@@ -112,9 +114,7 @@ impl HostDesktopApp {
                 session_start_failures: 0,
                 log_lines: Vec::new(),
             },
-            settings: SettingsViewModel {
-                rows: Vec::new(),
-            },
+            settings: SettingsViewModel { rows: Vec::new() },
             startup: StartupViewModel::blocked("Blocked: no usable device path yet"),
         }
     }
@@ -395,13 +395,12 @@ impl HostDesktopApp {
             return;
         };
 
-        let manual_source = if self.manual_source_selection_device_id.as_deref()
-            == Some(device_id.as_str())
-        {
-            self.device_detail.active_source_id.clone()
-        } else {
-            None
-        };
+        let manual_source =
+            if self.manual_source_selection_device_id.as_deref() == Some(device_id.as_str()) {
+                self.device_detail.active_source_id.clone()
+            } else {
+                None
+            };
         let workspace_source = self
             .runtime_workspace
             .as_ref()
@@ -488,12 +487,13 @@ impl HostDesktopApp {
                 }
                 Err(error) => {
                     let message = error.to_string();
-                    let stale_restored_source = restored_source.as_deref().is_some_and(|source_id| {
-                        attempt == 0
-                            && message.contains("requested capture source")
-                            && message.contains(source_id)
-                            && message.contains("unavailable")
-                    });
+                    let stale_restored_source =
+                        restored_source.as_deref().is_some_and(|source_id| {
+                            attempt == 0
+                                && message.contains("requested capture source")
+                                && message.contains(source_id)
+                                && message.contains("unavailable")
+                        });
                     if stale_restored_source {
                         self.clear_restored_source_preference_for_device(&device_id);
                         self.preferences.selected_source_id = None;
@@ -661,6 +661,7 @@ impl HostDesktopApp {
         self.next_runtime_refresh_at = None;
         self.runtime_refresh_device_id = None;
         self.preview_texture = None;
+        self.preview_input_bridge.reset();
         self.restored_source_preference = None;
         self.manual_source_selection_device_id = None;
         self.session_window_open = false;
@@ -696,9 +697,37 @@ impl HostDesktopApp {
     }
 
     pub fn apply_runtime_snapshot(&mut self, snapshot: HostRuntimeSnapshot) {
+        self.selected_device_id = Some(snapshot.workspace.device_id.clone());
         self.runtime_statuses = snapshot.statuses.clone();
         self.runtime_workspace = Some(snapshot.workspace.clone());
         self.sync_from_inventory_and_runtime();
+    }
+
+    fn forward_preview_input(
+        &mut self,
+        events: Vec<ios_control_contracts::control::ControlInputEvent>,
+    ) {
+        let Some(device_id) = self.selected_device_id.clone() else {
+            return;
+        };
+        let Some(host_runtime) = self.host_runtime.as_mut() else {
+            self.diagnostics.host_error =
+                Some("Preview input failed: host runtime unavailable".into());
+            return;
+        };
+
+        for event in events {
+            match host_runtime.forward_control_input(&device_id, event) {
+                Ok(summary) => {
+                    self.diagnostics.control_summary = summary.summary;
+                }
+                Err(error) => {
+                    self.diagnostics.host_error =
+                        Some(format!("Preview input failed for {device_id}: {error}"));
+                    break;
+                }
+            }
+        }
     }
 
     fn sync_from_inventory_and_runtime(&mut self) {
@@ -900,19 +929,28 @@ impl HostDesktopApp {
         let selected_source = device
             .mirror_source_id
             .as_ref()
-            .and_then(|source_id| capture_sources.iter().find(|source| source.source_id == *source_id))
+            .and_then(|source_id| {
+                capture_sources
+                    .iter()
+                    .find(|source| source.source_id == *source_id)
+            })
             .cloned()
             .or_else(|| {
                 self.device_detail
                     .active_source_id
                     .as_ref()
-                    .and_then(|source_id| capture_sources.iter().find(|source| source.source_id == *source_id))
+                    .and_then(|source_id| {
+                        capture_sources
+                            .iter()
+                            .find(|source| source.source_id == *source_id)
+                    })
                     .cloned()
             });
         self.device_detail.device_name = device.display_name.clone();
         self.device_detail.capture_sources = capture_sources;
-        self.device_detail.active_source_id =
-            selected_source.as_ref().map(|source| source.source_id.clone());
+        self.device_detail.active_source_id = selected_source
+            .as_ref()
+            .map(|source| source.source_id.clone());
         self.device_detail.control_checklist = ControlSetupChecklist {
             items: device.reasons.clone(),
         };
@@ -982,7 +1020,10 @@ impl HostDesktopApp {
             self.next_inventory_refresh_at = None;
             return;
         }
-        if self.next_inventory_refresh_at.is_some_and(|next| now < next) {
+        if self
+            .next_inventory_refresh_at
+            .is_some_and(|next| now < next)
+        {
             return;
         }
         self.next_inventory_refresh_at = Some(now + Self::INVENTORY_REFRESH_POLL_INTERVAL);
@@ -1099,7 +1140,9 @@ fn inventory_notes(device: &InventoryDevice) -> Vec<String> {
         .iter()
         .map(|source| match source {
             crate::inventory::model::InventoryEvidenceSource::Bluetooth => "paired over bluetooth",
-            crate::inventory::model::InventoryEvidenceSource::Mirror => "live mirror source observed",
+            crate::inventory::model::InventoryEvidenceSource::Mirror => {
+                "live mirror source observed"
+            }
             crate::inventory::model::InventoryEvidenceSource::Known => "known from history only",
         })
         .map(str::to_string)
@@ -1124,10 +1167,10 @@ fn first_reason_or_default(device: &InventoryDevice, default: &str) -> String {
     }
     sentence_case(
         device
-        .reasons
-        .first()
-        .cloned()
-        .unwrap_or_else(|| default.to_string()),
+            .reasons
+            .first()
+            .cloned()
+            .unwrap_or_else(|| default.to_string()),
     )
 }
 
@@ -1186,8 +1229,12 @@ impl eframe::App for HostDesktopApp {
                     }
 
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        pending_action =
-                            session_view::render(ui, &self.session, self.preview_texture.as_ref());
+                        pending_action = session_view::render(
+                            ui,
+                            &self.session,
+                            self.preview_texture.as_ref(),
+                            &mut self.preview_input_bridge,
+                        );
                     });
                 },
             );
@@ -1216,6 +1263,10 @@ impl eframe::App for HostDesktopApp {
                 self.stop_session();
                 ctx.request_repaint();
             }
+            SessionAction::ControlInput(events) => {
+                self.forward_preview_input(events);
+                ctx.request_repaint();
+            }
         }
     }
 }
@@ -1223,13 +1274,13 @@ impl eframe::App for HostDesktopApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{Color32, ColorImage};
     use ios_control_contracts::control::ControlSessionPhase;
     use ios_control_contracts::plugin::PluginHealth;
     use ios_control_contracts::session::{
         BackendSelection, DeviceSessionStatus, DeviceSessionSummary, SessionPhase,
     };
     use ios_control_session_orchestrator::{PluginPaths, SessionDiagnostics};
-    use egui::{Color32, ColorImage};
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 

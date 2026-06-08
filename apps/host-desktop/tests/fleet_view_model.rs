@@ -1,7 +1,5 @@
 use host_desktop::inventory::aggregator::aggregate_inventory;
-use host_desktop::inventory::model::{
-    CapabilityState, DeviceObservation, InventoryEvidenceSource,
-};
+use host_desktop::inventory::model::{CapabilityState, DeviceObservation, InventoryEvidenceSource};
 use host_desktop::view_models::fleet::FleetViewModel;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::{
@@ -87,7 +85,10 @@ fn fleet_view_model_preserves_operator_actions_per_device() {
 
     let fleet = FleetViewModel::from_statuses(&statuses);
     assert_eq!(fleet.rows.len(), 2);
-    assert_eq!(fleet.rows[1].operator_action.as_deref(), Some("reconnect mirror helper"));
+    assert_eq!(
+        fleet.rows[1].operator_action.as_deref(),
+        Some("reconnect mirror helper")
+    );
 }
 
 #[test]
@@ -107,7 +108,10 @@ fn fleet_view_model_surfaces_inventory_badges_and_readiness() {
 
     let fleet = FleetViewModel::from_inventory(&inventory.devices, &[]);
     assert_eq!(fleet.rows.len(), 1);
-    assert!(fleet.rows[0].evidence_badges.iter().any(|badge| badge == "Bluetooth"));
+    assert!(fleet.rows[0]
+        .evidence_badges
+        .iter()
+        .any(|badge| badge == "Bluetooth"));
     assert_eq!(fleet.rows[0].readiness_summary, "Not startable");
     assert!(!fleet.rows[0].start_enabled);
 }

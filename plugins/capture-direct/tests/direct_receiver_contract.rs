@@ -179,7 +179,9 @@ exit 0
 "#,
     )
     .unwrap();
-    let mut perms = std::fs::metadata(&beacon_helper_path).unwrap().permissions();
+    let mut perms = std::fs::metadata(&beacon_helper_path)
+        .unwrap()
+        .permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&beacon_helper_path, perms).unwrap();
 
@@ -289,7 +291,9 @@ sleep 60
 "#,
     )
     .unwrap();
-    let mut perms = std::fs::metadata(&beacon_helper_path).unwrap().permissions();
+    let mut perms = std::fs::metadata(&beacon_helper_path)
+        .unwrap()
+        .permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&beacon_helper_path, perms).unwrap();
 
@@ -357,7 +361,9 @@ exit 0
 "#,
     )
     .unwrap();
-    let mut perms = std::fs::metadata(&beacon_helper_path).unwrap().permissions();
+    let mut perms = std::fs::metadata(&beacon_helper_path)
+        .unwrap()
+        .permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&beacon_helper_path, perms).unwrap();
 
@@ -391,7 +397,11 @@ fn direct_probe_requires_runtime_manifest_and_uxplay_binary() {
     let capability = capture_capability(None);
     assert!(!capability.available);
     assert!(
-        capability.reason.as_deref().unwrap_or_default().contains("manifest"),
+        capability
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("manifest"),
         "unexpected reason: {:?}",
         capability.reason
     );
@@ -419,7 +429,11 @@ fn direct_probe_requires_manifest_receiver_paths() {
     let capability = capture_capability(None);
     assert!(!capability.available);
     assert!(
-        capability.reason.as_deref().unwrap_or_default().contains("gst-launch")
+        capability
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("gst-launch")
             || capability
                 .reason
                 .as_deref()
@@ -509,10 +523,9 @@ fn direct_helper_frame_event_defaults_rotation_and_health() {
 
 #[test]
 fn direct_helper_frame_event_decodes_rgba_payload() {
-    let event: HelperFrameEvent = serde_json::from_str(
-        r#"{"frame_index":3,"width":2,"height":1,"rgba_base64":"AP8A/w=="}"#,
-    )
-    .unwrap();
+    let event: HelperFrameEvent =
+        serde_json::from_str(r#"{"frame_index":3,"width":2,"height":1,"rgba_base64":"AP8A/w=="}"#)
+            .unwrap();
 
     assert_eq!(event.frame_index, 3);
     assert_eq!(event.decode_rgba().unwrap(), vec![0, 255, 0, 255]);
@@ -545,7 +558,8 @@ fn helper_mode_can_delay_first_stream_once_via_env() {
         std::process::id(),
         Instant::now().elapsed().as_nanos()
     ));
-    let _delay_guard = EnvStringGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200");
+    let _delay_guard =
+        EnvStringGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200");
     let _state_guard = EnvStringGuard::set(
         "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
         &state_file.display().to_string(),
@@ -958,5 +972,8 @@ exit 2
     }
 
     plugin.send(HostToPlugin::ProbeCapture);
-    assert!(matches!(plugin.recv(), PluginToHost::CaptureCapability { .. }));
+    assert!(matches!(
+        plugin.recv(),
+        PluginToHost::CaptureCapability { .. }
+    ));
 }

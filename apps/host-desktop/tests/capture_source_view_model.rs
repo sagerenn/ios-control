@@ -34,7 +34,10 @@ fn session_view_model_actions_follow_ui_state() {
     assert_eq!(starting.status_line(), "Starting session");
 
     let error = SessionViewModel::error("Missing backend");
-    assert_eq!(error.ui_state, SessionUiState::Error("Missing backend".into()));
+    assert_eq!(
+        error.ui_state,
+        SessionUiState::Error("Missing backend".into())
+    );
     assert!(error.can_start());
     assert!(!error.can_stop());
     assert_eq!(error.status_line(), "Missing backend");

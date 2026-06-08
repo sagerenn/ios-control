@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 use ios_control_frame_transport::FrameSlot;
 use ios_control_session_orchestrator::PluginPaths;
@@ -179,8 +179,7 @@ pub fn write_direct_helper(body: &str) -> PathBuf {
             .expect("direct helper metadata should exist")
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms)
-            .expect("direct helper script should be executable");
+        std::fs::set_permissions(&path, perms).expect("direct helper script should be executable");
     }
     path
 }
@@ -202,7 +201,10 @@ pub fn stage_bundle_layout() -> StagedBundleLayout {
     let root = tempdir.path().join("ios-control-x86_64-pc-windows-msvc");
     let bin_dir = root.join("bin");
     let plugins_dir = root.join("plugins");
-    let runtime_dir = root.join("runtime").join("uxplay").join("x86_64-pc-windows-msvc");
+    let runtime_dir = root
+        .join("runtime")
+        .join("uxplay")
+        .join("x86_64-pc-windows-msvc");
     std::fs::create_dir_all(&bin_dir).expect("bundle bin dir should exist");
     std::fs::create_dir_all(&plugins_dir).expect("bundle plugins dir should exist");
     std::fs::create_dir_all(&runtime_dir).expect("bundle runtime dir should exist");
@@ -284,13 +286,17 @@ fn write_direct_runtime_fixture_with_delay_ms(delay_ms: Option<u64>) -> DirectRu
     let gst_launch = root.join(format!("gst-launch-1.0{}", std::env::consts::EXE_SUFFIX));
     let png_payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
     let delay_block = delay_ms
-        .map(|delay| format!("sleep {delay_ms_seconds}\n", delay_ms_seconds = (delay as f64 / 1000.0)))
+        .map(|delay| {
+            format!(
+                "sleep {delay_ms_seconds}\n",
+                delay_ms_seconds = (delay as f64 / 1000.0)
+            )
+        })
         .unwrap_or_default();
     let gst_script = format!(
         "#!/bin/sh\nlocation=\"${{IOS_CONTROL_DIRECT_FRAME_PATTERN:-}}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    location=*)\n      location=\"${{arg#location=}}\"\n      ;;\n  esac\ndone\nif [ -n \"$location\" ]; then\n  {delay_block}output=$(printf \"$location\" 1)\n  mkdir -p \"$(dirname \"$output\")\"\n  printf '%s' '{png_payload}' | base64 -d > \"$output\"\nfi\nsleep 60\n"
     );
-    std::fs::write(&gst_launch, gst_script)
-        .expect("direct runtime gst-launch should be written");
+    std::fs::write(&gst_launch, gst_script).expect("direct runtime gst-launch should be written");
     #[cfg(unix)]
     {
         let mut perms = std::fs::metadata(&gst_launch)

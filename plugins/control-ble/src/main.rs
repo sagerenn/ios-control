@@ -5,7 +5,7 @@ use ios_control_contracts::control::{
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
 use plugin_control_ble::helper_bridge::{
-    run_execute, run_prepare, run_stop, BleHelperExecution, BleHelperPrepare,
+    run_control_input, run_execute, run_prepare, run_stop, BleHelperExecution, BleHelperPrepare,
 };
 use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
@@ -30,27 +30,26 @@ fn probe_control_capability() -> ControlCapability {
         return helper_capability;
     }
 
-    let native_hint = if cfg!(target_os = "linux") {
-        probe_linux_backend()
-            .as_capability()
-            .supported
-            .then_some("native BLE transport detected; helper-backed execution is still required")
-    } else if cfg!(target_os = "windows") {
-        probe_windows_backend()
-            .as_capability()
-            .supported
-            .then_some("native BLE transport detected; helper-backed execution is still required")
-    } else {
-        None
-    };
+    let native_hint =
+        if cfg!(target_os = "linux") {
+            probe_linux_backend().as_capability().supported.then_some(
+                "native BLE transport detected; helper-backed execution is still required",
+            )
+        } else if cfg!(target_os = "windows") {
+            probe_windows_backend().as_capability().supported.then_some(
+                "native BLE transport detected; helper-backed execution is still required",
+            )
+        } else {
+            None
+        };
 
     let reason = match (helper_capability.reason, native_hint) {
         (Some(helper_reason), Some(hint)) => Some(format!("{helper_reason}; {hint}")),
         (Some(helper_reason), None) => Some(helper_reason),
         (None, Some(hint)) => Some(hint.into()),
-        (None, None) => Some(
-            "configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support".into(),
-        ),
+        (None, None) => {
+            Some("configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support".into())
+        }
     };
 
     ControlCapability {
@@ -258,6 +257,54 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 summary.observed_change = None;
                                 summary.failure_reason = Some(
                                     "configure IOS_CONTROL_BLE_HELPER with probe/prepare/execute support"
+                                        .into(),
+                                );
+                                summary.phase = ExecutionPhase::Failed;
+                            }
+                        }
+                    }
+                }
+
+                let reply = PluginToHost::ExecutionSummary { summary };
+                write_reply(&mut stdout, &reply)?;
+            }
+            HostToPlugin::ForwardControlInput { event } => {
+                let mut summary = ExecutionSummary {
+                    summary: "no control session prepared".into(),
+                    phase: ExecutionPhase::Failed,
+                    observed_change: None,
+                    failure_reason: Some("call PrepareControl before ForwardControlInput".into()),
+                };
+
+                if let Some(active) = session.as_mut() {
+                    match &active.state {
+                        ControlSessionState::Unsupported => {
+                            summary.summary = "ble control unsupported on this host".into();
+                            summary.failure_reason =
+                                Some("ble control unsupported on this host".into());
+                        }
+                        ControlSessionState::Error(message) => {
+                            summary.summary = "ble control session error".into();
+                            summary.failure_reason = Some(message.clone());
+                        }
+                        _ => {
+                            if let Some(helper) = ble_helper_path_if_supported() {
+                                match run_control_input(&helper, event) {
+                                    Ok(execution) => {
+                                        summary = execution;
+                                    }
+                                    Err(err) => {
+                                        summary.summary = "ble helper live input failed".into();
+                                        summary.phase = ExecutionPhase::Failed;
+                                        summary.observed_change = None;
+                                        summary.failure_reason = Some(err.to_string());
+                                    }
+                                }
+                            } else {
+                                summary.summary = "ble execution helper unavailable".into();
+                                summary.observed_change = None;
+                                summary.failure_reason = Some(
+                                    "configure IOS_CONTROL_BLE_HELPER with live input support"
                                         .into(),
                                 );
                                 summary.phase = ExecutionPhase::Failed;

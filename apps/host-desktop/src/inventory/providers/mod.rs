@@ -11,10 +11,7 @@ pub mod mirror;
 
 fn block_on_plugin<T>(
     plugin_path: &Path,
-    op: impl FnOnce(
-        &tokio::runtime::Runtime,
-        &Path,
-    ) -> anyhow::Result<T>,
+    op: impl FnOnce(&tokio::runtime::Runtime, &Path) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -50,7 +50,10 @@ pub fn helper_state_from_capability(capability: &HostCapability, bonded: bool) -
     let checklist = if bonded {
         vec!["Reconnect the paired device".into()]
     } else {
-        vec!["Enable Bluetooth".into(), "Pair the device when it appears".into()]
+        vec![
+            "Enable Bluetooth".into(),
+            "Pair the device when it appears".into(),
+        ]
     };
 
     HelperState {

@@ -19,11 +19,7 @@ impl HostLogWriter {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let path = directory.join(format!(
-            "host-desktop-{}-{}.log",
-            nonce,
-            std::process::id()
-        ));
+        let path = directory.join(format!("host-desktop-{}-{}.log", nonce, std::process::id()));
 
         let mut file = std::fs::OpenOptions::new()
             .write(true)

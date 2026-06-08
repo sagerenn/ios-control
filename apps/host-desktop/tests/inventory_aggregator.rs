@@ -116,7 +116,10 @@ fn inventory_aggregator_keeps_known_only_rows_historical() {
     let device = &snapshot.devices[0];
     assert!(!device.live);
     assert_eq!(device.sessionability, Sessionability::Unknown);
-    assert!(device.reasons.iter().any(|reason| reason.contains("history")));
+    assert!(device
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("history")));
 }
 
 #[test]

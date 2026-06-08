@@ -86,7 +86,10 @@ impl SessionViewModel {
         }
     }
 
-    pub fn blocked(message: impl Into<String>, selected_source: Option<CaptureSourceOption>) -> Self {
+    pub fn blocked(
+        message: impl Into<String>,
+        selected_source: Option<CaptureSourceOption>,
+    ) -> Self {
         let start_enabled = selected_source.is_some();
         Self {
             ui_state: SessionUiState::Blocked(message.into()),

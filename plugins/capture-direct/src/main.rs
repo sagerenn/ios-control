@@ -16,8 +16,7 @@ use plugin_capture_direct::uxplay_launcher::DirectRuntimeSession;
 const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
 const SLOT_BYTES: u32 = DIRECT_WIDTH * DIRECT_HEIGHT * 4;
-const BASE64_CHARS: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 struct StreamState {
     source_id: String,
@@ -249,7 +248,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                             Ok(bytes) => bytes,
                             Err(err) => {
                                 let reply = PluginToHost::Error {
-                                    message: format!("failed to decode helper frame payload: {}", err),
+                                    message: format!(
+                                        "failed to decode helper frame payload: {}",
+                                        err
+                                    ),
                                 };
                                 write_reply(&mut stdout, &reply)?;
                                 continue;

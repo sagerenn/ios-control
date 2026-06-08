@@ -40,7 +40,8 @@ impl DiagnosticsViewModel {
             .filter(|device| {
                 matches!(
                     device.sessionability,
-                    Sessionability::StartableWithPreferredPath | Sessionability::StartableWithFallback
+                    Sessionability::StartableWithPreferredPath
+                        | Sessionability::StartableWithFallback
                 )
             })
             .count() as u64;
@@ -48,7 +49,10 @@ impl DiagnosticsViewModel {
             .devices
             .iter()
             .filter(|device| {
-                matches!(device.sessionability, Sessionability::NotStartable | Sessionability::Unknown)
+                matches!(
+                    device.sessionability,
+                    Sessionability::NotStartable | Sessionability::Unknown
+                )
             })
             .count() as u64;
         self.record_host_log_line(format!(
@@ -83,11 +87,7 @@ impl DiagnosticsViewModel {
         ))
     }
 
-    pub fn record_session_start_failure(
-        &mut self,
-        device_id: Option<&str>,
-        error: &str,
-    ) -> String {
+    pub fn record_session_start_failure(&mut self, device_id: Option<&str>, error: &str) -> String {
         self.session_start_failures += 1;
         self.record_host_log_line(format!(
             "session start failed device={} error={error}",
@@ -100,7 +100,10 @@ impl DiagnosticsViewModel {
             format!("startup probes | {}", self.startup_probe_runs),
             format!("inventory refreshes | {}", self.inventory_refreshes),
             format!("inventory rows | {}", self.inventory_rows),
-            format!("inventory startable rows | {}", self.inventory_startable_rows),
+            format!(
+                "inventory startable rows | {}",
+                self.inventory_startable_rows
+            ),
             format!("inventory blocked rows | {}", self.inventory_blocked_rows),
             format!("session start attempts | {}", self.session_start_attempts),
             format!("session start successes | {}", self.session_start_successes),

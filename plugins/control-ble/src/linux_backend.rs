@@ -71,9 +71,5 @@ pub fn probe_linux_backend() -> LinuxProbeResult {
     ]
     .iter()
     .any(|path| Path::new(path).exists());
-    LinuxProbeResult::from_runtime_checks(
-        system_bus_socket,
-        adapter_present,
-        bluetoothd_present,
-    )
+    LinuxProbeResult::from_runtime_checks(system_bus_socket, adapter_present, bluetoothd_present)
 }

@@ -46,6 +46,8 @@ def stage_direct_runtime(
 
     beacon_dir = target_root / "Bluetooth_LE_beacon"
     beacon_dir.mkdir(parents=True, exist_ok=True)
+    for beacon_path in sorted(beacon_script.parent.glob("uxplay_beacon_module_*.py")):
+        shutil.copy2(beacon_path, beacon_dir / beacon_path.name)
     shutil.copy2(beacon_script, beacon_dir / "uxplay-beacon.py")
 
     manifest = {

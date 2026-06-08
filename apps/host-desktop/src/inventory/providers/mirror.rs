@@ -48,7 +48,9 @@ pub fn discover_mirror_devices(
         .collect()
 }
 
-fn map_control_state(capability: Option<ios_control_contracts::control::ControlCapability>) -> CapabilityState {
+fn map_control_state(
+    capability: Option<ios_control_contracts::control::ControlCapability>,
+) -> CapabilityState {
     match capability {
         Some(capability) if capability.supported => CapabilityState::Ready,
         Some(capability) => CapabilityState::Blocked(
