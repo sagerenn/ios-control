@@ -24,36 +24,52 @@ impl FleetViewModel {
         direct_receiver_available: bool,
         statuses: &[DeviceSessionStatus],
     ) -> Self {
-        Self {
-            rows: devices
+        let mut rows: Vec<FleetRow> = devices
+            .iter()
+            .filter(|device| launcher_visible_device(device, statuses))
+            .map(|device| {
+                let status = statuses
+                    .iter()
+                    .find(|status| status.summary().device_id == device.inventory_id);
+                let start_enabled = direct_receiver_available && launcher_control_ready(device);
+                FleetRow {
+                    device_id: device.inventory_id.clone(),
+                    device_name: device.display_name.clone(),
+                    evidence_badges: badges_for_device(device, status.is_some()),
+                    readiness_summary: if status.is_some() {
+                        "Active session".into()
+                    } else if start_enabled {
+                        "Startable".into()
+                    } else {
+                        "Not Startable".into()
+                    },
+                    start_enabled,
+                    operator_action: status
+                        .and_then(|status| status.operator_action().map(str::to_string)),
+                    active_session: status.is_some(),
+                }
+            })
+            .collect();
+
+        for status in statuses {
+            if rows
                 .iter()
-                .filter(|device| {
-                    device
-                        .evidence_sources
-                        .contains(&InventoryEvidenceSource::Bluetooth)
-                })
-                .map(|device| {
-                    let status = statuses
-                        .iter()
-                        .find(|status| status.summary().device_id == device.inventory_id);
-                    let start_enabled = direct_receiver_available && launcher_control_ready(device);
-                    FleetRow {
-                        device_id: device.inventory_id.clone(),
-                        device_name: device.display_name.clone(),
-                        evidence_badges: badges_for_device(device, status.is_some()),
-                        readiness_summary: if start_enabled {
-                            "Startable".into()
-                        } else {
-                            "Not Startable".into()
-                        },
-                        start_enabled,
-                        operator_action: status
-                            .and_then(|status| status.operator_action().map(str::to_string)),
-                        active_session: status.is_some(),
-                    }
-                })
-                .collect(),
+                .any(|row| row.device_id == status.summary().device_id)
+            {
+                continue;
+            }
+            rows.push(FleetRow {
+                device_id: status.summary().device_id.clone(),
+                device_name: status.summary().device_name.clone(),
+                evidence_badges: vec!["Active".into()],
+                readiness_summary: "Active session".into(),
+                start_enabled: false,
+                operator_action: status.operator_action().map(str::to_string),
+                active_session: true,
+            });
         }
+
+        Self { rows }
     }
 
     pub fn from_statuses(statuses: &[DeviceSessionStatus]) -> Self {
@@ -122,6 +138,19 @@ impl FleetViewModel {
 fn launcher_control_ready(device: &InventoryDevice) -> bool {
     matches!(device.preferred_control_state, CapabilityState::Ready)
         || matches!(device.fallback_control_state, CapabilityState::Ready)
+}
+
+fn launcher_visible_device(device: &InventoryDevice, statuses: &[DeviceSessionStatus]) -> bool {
+    device
+        .evidence_sources
+        .contains(&InventoryEvidenceSource::Bluetooth)
+        || statuses
+            .iter()
+            .any(|status| status.summary().device_id == device.inventory_id)
+        || (device
+            .evidence_sources
+            .contains(&InventoryEvidenceSource::Known)
+            && device.stable_id.is_some())
 }
 
 fn badges_for_device(device: &InventoryDevice, active_session: bool) -> Vec<String> {

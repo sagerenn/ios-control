@@ -43,6 +43,43 @@ fn fleet_view_model_launcher_filters_to_bluetooth_rows() {
 }
 
 #[test]
+fn fleet_view_model_launcher_keeps_active_session_when_bluetooth_sample_is_missing() {
+    let statuses = vec![active_status("bt:AA-BB", "Alice iPhone")];
+
+    let fleet = FleetViewModel::for_launcher(&[], true, &statuses);
+
+    assert_eq!(fleet.rows.len(), 1);
+    assert_eq!(fleet.rows[0].device_id, "bt:AA-BB");
+    assert_eq!(fleet.rows[0].device_name, "Alice iPhone");
+    assert_eq!(fleet.rows[0].readiness_summary, "Active session");
+    assert!(fleet.rows[0].active_session);
+}
+
+#[test]
+fn fleet_view_model_launcher_keeps_known_paired_history_visible() {
+    let inventory = aggregate_inventory(vec![DeviceObservation {
+        provider: InventoryEvidenceSource::Known,
+        stable_id: Some("bt:AA-BB".into()),
+        known_device_id: Some("bt:AA-BB".into()),
+        display_name: "Alice iPhone".into(),
+        mirror_source_id: None,
+        live: false,
+        capture_state: CapabilityState::Unavailable,
+        preferred_control_state: CapabilityState::Unavailable,
+        fallback_control_state: CapabilityState::Unavailable,
+        reasons: vec!["known from history only".into()],
+    }]);
+
+    let fleet = FleetViewModel::for_launcher(&inventory.devices, true, &[]);
+
+    assert_eq!(fleet.rows.len(), 1);
+    assert_eq!(fleet.rows[0].device_id, "bt:AA-BB");
+    assert_eq!(fleet.rows[0].device_name, "Alice iPhone");
+    assert_eq!(fleet.rows[0].readiness_summary, "Not Startable");
+    assert!(!fleet.rows[0].start_enabled);
+}
+
+#[test]
 fn fleet_view_model_preserves_operator_actions_per_device() {
     let statuses = vec![
         DeviceSessionStatus::new(
@@ -114,4 +151,25 @@ fn fleet_view_model_surfaces_inventory_badges_and_readiness() {
         .any(|badge| badge == "Bluetooth"));
     assert_eq!(fleet.rows[0].readiness_summary, "Not startable");
     assert!(!fleet.rows[0].start_enabled);
+}
+
+fn active_status(device_id: &str, device_name: &str) -> DeviceSessionStatus {
+    DeviceSessionStatus::new(
+        DeviceSessionSummary {
+            device_id: device_id.into(),
+            device_name: device_name.into(),
+            phase: SessionPhase::Streaming,
+            plugin_health: PluginHealth::Healthy,
+            capture_plugin: Some("capture.direct".into()),
+            control_plugin: Some("control.ble".into()),
+            grounding_plugin: Some("grounding.core".into()),
+        },
+        SessionSubstate::Streaming,
+        BackendSelection {
+            capture_backend: "capture.direct".into(),
+            control_backend: "control.ble".into(),
+        },
+        None,
+    )
+    .expect("valid active status")
 }

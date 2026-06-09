@@ -1,11 +1,14 @@
 use eframe::egui;
 use ios_control_contracts::session::{DeviceSessionStatus, SessionSubstate};
 use ios_control_session_orchestrator::CaptureBackend;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use crate::bootstrap::capability_probe::startup_from_plugin_paths;
 use crate::inventory::collect_inventory_snapshot;
-use crate::inventory::model::{InventoryDevice, InventorySnapshot, Sessionability};
+use crate::inventory::model::{
+    InventoryDevice, InventoryEvidenceSource, InventorySnapshot, Sessionability,
+};
 use crate::logging::HostLogWriter;
 use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::launcher::LauncherAction;
@@ -40,6 +43,7 @@ pub struct HostDesktopApp {
     pub selected_device_id: Option<String>,
     pub fleet: FleetViewModel,
     inventory_snapshot: InventorySnapshot,
+    inventory_missed_refreshes: BTreeMap<String, u8>,
     runtime_statuses: Vec<DeviceSessionStatus>,
     host_runtime: Option<HostRuntime>,
     runtime_config: Option<HostRuntimeConfig>,
@@ -72,6 +76,7 @@ pub struct HostDesktopApp {
 
 impl HostDesktopApp {
     const INVENTORY_REFRESH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+    const INVENTORY_MISSED_REFRESH_GRACE: u8 = 3;
     const RUNTIME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(40);
     const WAITING_FOR_MIRROR_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(250);
     const DIRECT_RECEIVER_DEVICE_ID: &str = "direct-receiver";
@@ -84,6 +89,7 @@ impl HostDesktopApp {
             selected_device_id: None,
             fleet: FleetViewModel { rows: Vec::new() },
             inventory_snapshot: InventorySnapshot::default(),
+            inventory_missed_refreshes: BTreeMap::new(),
             runtime_statuses: Vec::new(),
             host_runtime: None,
             runtime_config: None,
@@ -199,9 +205,51 @@ impl HostDesktopApp {
     }
 
     pub fn apply_inventory_snapshot(&mut self, snapshot: InventorySnapshot) {
+        let snapshot = self.stabilize_inventory_snapshot(snapshot);
         self.record_inventory_snapshot(&snapshot);
         self.inventory_snapshot = snapshot;
         self.sync_from_inventory_and_runtime();
+    }
+
+    fn stabilize_inventory_snapshot(
+        &mut self,
+        mut snapshot: InventorySnapshot,
+    ) -> InventorySnapshot {
+        for device in &snapshot.devices {
+            self.inventory_missed_refreshes.remove(&device.inventory_id);
+        }
+
+        let current_ids = snapshot
+            .devices
+            .iter()
+            .map(|device| device.inventory_id.clone())
+            .collect::<BTreeSet<_>>();
+        let mut expired = Vec::new();
+
+        for previous in &self.inventory_snapshot.devices {
+            if current_ids.contains(&previous.inventory_id) || !is_transient_bluetooth_row(previous)
+            {
+                continue;
+            }
+
+            let missed = self
+                .inventory_missed_refreshes
+                .entry(previous.inventory_id.clone())
+                .or_insert(0);
+            if *missed >= Self::INVENTORY_MISSED_REFRESH_GRACE {
+                expired.push(previous.inventory_id.clone());
+                continue;
+            }
+
+            *missed += 1;
+            snapshot.devices.push(previous.clone());
+        }
+
+        for device_id in expired {
+            self.inventory_missed_refreshes.remove(&device_id);
+        }
+
+        snapshot
     }
 
     fn refresh_inventory(&mut self) {
@@ -1395,6 +1443,13 @@ fn inventory_notes(device: &InventoryDevice) -> Vec<String> {
     notes
 }
 
+fn is_transient_bluetooth_row(device: &InventoryDevice) -> bool {
+    device.live
+        && device
+            .evidence_sources
+            .contains(&InventoryEvidenceSource::Bluetooth)
+}
+
 fn first_reason_or_default(device: &InventoryDevice, default: &str) -> String {
     if let Some(reason) = device
         .reasons
@@ -1742,6 +1797,39 @@ mod tests {
                 },
             },
         }
+    }
+
+    fn bluetooth_inventory_snapshot() -> InventorySnapshot {
+        crate::inventory::aggregator::aggregate_inventory(vec![
+            crate::inventory::model::DeviceObservation {
+                provider: InventoryEvidenceSource::Bluetooth,
+                stable_id: Some("bt:AA-BB".into()),
+                known_device_id: None,
+                display_name: "Alice iPhone".into(),
+                mirror_source_id: None,
+                live: true,
+                capture_state: crate::inventory::model::CapabilityState::Unavailable,
+                preferred_control_state: crate::inventory::model::CapabilityState::Ready,
+                fallback_control_state: crate::inventory::model::CapabilityState::Unavailable,
+                reasons: vec!["paired over bluetooth".into()],
+            },
+        ])
+    }
+
+    #[test]
+    fn transient_bluetooth_inventory_rows_age_out_after_repeated_misses() {
+        let mut app = HostDesktopApp::new();
+        app.apply_inventory_snapshot(bluetooth_inventory_snapshot());
+
+        for _ in 0..HostDesktopApp::INVENTORY_MISSED_REFRESH_GRACE {
+            app.apply_inventory_snapshot(InventorySnapshot::default());
+            assert_eq!(app.available_device_ids, vec!["bt:AA-BB"]);
+        }
+
+        app.apply_inventory_snapshot(InventorySnapshot::default());
+
+        assert!(app.available_device_ids.is_empty());
+        assert!(app.fleet.rows.is_empty());
     }
 
     #[test]

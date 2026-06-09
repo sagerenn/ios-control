@@ -1,6 +1,8 @@
 use host_desktop::app::HostDesktopApp;
 use host_desktop::inventory::aggregator::aggregate_inventory;
-use host_desktop::inventory::model::{CapabilityState, DeviceObservation, InventoryEvidenceSource};
+use host_desktop::inventory::model::{
+    CapabilityState, DeviceObservation, InventoryEvidenceSource, InventorySnapshot,
+};
 use host_desktop::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use host_desktop::preferences::HostPreferencesStore;
 use host_desktop::runtime::{HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
@@ -562,6 +564,19 @@ fn host_app_displays_partially_discovered_inventory_rows() {
         app.session.ui_state,
         SessionUiState::Blocked("No capture path observed".into())
     );
+}
+
+#[test]
+fn host_app_keeps_paired_bluetooth_row_across_transient_empty_inventory_refresh() {
+    let mut app = HostDesktopApp::new();
+    app.apply_inventory_snapshot(partially_discovered_inventory());
+
+    app.apply_inventory_snapshot(InventorySnapshot::default());
+
+    assert_eq!(app.available_device_ids, vec!["bt:AA-BB"]);
+    assert_eq!(app.fleet.rows.len(), 1);
+    assert_eq!(app.fleet.rows[0].device_name, "Alice iPhone");
+    assert_eq!(app.selected_device_id.as_deref(), Some("bt:AA-BB"));
 }
 
 #[test]
