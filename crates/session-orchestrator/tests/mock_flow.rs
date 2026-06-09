@@ -1,3 +1,4 @@
+use ios_control_contracts::capture::{FrameHealth, SourceKind, VideoFrameDescriptor};
 use ios_control_contracts::control::ControlSessionPhase;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::SessionPhase;
@@ -402,6 +403,80 @@ async fn start_session_with_direct_backend_can_wait_for_first_frame() {
     );
     assert!(state.capture_stream.is_some());
     assert!(state.latest_frame.is_none());
+
+    state.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn direct_refresh_keeps_latest_frame_when_next_frame_is_not_ready() {
+    let _lock = runtime_env_lock();
+    let root = workspace_root();
+    build_plugins(&root);
+    let direct_plugin = plugin_path(&root, "plugin-capture-direct");
+    let helper = write_ble_helper(
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true,"supports_status":true,"supports_stop":true,"supports_forget_bond":true}"#,
+        r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":["Waiting for iPhone"]}"#,
+        r#"{"phase":"Succeeded","summary":"input applied","observed_change":true}"#,
+    );
+    let state_file = std::env::temp_dir().join(format!(
+        "session-orchestrator-direct-refresh-wait-{}-{}.state",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos()
+    ));
+    std::fs::write(&state_file, b"already-delayed").unwrap();
+    let _env = EnvVarGuards::new(vec![
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &direct_plugin),
+        EnvVarGuard::set("IOS_CONTROL_BLE_HELPER", &helper),
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_HELPER_DELAY_FIRST_STREAM_MS", "2200"),
+        EnvVarGuard::set(
+            "IOS_CONTROL_DIRECT_HELPER_DELAY_STATE_FILE",
+            state_file.as_os_str(),
+        ),
+    ]);
+
+    let mut orchestrator = SessionOrchestrator::default();
+    let mut state = orchestrator
+        .start_session_with_plugins(StartSessionRequest {
+            device_id: "direct-refresh-wait".into(),
+            device_name: "Direct Receiver".into(),
+            selected_source_id: Some("direct-1".into()),
+            capture_backend: CaptureBackend::Direct,
+            plugin_paths: PluginPaths {
+                capture: plugin_path(&root, "plugin-capture-window"),
+                capture_direct: direct_plugin,
+                capture_direct_runtime_root: None,
+                control_ble: plugin_path(&root, "plugin-control-ble"),
+                control_fallback: plugin_path(&root, "plugin-control-window-bridge"),
+                grounding: Some(plugin_path(&root, "plugin-grounding-core")),
+            },
+        })
+        .await
+        .unwrap();
+
+    let previous = 42;
+    state.latest_frame = Some(VideoFrameDescriptor {
+        source_id: "direct-1".into(),
+        source_kind: SourceKind::DirectReceiver,
+        width: 1179,
+        height: 2556,
+        rotation_degrees: 0,
+        frame_index: previous,
+        health: FrameHealth::Healthy,
+    });
+    state.summary.phase = SessionPhase::Streaming;
+    std::fs::remove_file(&state_file).unwrap();
+
+    let refreshed = state.refresh_capture_frame().await.unwrap();
+
+    assert!(refreshed.is_none());
+    assert_eq!(
+        state.latest_frame.as_ref().map(|frame| frame.frame_index),
+        Some(previous)
+    );
+    assert_eq!(state.summary.phase, SessionPhase::Streaming);
 
     state.shutdown().await.unwrap();
 }

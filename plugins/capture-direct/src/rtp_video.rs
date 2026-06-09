@@ -5,11 +5,14 @@ use std::path::{Path, PathBuf};
 use std::process::ChildStdout;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 const DIAGNOSTIC_FRAME_LIMIT: usize = 500;
 const RTP_JITTERBUFFER_LATENCY_MS: u16 = 35;
-const DEFAULT_LIVE_FRAME_WIDTH: u32 = 1080;
-const DEFAULT_LIVE_FRAME_HEIGHT: u32 = 1920;
+const DEFAULT_LIVE_FRAME_WIDTH: u32 = 720;
+const DEFAULT_LIVE_FRAME_HEIGHT: u32 = 1280;
+const DEFAULT_LIVE_FRAME_MAX_FPS: u32 = 20;
+const MAX_LIVE_FRAME_FPS: u32 = 60;
 const VIDEO_RTP_CAPS: &str =
     "application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96";
 
@@ -25,6 +28,7 @@ pub struct DecodedFrame {
 pub struct LiveFrameConfig {
     pub width: u32,
     pub height: u32,
+    pub max_fps: u32,
 }
 
 impl LiveFrameConfig {
@@ -35,6 +39,8 @@ impl LiveFrameConfig {
                 "IOS_CONTROL_DIRECT_PREVIEW_HEIGHT",
                 DEFAULT_LIVE_FRAME_HEIGHT,
             ),
+            max_fps: env_u32("IOS_CONTROL_DIRECT_PREVIEW_FPS", DEFAULT_LIVE_FRAME_MAX_FPS)
+                .clamp(1, MAX_LIVE_FRAME_FPS),
         }
     }
 
@@ -60,22 +66,33 @@ pub struct RawFrameReader {
 impl RawFrameReader {
     pub fn start(mut stdout: ChildStdout, config: LiveFrameConfig) -> Result<Self> {
         let byte_len = config.byte_len()?;
+        let min_publish_interval = Duration::from_secs_f64(1.0 / f64::from(config.max_fps));
         let state = Arc::new(Mutex::new(RawFrameState::default()));
         let thread_state = Arc::clone(&state);
         let join = thread::spawn(move || {
             let mut frame_index = 0_u64;
+            let mut published_index = 0_u64;
+            let mut last_publish_at = None::<Instant>;
             let mut rgba = vec![0_u8; byte_len];
             loop {
                 match stdout.read_exact(&mut rgba) {
                     Ok(()) => {
                         frame_index = frame_index.saturating_add(1);
-                        if frame_index == 1 || frame_index % 30 == 0 {
+                        let now = Instant::now();
+                        let should_publish = last_publish_at
+                            .is_none_or(|last| now.duration_since(last) >= min_publish_interval);
+                        if !should_publish {
+                            continue;
+                        }
+                        published_index = published_index.saturating_add(1);
+                        last_publish_at = Some(now);
+                        if published_index == 1 || published_index % 30 == 0 {
                             append_direct_debug_line(&format!(
-                                "raw video reader decoded frame {frame_index}"
+                                "raw video reader published frame {published_index} from raw frame {frame_index}"
                             ));
                         }
                         let frame = DecodedFrame {
-                            frame_index,
+                            frame_index: published_index,
                             width: config.width,
                             height: config.height,
                             rgba: rgba.clone(),
@@ -187,6 +204,7 @@ pub fn receiver_args(port: u16, config: LiveFrameConfig) -> Vec<String> {
         "fdsink".into(),
         "fd=1".into(),
         "sync=false".into(),
+        "async=false".into(),
     ]
 }
 
@@ -357,6 +375,7 @@ mod tests {
             LiveFrameConfig {
                 width: 1080,
                 height: 1920,
+                max_fps: 20,
             },
         );
 
@@ -369,6 +388,7 @@ mod tests {
         assert!(args.iter().any(|arg| arg.contains("height=1920")));
         assert!(!args.iter().any(|arg| arg == "videorate"));
         assert!(!args.iter().any(|arg| arg == "drop-only=true"));
+        assert!(!args.iter().any(|arg| arg.starts_with("max-rate=")));
         assert!(!args.iter().any(|arg| arg.contains("framerate=")));
         assert!(!args.iter().any(|arg| arg == "autovideosink"));
         assert!(!args.iter().any(|arg| arg == "pngenc"));

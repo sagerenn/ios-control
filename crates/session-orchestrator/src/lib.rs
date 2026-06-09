@@ -393,7 +393,6 @@ impl ActiveSessionState {
             }
             Err(error)
                 if self.summary.capture_plugin.as_deref() == Some("capture.direct")
-                    && self.latest_frame.is_none()
                     && waiting_for_direct_frame(&error) =>
             {
                 self.capture_status = Some(request_capture_status(capture).await?);

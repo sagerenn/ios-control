@@ -10,7 +10,6 @@ use crate::rtp_audio;
 use crate::rtp_video::{self, DecodedFrame};
 use crate::runtime_bundle::{DirectRuntimeBundle, BLE_PATH_ENV, RUNTIME_ROOT_ENV};
 
-const MIRROR_REQUEST_SIZE: &str = "1080x1920";
 const AIRPLAY_PORT_BASE: &str = "52081";
 const AIRPLAY_RTSP_PORT: u16 = 52082;
 const AIRPLAY_DEVICE_ID_ENV: &str = "IOS_CONTROL_AIRPLAY_DEVICE_ID";
@@ -44,6 +43,7 @@ impl DirectRuntimeSession {
         let video_port = reserve_udp_port()?;
         let audio_port = reserve_udp_port()?;
         let frame_config = rtp_video::LiveFrameConfig::from_env();
+        let mirror_request_size = mirror_request_size(frame_config);
         let identity = airplay_identity();
 
         let (video_receiver, video_frames) = spawn_video_receiver(
@@ -67,6 +67,7 @@ impl DirectRuntimeSession {
             bundle,
             &ble_path,
             &identity,
+            &mirror_request_size,
             video_port,
             audio_port,
             &uxplay_stdout_log_path,
@@ -180,6 +181,7 @@ fn spawn_uxplay(
     bundle: &DirectRuntimeBundle,
     ble_path: &std::path::Path,
     identity: &AirPlayIdentity,
+    mirror_request_size: &str,
     video_port: u16,
     audio_port: u16,
     stdout_log_path: &std::path::Path,
@@ -200,6 +202,7 @@ fn spawn_uxplay(
         .args(uxplay_args(
             identity,
             ble_path,
+            mirror_request_size,
             &video_pipeline,
             &audio_pipeline,
         )?)
@@ -213,6 +216,7 @@ fn spawn_uxplay(
 fn uxplay_args(
     identity: &AirPlayIdentity,
     ble_path: &std::path::Path,
+    mirror_request_size: &str,
     video_pipeline: &str,
     audio_pipeline: &str,
 ) -> Result<Vec<String>> {
@@ -223,7 +227,7 @@ fn uxplay_args(
         "-m".into(),
         identity.device_id.clone(),
         "-s".into(),
-        MIRROR_REQUEST_SIZE.into(),
+        mirror_request_size.into(),
         "-p".into(),
         AIRPLAY_PORT_BASE.into(),
         "-vs".into(),
@@ -238,6 +242,10 @@ fn uxplay_args(
         "-artp".into(),
         audio_pipeline.into(),
     ])
+}
+
+fn mirror_request_size(config: rtp_video::LiveFrameConfig) -> String {
+    format!("{}x{}", config.width, config.height)
 }
 
 fn airplay_identity() -> AirPlayIdentity {
@@ -336,8 +344,8 @@ mod tests {
     use super::{
         airplay_identity_from_values, uxplay_args, AirPlayIdentity, AIRPLAY_PORT_BASE,
         AIRPLAY_RTSP_PORT, DEFAULT_AIRPLAY_DEVICE_ID, DEFAULT_AIRPLAY_DISPLAY_NAME,
-        MIRROR_REQUEST_SIZE,
     };
+    use crate::rtp_video::LiveFrameConfig;
 
     #[test]
     fn uxplay_args_keep_receiver_headless_without_aggressive_session_resets() {
@@ -348,6 +356,7 @@ mod tests {
         let args = uxplay_args(
             &identity,
             std::path::Path::new("uxplay.ble"),
+            "720x1280",
             "pt=96 config-interval=1 ! udpsink host=127.0.0.1 port=50000 sync=false async=false",
             "pt=96 ! udpsink host=127.0.0.1 port=50001 sync=false async=false",
         )
@@ -357,9 +366,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["-m", "02:11:22:33:44:55"]));
-        assert!(args
-            .windows(2)
-            .any(|pair| pair == ["-s", MIRROR_REQUEST_SIZE]));
+        assert!(args.windows(2).any(|pair| pair == ["-s", "720x1280"]));
         assert!(args
             .windows(2)
             .any(|pair| pair == ["-p", AIRPLAY_PORT_BASE]));
@@ -380,5 +387,16 @@ mod tests {
 
         assert_eq!(identity.device_id, DEFAULT_AIRPLAY_DEVICE_ID);
         assert_eq!(identity.name, DEFAULT_AIRPLAY_DISPLAY_NAME);
+    }
+
+    #[test]
+    fn mirror_request_size_follows_live_frame_config() {
+        let size = super::mirror_request_size(LiveFrameConfig {
+            width: 720,
+            height: 1280,
+            max_fps: 20,
+        });
+
+        assert_eq!(size, "720x1280");
     }
 }

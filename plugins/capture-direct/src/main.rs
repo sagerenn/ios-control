@@ -13,6 +13,7 @@ use plugin_capture_direct::direct_status::DirectCaptureStatus;
 use plugin_capture_direct::helper_launcher::{
     capture_capability, find_helper, read_next_frame_event, run_probe,
 };
+use plugin_capture_direct::rtp_video::LiveFrameConfig;
 use plugin_capture_direct::runtime_bundle::DirectRuntimeBundle;
 use plugin_capture_direct::uxplay_launcher::DirectRuntimeSession;
 
@@ -165,11 +166,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
 
+                let runtime_frame_config =
+                    DirectRuntimeBundle::configured_root().map(|_| LiveFrameConfig::from_env());
                 let descriptor = CaptureStreamDescriptor {
                     source_id: source_id.clone(),
                     source_kind: SourceKind::DirectReceiver,
-                    width: DIRECT_WIDTH,
-                    height: DIRECT_HEIGHT,
+                    width: runtime_frame_config
+                        .as_ref()
+                        .map(|config| config.width)
+                        .unwrap_or(DIRECT_WIDTH),
+                    height: runtime_frame_config
+                        .as_ref()
+                        .map(|config| config.height)
+                        .unwrap_or(DIRECT_HEIGHT),
                     rotation_degrees: 0,
                     slot_bytes: SLOT_BYTES,
                     slot_path: slot.path().display().to_string(),
