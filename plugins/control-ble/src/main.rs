@@ -5,7 +5,8 @@ use ios_control_contracts::control::{
 use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, PluginToHost};
 use plugin_control_ble::backend::{ControlCapability, ControlSession, ControlSessionState};
 use plugin_control_ble::helper_bridge::{
-    run_control_input, run_execute, run_prepare, run_stop, BleHelperExecution, BleHelperPrepare,
+    run_control_input, run_execute, run_prepare, run_status, run_stop, BleHelperExecution,
+    BleHelperPrepare, BleHelperStatus,
 };
 use plugin_control_ble::helper_config::{find_ble_helper, probe_ble_helper};
 use plugin_control_ble::linux_backend::probe_linux_backend;
@@ -85,7 +86,19 @@ fn build_session_from_capability(capability: &ControlCapability) -> ControlSessi
 }
 
 fn helper_prepare_to_session(prepare: BleHelperPrepare) -> ControlSession {
-    let state = match prepare.phase.as_str() {
+    helper_runtime_to_session(prepare.phase, prepare.checklist, prepare.notes)
+}
+
+fn helper_status_to_session(status: BleHelperStatus) -> ControlSession {
+    helper_runtime_to_session(status.phase, status.checklist, status.notes)
+}
+
+fn helper_runtime_to_session(
+    phase: String,
+    checklist: Vec<String>,
+    notes: Vec<String>,
+) -> ControlSession {
+    let state = match phase.as_str() {
         "Advertising" => ControlSessionState::Advertising,
         "Pairing" => ControlSessionState::Pairing,
         "BondedIdle" => ControlSessionState::BondedIdle,
@@ -99,8 +112,8 @@ fn helper_prepare_to_session(prepare: BleHelperPrepare) -> ControlSession {
 
     ControlSession {
         state,
-        checklist: prepare.checklist,
-        notes: prepare.notes,
+        checklist,
+        notes,
         pending_reports: 0,
     }
 }
@@ -282,6 +295,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let capability = probe_control_capability();
                     session = Some(build_session_from_capability(&capability));
                 }
+                if session.as_ref().is_some_and(|active| {
+                    matches!(
+                        active.state,
+                        ControlSessionState::Error(_) | ControlSessionState::Unsupported
+                    )
+                }) {
+                    if let Some(helper) = ble_helper_path_if_supported() {
+                        if let Ok(status) = run_status(&helper) {
+                            session = Some(helper_status_to_session(status));
+                        }
+                    }
+                }
 
                 if let Some(active) = session.as_mut() {
                     match &active.state {
@@ -333,4 +358,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_status_connected_maps_to_connected_session() {
+        let session = helper_status_to_session(BleHelperStatus {
+            phase: "Connected".into(),
+            checklist: vec!["Enable Bluetooth".into()],
+            notes: vec!["BLE HID keyboard client subscribed".into()],
+            paired_device_id: Some("ble-hid-client".into()),
+            paired_device_name: Some("BLE HID client".into()),
+            bonded: true,
+            execute_ready: true,
+        });
+
+        assert_eq!(session.state, ControlSessionState::Connected);
+        assert_eq!(session.checklist, vec!["Enable Bluetooth"]);
+        assert_eq!(
+            session.notes,
+            vec!["BLE HID keyboard client subscribed".to_string()]
+        );
+    }
 }

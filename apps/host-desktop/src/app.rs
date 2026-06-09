@@ -721,18 +721,37 @@ impl HostDesktopApp {
         &mut self,
         events: Vec<ios_control_contracts::control::ControlInputEvent>,
     ) {
+        let preview_input_log = std::env::var_os("IOS_CONTROL_PREVIEW_INPUT_LOG").is_some();
+        if preview_input_log {
+            self.append_host_log_line(&format!(
+                "preview input forwarding {} event(s): {}",
+                events.len(),
+                preview_input_event_summary(&events)
+            ));
+        }
         let Some(device_id) = self.selected_device_id.clone() else {
             return;
         };
-        let Some(host_runtime) = self.host_runtime.as_mut() else {
+        if self.host_runtime.is_none() {
             self.diagnostics.host_error =
                 Some("Preview input failed: host runtime unavailable".into());
             return;
-        };
+        }
 
         for event in events {
-            match host_runtime.forward_control_input(&device_id, event) {
+            let result = self
+                .host_runtime
+                .as_mut()
+                .expect("host runtime checked above")
+                .forward_control_input(&device_id, event);
+            match result {
                 Ok(summary) => {
+                    if preview_input_log {
+                        self.append_host_log_line(&format!(
+                            "preview input result: {} {:?}",
+                            summary.summary, summary.phase
+                        ));
+                    }
                     self.diagnostics.control_summary = summary.summary;
                 }
                 Err(error) => {
@@ -1360,6 +1379,28 @@ impl eframe::App for HostDesktopApp {
             }
         }
     }
+}
+
+fn preview_input_event_summary(
+    events: &[ios_control_contracts::control::ControlInputEvent],
+) -> String {
+    events
+        .iter()
+        .map(|event| match event {
+            ios_control_contracts::control::ControlInputEvent::Mouse(mouse) => format!(
+                "mouse buttons={} dx={} dy={} wheel={}",
+                mouse.buttons, mouse.dx, mouse.dy, mouse.wheel
+            ),
+            ios_control_contracts::control::ControlInputEvent::Keyboard(keyboard) => format!(
+                "keyboard usage={} pressed={}",
+                keyboard.usage_id, keyboard.pressed
+            ),
+            ios_control_contracts::control::ControlInputEvent::Text(text) => {
+                format!("text chars={}", text.chars().count())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]

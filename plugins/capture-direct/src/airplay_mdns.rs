@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use plist::Value;
-use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream, UdpSocket};
 use std::sync::{

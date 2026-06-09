@@ -97,7 +97,7 @@ fn render_preview(
 
     let preview_size = fitted_preview_size(
         frame,
-        ui.available_size_before_wrap(),
+        preview_available_size(ui),
         ui.ctx().pixels_per_point().max(1.0),
     );
     let response = ui.add(
@@ -143,6 +143,15 @@ fn fitted_preview_size(
     vec2(
         (frame_size.x * scale).max(1.0),
         (frame_size.y * scale).max(1.0),
+    )
+}
+
+fn preview_available_size(ui: &Ui) -> Vec2 {
+    let max_rect = ui.max_rect();
+    let cursor_top = ui.cursor().top();
+    vec2(
+        ui.available_width().max(1.0),
+        (max_rect.bottom() - cursor_top).max(1.0),
     )
 }
 
@@ -233,6 +242,25 @@ mod tests {
         assert!(size.x <= 900.0);
         assert!(size.y <= 520.0);
         assert!((size.x / size.y - 1179.0 / 2556.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn session_preview_respects_remaining_column_height() {
+        let frame = VideoFrameDescriptor {
+            source_id: "direct-1".into(),
+            source_kind: SourceKind::DirectReceiver,
+            width: 1080,
+            height: 1920,
+            rotation_degrees: 0,
+            frame_index: 8,
+            health: FrameHealth::Healthy,
+        };
+
+        let size = fitted_preview_size(&frame, egui::vec2(520.0, 620.0), 1.0);
+
+        assert!(size.x <= 520.0);
+        assert!(size.y <= 620.0);
+        assert!((size.x / size.y - 1080.0 / 1920.0).abs() < 0.001);
     }
 
     #[test]
