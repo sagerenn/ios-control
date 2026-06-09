@@ -15,7 +15,9 @@ use crate::preferences::{
     HostPreferences, HostPreferencesStore, KnownDevicePreference, MAX_DIRECT_PREVIEW_FPS,
     MAX_DIRECT_PREVIEW_HEIGHT, MIN_DIRECT_PREVIEW_FPS, MIN_DIRECT_PREVIEW_HEIGHT,
 };
-use crate::preview::{color_image_from_slot, PreviewInputBridge};
+use crate::preview::{
+    color_image_from_slot, detect_visible_content_bounds, PreviewContentBounds, PreviewInputBridge,
+};
 use crate::runtime::{
     DirectPreviewConfig, HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
 };
@@ -52,12 +54,14 @@ pub struct HostDesktopApp {
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
     preview_texture: Option<egui::TextureHandle>,
+    preview_content_bounds: Option<PreviewContentBounds>,
     preview_input_bridge: PreviewInputBridge,
     session_window_open: bool,
     session_window_deferred_until_streaming: bool,
     session_window_focus_requested: bool,
     session_window_device_id: Option<String>,
-    session_window_auto_sized_frame: Option<(u32, u32, u16)>,
+    session_window_auto_sized_frame: Option<(u32, u32, u16, Option<PreviewContentBounds>)>,
+    session_window_resize_pending: bool,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -94,12 +98,14 @@ impl HostDesktopApp {
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
             preview_texture: None,
+            preview_content_bounds: None,
             preview_input_bridge: PreviewInputBridge::default(),
             session_window_open: false,
             session_window_deferred_until_streaming: false,
             session_window_focus_requested: false,
             session_window_device_id: None,
             session_window_auto_sized_frame: None,
+            session_window_resize_pending: false,
             dashboard: DashboardViewModel {
                 total_devices: 0,
                 degraded_devices: 0,
@@ -737,6 +743,7 @@ impl HostDesktopApp {
         self.next_runtime_refresh_at = None;
         self.runtime_refresh_device_id = None;
         self.preview_texture = None;
+        self.preview_content_bounds = None;
         self.preview_input_bridge.reset();
         self.restored_source_preference = None;
         self.manual_source_selection_device_id = None;
@@ -1183,20 +1190,25 @@ impl HostDesktopApp {
     fn sync_preview_texture(&mut self, ctx: &egui::Context) {
         let Some(workspace) = self.runtime_workspace.as_ref() else {
             self.preview_texture = None;
+            self.preview_content_bounds = None;
             return;
         };
         let Some(stream) = workspace.capture_stream.as_ref() else {
             self.preview_texture = None;
+            self.preview_content_bounds = None;
             return;
         };
         let Some(frame) = workspace.latest_frame.as_ref() else {
             self.preview_texture = None;
+            self.preview_content_bounds = None;
             return;
         };
         let Ok(image) = color_image_from_slot(stream, frame) else {
             self.preview_texture = None;
+            self.preview_content_bounds = None;
             return;
         };
+        self.preview_content_bounds = detect_visible_content_bounds(&image);
 
         if let Some(texture) = self.preview_texture.as_mut() {
             texture.set(image, egui::TextureOptions::LINEAR);
@@ -1206,22 +1218,66 @@ impl HostDesktopApp {
         }
     }
 
-    fn auto_size_session_window_to_frame(&mut self, ctx: &egui::Context) {
+    fn auto_size_session_window_to_frame(&mut self, ctx: &egui::Context) -> bool {
         let Some(frame) = self.session.latest_frame.as_ref() else {
-            return;
+            return false;
         };
-        let frame_key = (frame.width, frame.height, frame.rotation_degrees);
+        let frame_size = [frame.width.max(1), frame.height.max(1)];
+        let content_bounds = self
+            .preview_content_bounds
+            .map(|bounds| bounds.normalized_for_frame(frame_size));
+        let frame_key = (
+            frame.width,
+            frame.height,
+            frame.rotation_degrees,
+            content_bounds,
+        );
         if self.session_window_auto_sized_frame == Some(frame_key) {
-            return;
+            return false;
         }
 
         let monitor_size = ctx
             .input(|input| input.viewport().monitor_size)
             .unwrap_or_else(|| egui::vec2(900.0, 700.0));
-        let inner_size =
-            session_view::auto_session_inner_size(frame, monitor_size, ctx.pixels_per_point());
+        let inner_size = session_view::auto_session_inner_size(
+            frame,
+            content_bounds,
+            monitor_size,
+            ctx.pixels_per_point(),
+        );
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner_size));
         self.session_window_auto_sized_frame = Some(frame_key);
+        self.session_window_resize_pending = true;
+        true
+    }
+
+    fn correct_session_window_aspect_to_frame(&mut self, ctx: &egui::Context) {
+        if self.session_window_resize_pending {
+            self.session_window_resize_pending = false;
+            ctx.request_repaint();
+            return;
+        }
+        let Some(frame) = self.session.latest_frame.as_ref() else {
+            return;
+        };
+        let Some(current_size) =
+            ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()))
+        else {
+            return;
+        };
+        let frame_size = [frame.width.max(1), frame.height.max(1)];
+        let content_bounds = self
+            .preview_content_bounds
+            .map(|bounds| bounds.normalized_for_frame(frame_size));
+        let target_size = session_view::aspect_corrected_session_inner_size(
+            frame,
+            content_bounds,
+            current_size,
+            ctx.pixels_per_point(),
+        );
+        if session_view::session_inner_size_needs_correction(current_size, target_size) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+        }
     }
 
     fn selected_runtime_refresh_target(&self) -> Option<(&str, Duration)> {
@@ -1446,15 +1502,22 @@ impl eframe::App for HostDesktopApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                         self.session_window_focus_requested = false;
                     }
-                    self.auto_size_session_window_to_frame(ctx);
+                    if !self.auto_size_session_window_to_frame(ctx) {
+                        self.correct_session_window_aspect_to_frame(ctx);
+                    }
 
                     egui::CentralPanel::default()
-                        .frame(egui::Frame::default().inner_margin(0.0))
+                        .frame(
+                            egui::Frame::default()
+                                .fill(egui::Color32::from_rgb(242, 242, 247))
+                                .inner_margin(0.0),
+                        )
                         .show(ctx, |ui| {
                             let session_window_action = session_view::render(
                                 ui,
                                 &self.session,
                                 self.preview_texture.as_ref(),
+                                self.preview_content_bounds,
                                 &mut self.preview_input_bridge,
                             );
                             if !matches!(session_window_action, SessionAction::None) {

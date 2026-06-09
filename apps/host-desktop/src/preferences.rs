@@ -7,9 +7,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const DEFAULT_DIRECT_PREVIEW_FPS: u32 = 20;
 pub const MIN_DIRECT_PREVIEW_FPS: u32 = 5;
 pub const MAX_DIRECT_PREVIEW_FPS: u32 = 60;
-pub const DEFAULT_DIRECT_PREVIEW_HEIGHT: u32 = 1280;
+pub const DEFAULT_DIRECT_PREVIEW_HEIGHT: u32 = 854;
 pub const MIN_DIRECT_PREVIEW_HEIGHT: u32 = 540;
 pub const MAX_DIRECT_PREVIEW_HEIGHT: u32 = 1920;
+const LEGACY_STRETCHED_DIRECT_PREVIEW_HEIGHTS: [u32; 2] = [960, 1040];
+const DEFAULT_DEVICE_PHYSICAL_WIDTH: u32 = 750;
+const DEFAULT_DEVICE_PHYSICAL_HEIGHT: u32 = 1334;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownDevicePreference {
@@ -51,10 +54,22 @@ impl HostPreferences {
     pub fn direct_preview_width(&self) -> u32 {
         direct_preview_width_for_height(self.direct_preview_height())
     }
+
+    fn migrate_legacy_defaults(&mut self) {
+        if self
+            .direct_preview_height
+            .is_some_and(|height| LEGACY_STRETCHED_DIRECT_PREVIEW_HEIGHTS.contains(&height))
+        {
+            self.direct_preview_height = None;
+        }
+    }
 }
 
 pub fn direct_preview_width_for_height(height: u32) -> u32 {
-    ((u64::from(height) * 9 + 8) / 16).max(1) as u32
+    let width = (u64::from(height) * u64::from(DEFAULT_DEVICE_PHYSICAL_WIDTH)
+        + u64::from(DEFAULT_DEVICE_PHYSICAL_HEIGHT / 2))
+        / u64::from(DEFAULT_DEVICE_PHYSICAL_HEIGHT);
+    width.max(1) as u32
 }
 
 #[derive(Debug, Clone)]
@@ -69,8 +84,11 @@ impl HostPreferencesStore {
 
     pub fn load(&self) -> Result<HostPreferences> {
         match std::fs::read_to_string(&self.path) {
-            Ok(text) => match serde_json::from_str(&text) {
-                Ok(prefs) => Ok(prefs),
+            Ok(text) => match serde_json::from_str::<HostPreferences>(&text) {
+                Ok(mut prefs) => {
+                    prefs.migrate_legacy_defaults();
+                    Ok(prefs)
+                }
                 Err(err) => {
                     eprintln!(
                         "warning: invalid host preferences JSON at {}: {}",
@@ -236,6 +254,65 @@ mod tests {
 
         let prefs = store.load().unwrap();
         assert_eq!(prefs, HostPreferences::default());
+    }
+
+    #[test]
+    fn direct_preview_width_uses_device_physical_ratio() {
+        let prefs = HostPreferences::default();
+
+        assert_eq!(prefs.direct_preview_width(), 480);
+        assert_eq!(prefs.direct_preview_height(), 854);
+        assert_eq!(direct_preview_width_for_height(1920), 1079);
+    }
+
+    #[test]
+    fn load_migrates_legacy_stretched_direct_preview_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host-preferences.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "selected_device_id": "direct-receiver",
+  "selected_source_id": null,
+  "ble_pointer_long_axis_units": 326,
+  "direct_preview_fps": null,
+  "direct_preview_height": 960,
+  "known_devices": []
+}"#,
+        )
+        .unwrap();
+        let store = HostPreferencesStore::new(path);
+
+        let prefs = store.load().unwrap();
+
+        assert_eq!(prefs.direct_preview_height, None);
+        assert_eq!(prefs.direct_preview_width(), 480);
+        assert_eq!(prefs.direct_preview_height(), 854);
+    }
+
+    #[test]
+    fn load_migrates_previous_physical_ratio_direct_preview_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host-preferences.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "selected_device_id": "direct-receiver",
+  "selected_source_id": null,
+  "ble_pointer_long_axis_units": 326,
+  "direct_preview_fps": null,
+  "direct_preview_height": 1040,
+  "known_devices": []
+}"#,
+        )
+        .unwrap();
+        let store = HostPreferencesStore::new(path);
+
+        let prefs = store.load().unwrap();
+
+        assert_eq!(prefs.direct_preview_height, None);
+        assert_eq!(prefs.direct_preview_width(), 480);
+        assert_eq!(prefs.direct_preview_height(), 854);
     }
 
     #[test]

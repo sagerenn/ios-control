@@ -34,6 +34,118 @@ pub fn color_image_from_slot(
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewContentBounds {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PreviewContentBounds {
+    pub fn full_for_frame(frame_size: [u32; 2]) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: frame_size[0].max(1),
+            height: frame_size[1].max(1),
+        }
+    }
+
+    pub fn normalized_for_frame(self, frame_size: [u32; 2]) -> Self {
+        let frame_size = [frame_size[0].max(1), frame_size[1].max(1)];
+        let x = self.x.min(frame_size[0].saturating_sub(1));
+        let y = self.y.min(frame_size[1].saturating_sub(1));
+        let width = self.width.max(1).min(frame_size[0] - x);
+        let height = self.height.max(1).min(frame_size[1] - y);
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub fn size(self) -> [u32; 2] {
+        [self.width.max(1), self.height.max(1)]
+    }
+
+    pub fn uv_rect_for_frame(self, frame_size: [u32; 2]) -> Rect {
+        let bounds = self.normalized_for_frame(frame_size);
+        let frame_width = frame_size[0].max(1) as f32;
+        let frame_height = frame_size[1].max(1) as f32;
+        Rect::from_min_max(
+            Pos2::new(
+                bounds.x as f32 / frame_width,
+                bounds.y as f32 / frame_height,
+            ),
+            Pos2::new(
+                (bounds.x + bounds.width) as f32 / frame_width,
+                (bounds.y + bounds.height) as f32 / frame_height,
+            ),
+        )
+    }
+}
+
+pub fn detect_visible_content_bounds(image: &egui::ColorImage) -> Option<PreviewContentBounds> {
+    let width = image.size[0];
+    let height = image.size[1];
+    if width == 0 || height == 0 || image.pixels.len() != width * height {
+        return None;
+    }
+
+    let row_threshold = (width / 20).max(1);
+    let col_threshold = (height / 20).max(1);
+    let mut top = None;
+    let mut bottom = None;
+    for y in 0..height {
+        let non_black = image.pixels[y * width..(y + 1) * width]
+            .iter()
+            .filter(|pixel| visible_content_pixel(**pixel))
+            .count();
+        if non_black >= row_threshold {
+            top.get_or_insert(y);
+            bottom = Some(y);
+        }
+    }
+
+    let mut left = None;
+    let mut right = None;
+    for x in 0..width {
+        let mut non_black = 0usize;
+        for y in 0..height {
+            if visible_content_pixel(image.pixels[y * width + x]) {
+                non_black += 1;
+            }
+        }
+        if non_black >= col_threshold {
+            left.get_or_insert(x);
+            right = Some(x);
+        }
+    }
+
+    let (Some(left), Some(right), Some(top), Some(bottom)) = (left, right, top, bottom) else {
+        return None;
+    };
+    let bounds = PreviewContentBounds {
+        x: left as u32,
+        y: top as u32,
+        width: (right - left + 1) as u32,
+        height: (bottom - top + 1) as u32,
+    };
+    let full_area = width.saturating_mul(height).max(1);
+    let bounds_area = bounds.width as usize * bounds.height as usize;
+    if bounds_area * 100 < full_area * 25 {
+        None
+    } else {
+        Some(bounds)
+    }
+}
+
+fn visible_content_pixel(pixel: egui::Color32) -> bool {
+    pixel.a() > 16 && (pixel.r() > 8 || pixel.g() > 8 || pixel.b() > 8)
+}
+
 #[derive(Debug, Default)]
 pub struct PreviewInputBridge {
     armed: bool,
@@ -76,13 +188,20 @@ impl PreviewInputBridge {
         ctx: &egui::Context,
         response: &Response,
         frame_size: [u32; 2],
+        content_bounds: Option<PreviewContentBounds>,
     ) -> Vec<ControlInputEvent> {
         let mut events = Vec::new();
         let rect = response.rect;
+        let geometry = MirrorGeometry::new(
+            rect,
+            frame_size,
+            content_bounds,
+            self.pointer_long_axis_units,
+        );
 
         let pointer_inside = ctx
             .input(|input| input.pointer.latest_pos())
-            .is_some_and(|pos| rect.contains(pos));
+            .is_some_and(|pos| geometry.contains(pos));
         let viewport_focused = ctx.input(|input| input.viewport().focused.unwrap_or(true));
         if self.armed && (!pointer_inside || !viewport_focused) {
             self.release(&mut events);
@@ -93,7 +212,7 @@ impl PreviewInputBridge {
         for event in input_events {
             match event {
                 Event::PointerMoved(pos) => {
-                    self.handle_pointer_moved(pos, rect, frame_size, &mut events);
+                    self.handle_pointer_moved(pos, rect, frame_size, content_bounds, &mut events);
                 }
                 Event::PointerButton {
                     pos,
@@ -101,7 +220,15 @@ impl PreviewInputBridge {
                     pressed,
                     ..
                 } => {
-                    self.handle_pointer_button(pos, button, pressed, rect, frame_size, &mut events);
+                    self.handle_pointer_button(
+                        pos,
+                        button,
+                        pressed,
+                        rect,
+                        frame_size,
+                        content_bounds,
+                        &mut events,
+                    );
                 }
                 Event::PointerGone => {
                     self.release(&mut events);
@@ -157,9 +284,15 @@ impl PreviewInputBridge {
         pos: Pos2,
         rect: Rect,
         frame_size: [u32; 2],
+        content_bounds: Option<PreviewContentBounds>,
         events: &mut Vec<ControlInputEvent>,
     ) {
-        let geometry = MirrorGeometry::new(rect, frame_size, self.pointer_long_axis_units);
+        let geometry = MirrorGeometry::new(
+            rect,
+            frame_size,
+            content_bounds,
+            self.pointer_long_axis_units,
+        );
         if !self.armed {
             if geometry.contains(pos) {
                 self.last_pointer_pos = Some(pos);
@@ -183,11 +316,17 @@ impl PreviewInputBridge {
         pressed: bool,
         rect: Rect,
         frame_size: [u32; 2],
+        content_bounds: Option<PreviewContentBounds>,
         events: &mut Vec<ControlInputEvent>,
     ) {
-        let geometry = MirrorGeometry::new(rect, frame_size, self.pointer_long_axis_units);
+        let geometry = MirrorGeometry::new(
+            rect,
+            frame_size,
+            content_bounds,
+            self.pointer_long_axis_units,
+        );
         let inside = geometry.contains(pos);
-        let starts_new_gesture = pressed && inside && self.buttons == 0;
+        let should_reanchor_click = pressed && inside;
         if pressed && inside {
             self.armed = true;
             self.last_pointer_pos = Some(pos);
@@ -202,7 +341,8 @@ impl PreviewInputBridge {
         }
 
         let mut reports = Vec::new();
-        if starts_new_gesture {
+        if should_reanchor_click {
+            self.device_pointer = None;
             self.queue_pointer_to_preview_position(pos, geometry, &mut reports);
         } else if !pressed && self.buttons != 0 {
             self.queue_pointer_by_preview_delta(pos, geometry, &mut reports);
@@ -350,45 +490,83 @@ struct DevicePointerState {
 struct MirrorGeometry {
     rect: Rect,
     frame_size: [u32; 2],
+    content_bounds: PreviewContentBounds,
     pointer_size: [u32; 2],
 }
 
 impl MirrorGeometry {
-    fn new(rect: Rect, frame_size: [u32; 2], pointer_long_axis_units: Option<u32>) -> Self {
+    fn new(
+        rect: Rect,
+        frame_size: [u32; 2],
+        content_bounds: Option<PreviewContentBounds>,
+        pointer_long_axis_units: Option<u32>,
+    ) -> Self {
         let frame_size = [frame_size[0].max(1), frame_size[1].max(1)];
+        let content_bounds = normalized_content_bounds(frame_size, content_bounds);
+        let content_size = [content_bounds.width.max(1), content_bounds.height.max(1)];
         Self {
             rect,
             frame_size,
-            pointer_size: pointer_size_for_frame(frame_size, pointer_long_axis_units),
+            content_bounds,
+            pointer_size: pointer_size_for_frame(content_size, pointer_long_axis_units),
         }
     }
 
     fn contains(&self, pos: Pos2) -> bool {
-        self.rect.contains(pos)
+        self.content_rect().contains(pos)
     }
 
     fn pointer_delta(&self, previous: Pos2, current: Pos2) -> [i16; 2] {
         let delta = current - previous;
+        let content_rect = self.content_rect();
         [
-            scaled_delta(delta.x, self.pointer_size[0], self.rect.width()),
-            scaled_delta(delta.y, self.pointer_size[1], self.rect.height()),
+            scaled_delta(delta.x, self.pointer_size[0], content_rect.width()),
+            scaled_delta(delta.y, self.pointer_size[1], content_rect.height()),
         ]
     }
 
     fn pointer_position(&self, pos: Pos2) -> [i32; 2] {
+        let content_rect = self.content_rect();
         [
             scaled_absolute_axis(
-                pos.x - self.rect.left(),
+                pos.x - content_rect.left(),
                 self.pointer_size[0],
-                self.rect.width(),
+                content_rect.width(),
             ),
             scaled_absolute_axis(
-                pos.y - self.rect.top(),
+                pos.y - content_rect.top(),
                 self.pointer_size[1],
-                self.rect.height(),
+                content_rect.height(),
             ),
         ]
     }
+
+    fn content_rect(&self) -> Rect {
+        let frame_width = self.frame_size[0] as f32;
+        let frame_height = self.frame_size[1] as f32;
+        let left =
+            self.rect.left() + self.rect.width() * self.content_bounds.x as f32 / frame_width;
+        let top =
+            self.rect.top() + self.rect.height() * self.content_bounds.y as f32 / frame_height;
+        let right = self.rect.left()
+            + self.rect.width() * (self.content_bounds.x + self.content_bounds.width) as f32
+                / frame_width;
+        let bottom = self.rect.top()
+            + self.rect.height() * (self.content_bounds.y + self.content_bounds.height) as f32
+                / frame_height;
+        Rect::from_min_max(Pos2::new(left, top), Pos2::new(right, bottom))
+    }
+}
+
+fn normalized_content_bounds(
+    frame_size: [u32; 2],
+    content_bounds: Option<PreviewContentBounds>,
+) -> PreviewContentBounds {
+    let frame_size = [frame_size[0].max(1), frame_size[1].max(1)];
+    let Some(bounds) = content_bounds else {
+        return PreviewContentBounds::full_for_frame(frame_size);
+    };
+    bounds.normalized_for_frame(frame_size)
 }
 
 fn pointer_size_for_frame(frame_size: [u32; 2], override_units: Option<u32>) -> [u32; 2] {
@@ -730,12 +908,52 @@ mod input_tests {
     }
 
     #[test]
+    fn visible_content_detection_finds_letterboxed_mirror_area() {
+        let mut image = egui::ColorImage::new([4, 6], egui::Color32::BLACK);
+        for y in 1..=4 {
+            for x in 0..4 {
+                image.pixels[y * 4 + x] = egui::Color32::WHITE;
+            }
+        }
+
+        assert_eq!(
+            detect_visible_content_bounds(&image),
+            Some(PreviewContentBounds {
+                x: 0,
+                y: 1,
+                width: 4,
+                height: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn mirror_geometry_maps_positions_inside_visible_content_bounds() {
+        let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
+        let geometry = MirrorGeometry::new(
+            rect,
+            [100, 200],
+            Some(PreviewContentBounds {
+                x: 0,
+                y: 50,
+                width: 100,
+                height: 100,
+            }),
+            Some(100),
+        );
+
+        assert!(!geometry.contains(Pos2::new(60.0, 40.0)));
+        assert!(geometry.contains(Pos2::new(60.0, 110.0)));
+        assert_eq!(geometry.pointer_position(Pos2::new(60.0, 110.0)), [50, 50]);
+    }
+
+    #[test]
     fn preview_click_inside_arms_ble_mouse_forwarding() {
         let mut bridge = PreviewInputBridge::default();
         let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
         let mut events = Vec::new();
 
-        bridge.handle_pointer_moved(Pos2::new(20.0, 20.0), rect, [1000, 2000], &mut events);
+        bridge.handle_pointer_moved(Pos2::new(20.0, 20.0), rect, [1000, 2000], None, &mut events);
         assert!(!bridge.is_armed());
         assert!(events.is_empty());
 
@@ -745,6 +963,7 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
 
@@ -777,11 +996,12 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         events.clear();
 
-        bridge.handle_pointer_moved(Pos2::new(25.0, 30.0), rect, [1000, 2000], &mut events);
+        bridge.handle_pointer_moved(Pos2::new(25.0, 30.0), rect, [1000, 2000], None, &mut events);
 
         assert_eq!(
             events,
@@ -806,6 +1026,7 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         bridge.handle_pointer_button(
@@ -814,6 +1035,7 @@ mod input_tests {
             false,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         events.clear();
@@ -824,16 +1046,65 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
 
         assert_eq!(
             events,
             vec![ControlInputEvent::MouseSequence(vec![
-                mouse(0, 60, 135),
+                mouse(0, -300, -600),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
+                mouse(0, 75, 150),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0x01, 0, 0),
+            ])]
+        );
+    }
+
+    #[test]
+    fn preview_click_reanchors_pointer_even_after_previous_movement() {
+        let mut bridge = PreviewInputBridge::default();
+        let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
+        let mut events = Vec::new();
+
+        bridge.handle_pointer_button(
+            Pos2::new(20.0, 20.0),
+            PointerButton::Primary,
+            true,
+            rect,
+            [1000, 2000],
+            None,
+            &mut events,
+        );
+        bridge.handle_pointer_moved(Pos2::new(45.0, 90.0), rect, [1000, 2000], None, &mut events);
+        events.clear();
+
+        bridge.handle_pointer_button(
+            Pos2::new(60.0, 110.0),
+            PointerButton::Primary,
+            true,
+            rect,
+            [1000, 2000],
+            None,
+            &mut events,
+        );
+
+        assert_eq!(
+            events,
+            vec![ControlInputEvent::MouseSequence(vec![
+                mouse(0x01, -300, -600),
+                mouse(0x01, 0, 0),
+                mouse(0x01, 0, 0),
+                mouse(0x01, 0, 0),
+                mouse(0x01, 75, 150),
+                mouse(0x01, 0, 0),
+                mouse(0x01, 0, 0),
+                mouse(0x01, 0, 0),
                 mouse(0x01, 0, 0),
             ])]
         );
@@ -851,6 +1122,7 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         events.clear();
@@ -861,6 +1133,7 @@ mod input_tests {
             false,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
 
@@ -885,11 +1158,18 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         events.clear();
 
-        bridge.handle_pointer_moved(Pos2::new(120.0, 30.0), rect, [1000, 2000], &mut events);
+        bridge.handle_pointer_moved(
+            Pos2::new(120.0, 30.0),
+            rect,
+            [1000, 2000],
+            None,
+            &mut events,
+        );
 
         assert!(!bridge.is_armed());
         assert_eq!(
@@ -910,6 +1190,7 @@ mod input_tests {
             true,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         bridge.handle_pointer_button(
@@ -918,11 +1199,18 @@ mod input_tests {
             false,
             rect,
             [1000, 2000],
+            None,
             &mut events,
         );
         events.clear();
 
-        bridge.handle_pointer_moved(Pos2::new(120.0, 30.0), rect, [1000, 2000], &mut events);
+        bridge.handle_pointer_moved(
+            Pos2::new(120.0, 30.0),
+            rect,
+            [1000, 2000],
+            None,
+            &mut events,
+        );
 
         assert!(!bridge.is_armed());
         assert_eq!(

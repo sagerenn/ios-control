@@ -32,3 +32,11 @@ fn load_missing_preferences_file_returns_defaults() {
     let prefs = store.load().unwrap();
     assert_eq!(prefs, HostPreferences::default());
 }
+
+#[test]
+fn direct_preview_defaults_to_480_by_854() {
+    let prefs = HostPreferences::default();
+
+    assert_eq!(prefs.direct_preview_width(), 480);
+    assert_eq!(prefs.direct_preview_height(), 854);
+}

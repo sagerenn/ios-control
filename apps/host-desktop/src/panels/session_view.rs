@@ -2,7 +2,7 @@ use egui::{vec2, Align, Layout, TextureHandle, Ui, Vec2};
 use ios_control_contracts::capture::VideoFrameDescriptor;
 use ios_control_contracts::control::ControlInputEvent;
 
-use crate::preview::PreviewInputBridge;
+use crate::preview::{PreviewContentBounds, PreviewInputBridge};
 use crate::view_models::session::{SessionUiState, SessionViewModel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub fn render(
     ui: &mut Ui,
     view_model: &SessionViewModel,
     texture: Option<&TextureHandle>,
+    content_bounds: Option<PreviewContentBounds>,
     input_bridge: &mut PreviewInputBridge,
 ) -> SessionAction {
     let mut action = SessionAction::None;
@@ -25,7 +26,7 @@ pub fn render(
         input_bridge.reset();
     }
 
-    let events = render_preview(ui, view_model, texture, input_bridge);
+    let events = render_preview(ui, view_model, texture, content_bounds, input_bridge);
     if !events.is_empty() {
         action = SessionAction::ControlInput(events);
     }
@@ -90,6 +91,7 @@ fn render_preview(
     ui: &mut Ui,
     view_model: &SessionViewModel,
     texture: Option<&TextureHandle>,
+    content_bounds: Option<PreviewContentBounds>,
     input_bridge: &mut PreviewInputBridge,
 ) -> Vec<ControlInputEvent> {
     let (Some(texture), SessionUiState::Streaming, Some(frame)) = (
@@ -103,12 +105,20 @@ fn render_preview(
     };
 
     let available = preview_available_size(ui);
-    let preview_size = fitted_preview_size(frame, available, ui.ctx().pixels_per_point().max(1.0));
+    let frame_size = [frame.width.max(1), frame.height.max(1)];
+    let visible_bounds = preview_visible_bounds(frame_size, content_bounds);
+    let preview_size = fitted_preview_size(
+        frame,
+        Some(visible_bounds),
+        available,
+        ui.ctx().pixels_per_point().max(1.0),
+    );
     let top_padding = ((available.y - preview_size.y) / 2.0).max(0.0);
     ui.with_layout(Layout::top_down(Align::Center), |ui| {
         ui.add_space(top_padding);
         let response = ui.add(
             egui::Image::new(texture)
+                .uv(visible_bounds.uv_rect_for_frame(frame_size))
                 .fit_to_exact_size(preview_size)
                 .sense(egui::Sense::click_and_drag()),
         );
@@ -118,11 +128,7 @@ fn render_preview(
         if input_bridge.is_armed() && !response.hovered() {
             return input_bridge.release_control();
         }
-        input_bridge.collect(
-            ui.ctx(),
-            &response,
-            [frame.width.max(1), frame.height.max(1)],
-        )
+        input_bridge.collect(ui.ctx(), &response, visible_bounds.size(), None)
     })
     .inner
 }
@@ -136,27 +142,40 @@ fn render_frame_summary(ui: &mut Ui, frame: &VideoFrameDescriptor) {
 
 fn fitted_preview_size(
     frame: &VideoFrameDescriptor,
+    content_bounds: Option<PreviewContentBounds>,
     available: Vec2,
     pixels_per_point: f32,
 ) -> Vec2 {
+    let frame_size = [frame.width.max(1), frame.height.max(1)];
+    let visible_bounds = preview_visible_bounds(frame_size, content_bounds);
+    fitted_source_size(
+        vec2(
+            visible_bounds.width.max(1) as f32,
+            visible_bounds.height.max(1) as f32,
+        ),
+        available,
+        pixels_per_point,
+    )
+}
+
+fn fitted_source_size(source_size: Vec2, available: Vec2, pixels_per_point: f32) -> Vec2 {
     let pixels_per_point = pixels_per_point.max(1.0);
-    let frame_size = vec2(
-        frame.width.max(1) as f32 / pixels_per_point,
-        frame.height.max(1) as f32 / pixels_per_point,
+    let source_size = vec2(
+        (source_size.x / pixels_per_point).max(1.0),
+        (source_size.y / pixels_per_point).max(1.0),
     );
     let available = vec2(available.x.max(1.0), available.y.max(1.0));
-    let scale = (available.x / frame_size.x)
-        .min(available.y / frame_size.y)
-        .min(1.0);
+    let scale = (available.x / source_size.x).min(available.y / source_size.y);
 
     vec2(
-        (frame_size.x * scale).max(1.0),
-        (frame_size.y * scale).max(1.0),
+        (source_size.x * scale).max(1.0),
+        (source_size.y * scale).max(1.0),
     )
 }
 
 pub fn auto_session_inner_size(
     frame: &VideoFrameDescriptor,
+    content_bounds: Option<PreviewContentBounds>,
     monitor_size: Vec2,
     pixels_per_point: f32,
 ) -> Vec2 {
@@ -169,8 +188,35 @@ pub fn auto_session_inner_size(
         (monitor_size.x - 80.0).max(240.0),
         (monitor_size.y - 80.0).max(320.0),
     );
-    let preview_size = fitted_preview_size(frame, max_preview, pixels_per_point);
+    let preview_size = fitted_preview_size(frame, content_bounds, max_preview, pixels_per_point);
     vec2(preview_size.x, preview_size.y)
+}
+
+pub fn aspect_corrected_session_inner_size(
+    frame: &VideoFrameDescriptor,
+    content_bounds: Option<PreviewContentBounds>,
+    current_size: Vec2,
+    pixels_per_point: f32,
+) -> Vec2 {
+    fitted_preview_size(
+        frame,
+        content_bounds,
+        vec2(current_size.x.max(1.0), current_size.y.max(1.0)),
+        pixels_per_point,
+    )
+}
+
+pub fn session_inner_size_needs_correction(current_size: Vec2, target_size: Vec2) -> bool {
+    (current_size.x - target_size.x).abs() > 2.0 || (current_size.y - target_size.y).abs() > 2.0
+}
+
+fn preview_visible_bounds(
+    frame_size: [u32; 2],
+    content_bounds: Option<PreviewContentBounds>,
+) -> PreviewContentBounds {
+    content_bounds
+        .map(|bounds| bounds.normalized_for_frame(frame_size))
+        .unwrap_or_else(|| PreviewContentBounds::full_for_frame(frame_size))
 }
 
 fn preview_available_size(ui: &Ui) -> Vec2 {
@@ -217,6 +263,7 @@ mod tests {
                     ui,
                     &view_model,
                     Some(&texture),
+                    None,
                     &mut PreviewInputBridge::default(),
                 );
             });
@@ -266,7 +313,7 @@ mod tests {
             health: FrameHealth::Healthy,
         };
 
-        let size = fitted_preview_size(&frame, egui::vec2(900.0, 520.0), 1.0);
+        let size = fitted_preview_size(&frame, None, egui::vec2(900.0, 520.0), 1.0);
 
         assert!(size.x <= 900.0);
         assert!(size.y <= 520.0);
@@ -285,7 +332,7 @@ mod tests {
             health: FrameHealth::Healthy,
         };
 
-        let size = fitted_preview_size(&frame, egui::vec2(520.0, 620.0), 1.0);
+        let size = fitted_preview_size(&frame, None, egui::vec2(520.0, 620.0), 1.0);
 
         assert!(size.x <= 520.0);
         assert!(size.y <= 620.0);
@@ -293,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn session_preview_does_not_upscale_past_native_physical_pixels() {
+    fn session_preview_scales_up_to_fill_available_space() {
         let frame = VideoFrameDescriptor {
             source_id: "direct-1".into(),
             source_kind: SourceKind::DirectReceiver,
@@ -304,9 +351,66 @@ mod tests {
             health: FrameHealth::Healthy,
         };
 
-        let size = fitted_preview_size(&frame, egui::vec2(900.0, 900.0), 1.5);
+        let size = fitted_preview_size(&frame, None, egui::vec2(900.0, 900.0), 1.5);
 
-        assert_eq!(size, egui::vec2(608.0 / 1.5, 1080.0 / 1.5));
+        assert!((size.y - 900.0).abs() < 0.001);
+        assert!((size.x / size.y - 608.0 / 1080.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn session_preview_sizes_against_cropped_mirror_content() {
+        let frame = VideoFrameDescriptor {
+            source_id: "direct-1".into(),
+            source_kind: SourceKind::DirectReceiver,
+            width: 480,
+            height: 960,
+            rotation_degrees: 0,
+            frame_index: 8,
+            health: FrameHealth::Healthy,
+        };
+
+        let size = fitted_preview_size(
+            &frame,
+            Some(PreviewContentBounds {
+                x: 0,
+                y: 54,
+                width: 480,
+                height: 852,
+            }),
+            egui::vec2(480.0, 960.0),
+            1.0,
+        );
+
+        assert_eq!(size, egui::vec2(480.0, 852.0));
+    }
+
+    #[test]
+    fn session_resize_snaps_wide_window_to_phone_aspect_without_stretching() {
+        let frame = VideoFrameDescriptor {
+            source_id: "direct-1".into(),
+            source_kind: SourceKind::DirectReceiver,
+            width: 480,
+            height: 960,
+            rotation_degrees: 0,
+            frame_index: 8,
+            health: FrameHealth::Healthy,
+        };
+        let bounds = Some(PreviewContentBounds {
+            x: 0,
+            y: 54,
+            width: 480,
+            height: 852,
+        });
+
+        let target =
+            aspect_corrected_session_inner_size(&frame, bounds, egui::vec2(520.0, 760.0), 1.0);
+
+        assert!((target.y - 760.0).abs() < 0.001);
+        assert!((target.x / target.y - 480.0 / 852.0).abs() < 0.001);
+        assert!(session_inner_size_needs_correction(
+            egui::vec2(520.0, 760.0),
+            target
+        ));
     }
 
     #[test]
@@ -321,7 +425,7 @@ mod tests {
             health: FrameHealth::Healthy,
         };
 
-        let size = auto_session_inner_size(&frame, egui::vec2(1536.0, 864.0), 1.0);
+        let size = auto_session_inner_size(&frame, None, egui::vec2(1536.0, 864.0), 1.0);
 
         assert!(size.x <= 1536.0);
         assert!(size.y <= 864.0);
@@ -340,7 +444,7 @@ mod tests {
             health: FrameHealth::Healthy,
         };
 
-        let size = auto_session_inner_size(&frame, egui::vec2(1536.0, 864.0), 1.25);
+        let size = auto_session_inner_size(&frame, None, egui::vec2(1536.0, 864.0), 1.25);
 
         assert!(size.y <= 864.0 / 1.25);
         assert!((size.x / size.y - 1080.0 / 1920.0).abs() < 0.001);
