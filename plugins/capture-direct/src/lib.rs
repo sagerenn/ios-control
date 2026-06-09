@@ -1,3 +1,4 @@
+pub mod airplay_mdns;
 pub mod backend;
 pub mod direct_status;
 pub mod helper_bridge;

@@ -116,15 +116,57 @@ pub fn write_ble_helper(probe: &str, prepare: &str, execute: &str) -> PathBuf {
         .expect("clock should be after unix epoch")
         .as_nanos();
     let counter = BLE_HELPER_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "ios-control-session-orchestrator-ble-helper-{}-{nanos}-{counter}.sh",
-        std::process::id()
-    ));
-    let probe_tag = format!("IOS_CONTROL_BLE_HELPER_PROBE_{nanos}_{counter}");
-    let prepare_tag = format!("IOS_CONTROL_BLE_HELPER_PREPARE_{nanos}_{counter}");
-    let execute_tag = format!("IOS_CONTROL_BLE_HELPER_EXECUTE_{nanos}_{counter}");
-    let body = format!(
-        r#"#!/bin/sh
+
+    #[cfg(windows)]
+    let path = {
+        let path = std::env::temp_dir().join(format!(
+            "ios-control-session-orchestrator-ble-helper-{}-{nanos}-{counter}.cmd",
+            std::process::id()
+        ));
+        let body = format!(
+            r#"@echo off
+if "%1"=="probe" (
+  echo {probe}
+  exit /b 0
+)
+if "%1"=="prepare" (
+  echo {prepare}
+  exit /b 0
+)
+if "%1"=="status" (
+  echo {prepare}
+  exit /b 0
+)
+if "%1"=="execute" (
+  echo {execute}
+  exit /b 0
+)
+if "%1"=="stop" (
+  echo {{"ok":true,"message":"helper stopped"}}
+  exit /b 0
+)
+if "%1"=="forget-bond" (
+  echo {{"ok":true,"message":"bond forgotten"}}
+  exit /b 0
+)
+exit /b 2
+"#
+        );
+        fs::write(&path, body).expect("failed to write BLE helper script");
+        path
+    };
+
+    #[cfg(not(windows))]
+    let path = {
+        let path = std::env::temp_dir().join(format!(
+            "ios-control-session-orchestrator-ble-helper-{}-{nanos}-{counter}.sh",
+            std::process::id()
+        ));
+        let probe_tag = format!("IOS_CONTROL_BLE_HELPER_PROBE_{nanos}_{counter}");
+        let prepare_tag = format!("IOS_CONTROL_BLE_HELPER_PREPARE_{nanos}_{counter}");
+        let execute_tag = format!("IOS_CONTROL_BLE_HELPER_EXECUTE_{nanos}_{counter}");
+        let body = format!(
+            r#"#!/bin/sh
 case "$1" in
   probe)
     cat <<'{probe_tag}'
@@ -157,16 +199,19 @@ case "$1" in
     ;;
 esac
 "#
-    );
-    fs::write(&path, body).expect("failed to write BLE helper script");
-    #[cfg(unix)]
-    {
-        let mut perms = fs::metadata(&path)
-            .expect("missing BLE helper metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("failed to make BLE helper executable");
-    }
+        );
+        fs::write(&path, body).expect("failed to write BLE helper script");
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&path)
+                .expect("missing BLE helper metadata")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).expect("failed to make BLE helper executable");
+        }
+        path
+    };
+
     path
 }
 

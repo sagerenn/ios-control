@@ -214,7 +214,14 @@ function Resolve-AdditionalRuntimeSupportPaths {
 
     $searchDirectories = Get-Msys2BinDirectories -Target $Target
     $supportPaths = [System.Collections.Generic.List[string]]::new()
-    foreach ($dllName in @("libbz2-1.dll", "libintl-8.dll", "liblzma-5.dll", "zlib1.dll")) {
+    foreach ($dllName in @(
+        "libbz2-1.dll",
+        "libiconv-2.dll",
+        "libidn2-0.dll",
+        "libintl-8.dll",
+        "liblzma-5.dll",
+        "zlib1.dll"
+    )) {
         $resolvedPath = Resolve-BinaryPathFromDirectories -BinaryName $dllName -SearchDirectories $searchDirectories
         if ($resolvedPath -and -not $supportPaths.Contains($resolvedPath)) {
             $supportPaths.Add($resolvedPath)

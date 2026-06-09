@@ -73,8 +73,10 @@ fn resolve_packaged_window_capture_helper() -> Option<PathBuf> {
     }
 
     let bundle_helper = exe_dir.parent().map(|root| {
-        root.join("helpers")
-            .join(format!("window-capture-helper{}", std::env::consts::EXE_SUFFIX))
+        root.join("helpers").join(format!(
+            "window-capture-helper{}",
+            std::env::consts::EXE_SUFFIX
+        ))
     });
     if let Some(path) = bundle_helper.filter(|path| path.is_file()) {
         return Some(path);

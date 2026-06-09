@@ -4,6 +4,9 @@ use ios_control_frame_transport::FrameSlot;
 
 pub const DIRECT_WIDTH: u32 = 1179;
 pub const DIRECT_HEIGHT: u32 = 2556;
+pub const DIRECT_SLOT_WIDTH: u32 = 3840;
+pub const DIRECT_SLOT_HEIGHT: u32 = 2160;
+pub const DIRECT_SLOT_BYTES: u32 = DIRECT_SLOT_WIDTH * DIRECT_SLOT_HEIGHT * 4;
 
 #[async_trait]
 pub trait DirectReceiverBackend {
@@ -27,7 +30,7 @@ pub fn mock_frame(source_id: &str, frame_index: u64) -> VideoFrameDescriptor {
 }
 
 pub fn allocate_mock_slot() -> anyhow::Result<FrameSlot> {
-    FrameSlot::new(mock_frame_bytes().len())
+    FrameSlot::new(DIRECT_SLOT_BYTES as usize)
 }
 
 pub fn mock_frame_bytes() -> Vec<u8> {

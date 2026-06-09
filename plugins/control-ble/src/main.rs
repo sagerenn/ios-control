@@ -178,8 +178,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 write_reply(&mut stdout, &reply)?;
             }
             HostToPlugin::Stop => {
-                if let Some(helper) = find_ble_helper() {
-                    let _ = run_stop(&helper);
+                if session.is_some() {
+                    if let Some(helper) = find_ble_helper() {
+                        let _ = run_stop(&helper);
+                    }
                 }
                 write_reply(&mut stdout, &PluginToHost::Ack)?;
                 break;
@@ -275,6 +277,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     observed_change: None,
                     failure_reason: Some("call PrepareControl before ForwardControlInput".into()),
                 };
+
+                if session.is_none() {
+                    let capability = probe_control_capability();
+                    session = Some(build_session_from_capability(&capability));
+                }
 
                 if let Some(active) = session.as_mut() {
                     match &active.state {

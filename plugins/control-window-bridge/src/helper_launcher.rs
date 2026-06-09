@@ -32,8 +32,10 @@ fn resolve_packaged_helper() -> Option<PathBuf> {
     }
 
     let bundle_helper = exe_dir.parent().map(|root| {
-        root.join("helpers")
-            .join(format!("window-input-helper{}", std::env::consts::EXE_SUFFIX))
+        root.join("helpers").join(format!(
+            "window-input-helper{}",
+            std::env::consts::EXE_SUFFIX
+        ))
     });
     if let Some(path) = bundle_helper.filter(|path| path.is_file()) {
         return Some(path);
@@ -42,7 +44,12 @@ fn resolve_packaged_helper() -> Option<PathBuf> {
     let self_helper = current_exe
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .filter(|stem| matches!(*stem, "plugin-control-window-bridge" | "window-input-helper"))
+        .filter(|stem| {
+            matches!(
+                *stem,
+                "plugin-control-window-bridge" | "window-input-helper"
+            )
+        })
         .is_some()
         && helper_is_executable(&current_exe);
     self_helper.then_some(current_exe)
@@ -141,7 +148,9 @@ pub fn launch_helper_json(helper: PathBuf, args: &[String]) -> io::Result<Window
         .map_err(|_| io::Error::other("helper stdout drainer panicked"))??;
 
     if !status.success() {
-        return Err(io::Error::other("window helper returned non-zero exit status"));
+        return Err(io::Error::other(
+            "window helper returned non-zero exit status",
+        ));
     }
 
     decode_helper_execution(Output {

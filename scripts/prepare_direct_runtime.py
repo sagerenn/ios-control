@@ -7,6 +7,13 @@ import json
 import shutil
 from pathlib import Path
 
+WINDOWS_GSTREAMER_PLUGIN_EXCLUDES = {
+    # This plugin pulls in libsoup/libpsl/libidn2. The direct AirPlay receiver
+    # does not use HTTP sources, and partial Windows installs can otherwise load
+    # an incompatible libidn2-0.dll from unrelated software on PATH.
+    "libgstsoup.dll",
+}
+
 
 def executable_name(binary_name: str, target: str) -> str:
     if "windows" in target.lower():
@@ -43,6 +50,12 @@ def stage_direct_runtime(
 
     staged_gst = target_root / "gstreamer"
     shutil.copytree(gst_root, staged_gst, dirs_exist_ok=True)
+    if "windows" in target.lower():
+        plugin_dir = staged_gst / "lib" / "gstreamer-1.0"
+        for plugin_name in WINDOWS_GSTREAMER_PLUGIN_EXCLUDES:
+            plugin_path = plugin_dir / plugin_name
+            if plugin_path.exists():
+                plugin_path.unlink()
 
     beacon_dir = target_root / "Bluetooth_LE_beacon"
     beacon_dir.mkdir(parents=True, exist_ok=True)

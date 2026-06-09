@@ -13,8 +13,7 @@ const PROTOCOL_VERSION: u32 = 3;
 const SLOT_BYTES: u32 = (1280 * 720 * 4) as u32;
 const STREAM_WIDTH: u32 = 1280;
 const STREAM_HEIGHT: u32 = 720;
-const BASE64_CHARS: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 struct StreamState {
     source_id: String,
@@ -368,7 +367,8 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
         "stream" => {
             let _ = args.next();
             let _ = args.next();
-            let rgba = encode_base64_bytes(&vec![128_u8; (STREAM_WIDTH * STREAM_HEIGHT * 4) as usize]);
+            let rgba =
+                encode_base64_bytes(&vec![128_u8; (STREAM_WIDTH * STREAM_HEIGHT * 4) as usize]);
             let payload = serde_json::json!({
                 "frame_index": 1_u64,
                 "width": STREAM_WIDTH,

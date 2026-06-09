@@ -29,10 +29,11 @@ pub struct KeyboardInputReport {
     pub pressed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlInputEvent {
     Mouse(MouseInputReport),
     Keyboard(KeyboardInputReport),
+    Text(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

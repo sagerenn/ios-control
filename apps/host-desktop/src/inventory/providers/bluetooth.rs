@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -8,6 +11,13 @@ use ios_control_session_orchestrator::PluginPaths;
 use crate::inventory::model::{CapabilityState, DeviceObservation, InventoryEvidenceSource};
 use crate::inventory::providers::probe_control_capability;
 use crate::preferences::{HostPreferences, KnownDevicePreference};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+const WINDOWS_BLUETOOTH_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone, Deserialize)]
 struct BluetoothDeviceRecord {
@@ -151,39 +161,67 @@ fn discover_windows_devices() -> Option<Vec<BluetoothDeviceRecord>> {
         return None;
     }
 
-    let output = Command::new("powershell")
+    let stdout = run_windows_bluetooth_discovery_script()?;
+    parse_windows_device_records(&stdout)
+}
+
+fn run_windows_bluetooth_discovery_script() -> Option<String> {
+    let mut command = Command::new("powershell");
+    command
         .args([
             "-NoProfile",
+            "-NonInteractive",
             "-Command",
-            r#"Get-PnpDevice -Class Bluetooth -PresentOnly |
-             Where-Object { $_.FriendlyName -match 'iPhone|iPad' } |
+            r#"Get-CimInstance Win32_PnPEntity -Filter "PNPClass='Bluetooth'" |
+             Where-Object { $_.Present -ne $false -and $_.Name -match 'iPhone|iPad' } |
              ForEach-Object {
-                 $container = Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_ContainerId' -ErrorAction SilentlyContinue |
-                     Select-Object -ExpandProperty Data -ErrorAction SilentlyContinue
+                 $baseName = $_.Name -replace ' (AVRCP Transport|Hands-Free AG Audio|Headset|Stereo)$', ''
                  [pscustomobject]@{
-                     stable_id = $_.InstanceId
-                     display_name = $_.FriendlyName
-                     container_id = [string]$container
+                     stable_id = $_.PNPDeviceID
+                     display_name = $_.Name
+                     container_id = $baseName
                  }
              } |
              ConvertTo-Json -Compress"#,
         ])
-        .output()
-        .ok()?;
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
 
-    if !output.status.success() {
-        return None;
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command.spawn().ok()?;
+    let started_at = Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut stdout = String::new();
+                child.stdout.take()?.read_to_string(&mut stdout).ok()?;
+                return Some(stdout);
+            }
+            None if started_at.elapsed() >= WINDOWS_BLUETOOTH_DISCOVERY_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => thread::sleep(Duration::from_millis(25)),
+        }
     }
+}
 
-    let stdout = String::from_utf8(output.stdout).ok()?;
+fn parse_windows_device_records(stdout: &str) -> Option<Vec<BluetoothDeviceRecord>> {
     if stdout.trim().is_empty() {
         return Some(Vec::new());
     }
 
     if stdout.trim_start().starts_with('[') {
-        serde_json::from_str(&stdout).ok()
+        serde_json::from_str(stdout).ok()
     } else {
-        serde_json::from_str::<BluetoothDeviceRecord>(&stdout)
+        serde_json::from_str::<BluetoothDeviceRecord>(stdout)
             .ok()
             .map(|device| vec![device])
     }

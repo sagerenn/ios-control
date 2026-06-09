@@ -549,6 +549,7 @@ fn waiting_for_direct_frame(error: &anyhow::Error) -> bool {
     let message = error.to_string();
     message.contains("direct helper frame event read timed out")
         || message.contains("direct runtime frame wait timed out")
+        || message.contains("direct runtime frame not ready")
 }
 
 async fn start_capture_backend(request: &StartSessionRequest) -> Result<RunningPlugin> {

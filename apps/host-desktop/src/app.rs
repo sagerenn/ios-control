@@ -42,6 +42,7 @@ pub struct HostDesktopApp {
     preferences: HostPreferences,
     restored_source_preference: Option<RestoredSourcePreference>,
     manual_source_selection_device_id: Option<String>,
+    pending_start_device_id: Option<String>,
     next_inventory_refresh_at: Option<Instant>,
     next_runtime_refresh_at: Option<Instant>,
     runtime_refresh_device_id: Option<String>,
@@ -49,6 +50,7 @@ pub struct HostDesktopApp {
     preview_input_bridge: PreviewInputBridge,
     session_window_open: bool,
     session_window_deferred_until_streaming: bool,
+    session_window_focus_requested: bool,
     session_window_device_id: Option<String>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
@@ -60,7 +62,8 @@ pub struct HostDesktopApp {
 
 impl HostDesktopApp {
     const INVENTORY_REFRESH_POLL_INTERVAL: Duration = Duration::from_secs(2);
-    const RUNTIME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const RUNTIME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(40);
+    const WAITING_FOR_MIRROR_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(250);
     const DIRECT_RECEIVER_DEVICE_ID: &str = "direct-receiver";
     const DIRECT_RECEIVER_DEVICE_NAME: &str = "Direct Receiver";
     const DIRECT_RECEIVER_SOURCE_ID: &str = "direct-1";
@@ -80,6 +83,7 @@ impl HostDesktopApp {
             preferences: HostPreferences::default(),
             restored_source_preference: None,
             manual_source_selection_device_id: None,
+            pending_start_device_id: None,
             next_inventory_refresh_at: None,
             next_runtime_refresh_at: None,
             runtime_refresh_device_id: None,
@@ -87,6 +91,7 @@ impl HostDesktopApp {
             preview_input_bridge: PreviewInputBridge::default(),
             session_window_open: false,
             session_window_deferred_until_streaming: false,
+            session_window_focus_requested: false,
             session_window_device_id: None,
             dashboard: DashboardViewModel {
                 total_devices: 0,
@@ -322,6 +327,11 @@ impl HostDesktopApp {
         }
     }
 
+    pub fn set_pending_start_device(&mut self, device_id: impl Into<String>) {
+        self.pending_start_device_id = Some(device_id.into());
+        self.try_start_pending_device();
+    }
+
     pub fn request_open_selected_device_session(&mut self) {
         let Some(device_id) = self
             .selected_device_id
@@ -331,6 +341,7 @@ impl HostDesktopApp {
             self.session = SessionViewModel::error("No device selected");
             self.session_window_open = true;
             self.session_window_deferred_until_streaming = false;
+            self.session_window_focus_requested = true;
             self.session_window_device_id = None;
             return;
         };
@@ -349,8 +360,9 @@ impl HostDesktopApp {
             .is_some_and(|row| row.start_enabled);
 
         if startable {
-            self.session_window_open = false;
-            self.session_window_deferred_until_streaming = true;
+            self.session_window_open = true;
+            self.session_window_deferred_until_streaming = false;
+            self.session_window_focus_requested = true;
             self.request_start_direct_session_for_device(&device_id);
             self.reconcile_session_window_state();
             return;
@@ -358,6 +370,7 @@ impl HostDesktopApp {
 
         self.session_window_open = true;
         self.session_window_deferred_until_streaming = false;
+        self.session_window_focus_requested = true;
         if let Some(device) = self
             .inventory_snapshot
             .devices
@@ -666,6 +679,7 @@ impl HostDesktopApp {
         self.manual_source_selection_device_id = None;
         self.session_window_open = false;
         self.session_window_deferred_until_streaming = false;
+        self.session_window_focus_requested = false;
         self.session_window_device_id = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
@@ -748,16 +762,60 @@ impl HostDesktopApp {
         self.dashboard =
             DashboardViewModel::from_inventory_rows(self.fleet.rows.len(), degraded_devices);
 
-        if self
-            .selected_device_id
-            .as_deref()
-            .is_none_or(|selected| !self.available_device_ids.iter().any(|id| id == selected))
-        {
+        if self.selected_device_id.as_deref().is_none_or(|selected| {
+            !self.available_device_ids.iter().any(|id| id == selected)
+                && !self
+                    .runtime_statuses
+                    .iter()
+                    .any(|status| status.summary().device_id == selected)
+        }) {
             self.selected_device_id = self.available_device_ids.first().cloned();
         }
 
         self.sync_selected_workspace();
         self.reconcile_session_window_state();
+        self.try_start_pending_device();
+    }
+
+    fn try_start_pending_device(&mut self) {
+        let Some(device_id) = self.pending_start_device_id.clone() else {
+            return;
+        };
+        if self
+            .runtime_statuses
+            .iter()
+            .any(|status| status.summary().device_id == device_id)
+        {
+            self.pending_start_device_id = None;
+            return;
+        }
+
+        if device_id == Self::DIRECT_RECEIVER_DEVICE_ID {
+            if self.can_start_direct_receiver() {
+                self.pending_start_device_id = None;
+                self.session_window_open = true;
+                self.session_window_deferred_until_streaming = false;
+                self.session_window_focus_requested = true;
+                self.request_start_direct_receiver();
+            }
+            return;
+        }
+
+        let launcher = FleetViewModel::for_launcher(
+            &self.inventory_snapshot.devices,
+            self.startup.direct_receiver.available,
+            &self.runtime_statuses,
+        );
+        let startable = launcher
+            .rows
+            .iter()
+            .find(|row| row.device_id == device_id)
+            .is_some_and(|row| row.start_enabled);
+        if startable {
+            self.pending_start_device_id = None;
+            self.select_device(&device_id);
+            self.request_open_selected_device_session();
+        }
     }
 
     fn sync_selected_workspace(&mut self) {
@@ -816,6 +874,10 @@ impl HostDesktopApp {
                 .grounding_summary
                 .clone()
                 .unwrap_or_else(|| "grounding idle".into());
+            let capture_detail = workspace
+                .capture_status
+                .as_ref()
+                .and_then(|status| status.detail.clone());
 
             self.session = match status.substate() {
                 SessionSubstate::ControlReady | SessionSubstate::Streaming => {
@@ -845,7 +907,8 @@ impl HostDesktopApp {
                         .unwrap_or("Session requires operator intervention"),
                 ),
                 SessionSubstate::Stopped => SessionViewModel::idle(),
-            };
+            }
+            .with_status_detail(capture_detail);
             self.reconcile_session_window_state();
             return;
         }
@@ -917,9 +980,11 @@ impl HostDesktopApp {
             | crate::view_models::session::SessionUiState::Error(_) => {
                 self.session_window_open = true;
                 self.session_window_deferred_until_streaming = false;
+                self.session_window_focus_requested = true;
             }
             crate::view_models::session::SessionUiState::Idle => {
                 self.session_window_deferred_until_streaming = false;
+                self.session_window_focus_requested = false;
             }
         }
     }
@@ -1039,7 +1104,11 @@ impl HostDesktopApp {
             self.preview_texture = None;
             return;
         };
-        let Ok(image) = color_image_from_slot(stream) else {
+        let Some(frame) = workspace.latest_frame.as_ref() else {
+            self.preview_texture = None;
+            return;
+        };
+        let Ok(image) = color_image_from_slot(stream, frame) else {
             self.preview_texture = None;
             return;
         };
@@ -1052,8 +1121,24 @@ impl HostDesktopApp {
         }
     }
 
-    fn selected_runtime_session_is_streaming(&self) -> bool {
-        self.selected_runtime_streaming_device_id().is_some()
+    fn selected_runtime_refresh_target(&self) -> Option<(&str, Duration)> {
+        let device_id = self.selected_runtime_streaming_device_id()?;
+        let waiting_for_direct_frame = self
+            .runtime_statuses
+            .iter()
+            .find(|status| status.summary().device_id == device_id)
+            .is_some_and(|status| status.backends().capture_backend == "capture.direct")
+            && self
+                .runtime_workspace
+                .as_ref()
+                .filter(|workspace| workspace.device_id == device_id)
+                .is_some_and(|workspace| workspace.latest_frame.is_none());
+        let interval = if waiting_for_direct_frame {
+            Self::WAITING_FOR_MIRROR_REFRESH_POLL_INTERVAL
+        } else {
+            Self::RUNTIME_REFRESH_POLL_INTERVAL
+        };
+        Some((device_id, interval))
     }
 
     fn selected_runtime_streaming_device_id(&self) -> Option<&str> {
@@ -1090,9 +1175,9 @@ impl HostDesktopApp {
     }
 
     fn poll_runtime_refresh_if_due(&mut self, now: Instant) {
-        let Some(device_id) = self
-            .selected_runtime_streaming_device_id()
-            .map(str::to_string)
+        let Some((device_id, refresh_interval)) = self
+            .selected_runtime_refresh_target()
+            .map(|(device_id, interval)| (device_id.to_string(), interval))
         else {
             self.next_runtime_refresh_at = None;
             self.runtime_refresh_device_id = None;
@@ -1107,7 +1192,7 @@ impl HostDesktopApp {
         if self.next_runtime_refresh_at.is_some_and(|next| now < next) {
             return;
         }
-        self.next_runtime_refresh_at = Some(now + Self::RUNTIME_REFRESH_POLL_INTERVAL);
+        self.next_runtime_refresh_at = Some(now + refresh_interval);
 
         let Some(host_runtime) = self.host_runtime.as_mut() else {
             self.diagnostics.host_error = Some(format!(
@@ -1187,8 +1272,8 @@ impl eframe::App for HostDesktopApp {
         let mut pending_action = SessionAction::None;
         let mut launcher_action = LauncherAction::None;
 
-        if self.selected_runtime_session_is_streaming() {
-            ctx.request_repaint_after(Self::RUNTIME_REFRESH_POLL_INTERVAL);
+        if let Some((_, interval)) = self.selected_runtime_refresh_target() {
+            ctx.request_repaint_after(interval);
         }
         let now = Instant::now();
         self.poll_inventory_refresh_if_due(now);
@@ -1219,13 +1304,19 @@ impl eframe::App for HostDesktopApp {
                 viewport_id,
                 egui::ViewportBuilder::default()
                     .with_title(title)
-                    .with_inner_size([900.0, 700.0]),
+                    .with_inner_size([900.0, 700.0])
+                    .with_active(true),
                 |ctx, _class| {
                     if ctx.input(|input| input.viewport().close_requested()) {
                         self.session_window_open = false;
                         self.session_window_deferred_until_streaming = false;
+                        self.session_window_focus_requested = false;
                         self.session_window_device_id = None;
                         return;
+                    }
+                    if self.session_window_focus_requested {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        self.session_window_focus_requested = false;
                     }
 
                     egui::CentralPanel::default().show(ctx, |ui| {
@@ -1345,6 +1436,54 @@ mod tests {
         }
     }
 
+    fn direct_waiting_snapshot_without_frame() -> HostRuntimeSnapshot {
+        let status = DeviceSessionStatus::new(
+            DeviceSessionSummary {
+                device_id: "direct-receiver".into(),
+                device_name: "Direct Receiver".into(),
+                phase: SessionPhase::Connecting,
+                plugin_health: PluginHealth::Healthy,
+                capture_plugin: Some("capture.direct".into()),
+                control_plugin: Some("control.ble".into()),
+                grounding_plugin: None,
+            },
+            SessionSubstate::StartingCapture,
+            BackendSelection {
+                capture_backend: "capture.direct".into(),
+                control_backend: "control.ble".into(),
+            },
+            None,
+        )
+        .expect("valid direct waiting status");
+
+        HostRuntimeSnapshot {
+            statuses: vec![status.clone()],
+            workspace: RuntimeWorkspaceState {
+                device_id: "direct-receiver".into(),
+                summary: status.summary().clone(),
+                capture_sources: vec![ios_control_contracts::capture::VideoSource {
+                    source_id: "direct-1".into(),
+                    display_name: "Direct Receiver".into(),
+                    kind: ios_control_contracts::capture::SourceKind::DirectReceiver,
+                }],
+                capture_stream: None,
+                capture_status: None,
+                latest_frame: None,
+                selected_source_id: Some("direct-1".into()),
+                control_checklist: ios_control_contracts::control::ControlSetupChecklist {
+                    items: vec!["Pair the device".into()],
+                },
+                control_phase: ControlSessionPhase::Connected,
+                execution_observed_change: Some(true),
+                diagnostics: SessionDiagnostics {
+                    control_phase: ControlSessionPhase::Connected,
+                    control_summary: "control ready".into(),
+                    grounding_summary: Some("waiting for mirror".into()),
+                },
+            },
+        }
+    }
+
     #[test]
     fn update_requests_polling_repaint_and_surfaces_refresh_errors() {
         let mut app = app_with_runtime_without_active_session();
@@ -1386,6 +1525,35 @@ mod tests {
 
         app.poll_runtime_refresh_if_due(
             start + HostDesktopApp::RUNTIME_REFRESH_POLL_INTERVAL + Duration::from_millis(1),
+        );
+        assert!(app
+            .diagnostics
+            .host_error
+            .as_deref()
+            .is_some_and(|error| error.contains("Runtime refresh failed")));
+    }
+
+    #[test]
+    fn direct_waiting_for_first_frame_uses_slower_refresh_interval() {
+        let mut app = app_with_runtime_without_active_session();
+        app.apply_runtime_snapshot(direct_waiting_snapshot_without_frame());
+
+        let start = Instant::now();
+        app.poll_runtime_refresh_if_due(start);
+        assert!(app
+            .diagnostics
+            .host_error
+            .as_deref()
+            .is_some_and(|error| error.contains("Runtime refresh failed")));
+
+        app.diagnostics.host_error = None;
+        app.poll_runtime_refresh_if_due(start + HostDesktopApp::RUNTIME_REFRESH_POLL_INTERVAL * 2);
+        assert_eq!(app.diagnostics.host_error, None);
+
+        app.poll_runtime_refresh_if_due(
+            start
+                + HostDesktopApp::WAITING_FOR_MIRROR_REFRESH_POLL_INTERVAL
+                + Duration::from_millis(1),
         );
         assert!(app
             .diagnostics

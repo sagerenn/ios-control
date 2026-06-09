@@ -6,9 +6,9 @@ use ios_control_contracts::control::{
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -174,27 +174,17 @@ fn run_for_output(mut command: Command, context: &str) -> Result<Output> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::null());
     let mut child = command.spawn()?;
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| anyhow!("{context} missing stdout pipe"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| anyhow!("{context} missing stderr pipe"))?;
     let stdout_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut reader = stdout;
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(bytes)
-    });
-    let stderr_handle = thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut reader = stderr;
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(bytes)
+        let mut reader = BufReader::new(stdout);
+        let mut line = Vec::new();
+        reader.read_until(b'\n', &mut line)?;
+        Ok(line)
     });
 
     let timeout = helper_timeout();
@@ -202,14 +192,12 @@ fn run_for_output(mut command: Command, context: &str) -> Result<Output> {
     let stdout = stdout_handle
         .join()
         .map_err(|_| anyhow!("{context} stdout drainer panicked"))??;
-    let stderr = stderr_handle
-        .join()
-        .map_err(|_| anyhow!("{context} stderr drainer panicked"))??;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
+    Ok(Output { status, stdout })
+}
+
+struct Output {
+    status: ExitStatus,
+    stdout: Vec<u8>,
 }
 
 pub fn run_probe(helper: &Path) -> Result<BleHelperProbe> {
@@ -287,6 +275,12 @@ pub fn run_control_input(_helper: &Path, event: ControlInputEvent) -> Result<Exe
             mouse: None,
             keyboard: Some(keyboard_command(keyboard)),
         },
+        ControlInputEvent::Text(text) => HidCommand {
+            id: String::new(),
+            kind: "keyboard".into(),
+            mouse: None,
+            keyboard: Some(text_keyboard_command(&text)?),
+        },
     };
 
     let ack = enqueue_hid_command(command, Duration::from_millis(LIVE_INPUT_TIMEOUT_MS))?;
@@ -356,6 +350,97 @@ fn keyboard_command(keyboard: KeyboardInputReport) -> KeyboardCommand {
             repeat: 1,
         }],
         delay_ms: 0,
+    }
+}
+
+fn text_keyboard_command(text: &str) -> Result<KeyboardCommand> {
+    let mut reports = Vec::new();
+    let mut previous_was_cr = false;
+    for ch in text.chars() {
+        if previous_was_cr && ch == '\n' {
+            previous_was_cr = false;
+            continue;
+        }
+        previous_was_cr = ch == '\r';
+
+        if let Some((usage_id, modifiers)) = char_usage(ch) {
+            reports.push(KeyboardReport {
+                modifiers: modifier_mask(modifiers),
+                keys: vec![usage_id],
+                repeat: 1,
+            });
+            reports.push(KeyboardReport {
+                modifiers: 0,
+                keys: Vec::new(),
+                repeat: 1,
+            });
+        }
+    }
+    if reports.is_empty() {
+        return Err(anyhow!(
+            "text input has no supported BLE keyboard characters"
+        ));
+    }
+
+    Ok(KeyboardCommand {
+        reports,
+        delay_ms: 1,
+    })
+}
+
+fn char_usage(ch: char) -> Option<(u8, KeyModifiers)> {
+    let shift = |usage_id| {
+        Some((
+            usage_id,
+            KeyModifiers {
+                shift: true,
+                ..Default::default()
+            },
+        ))
+    };
+    let plain = |usage_id| Some((usage_id, KeyModifiers::default()));
+
+    match ch {
+        'a'..='z' => plain(0x04 + (ch as u8 - b'a')),
+        'A'..='Z' => shift(0x04 + (ch as u8 - b'A')),
+        '1'..='9' => plain(0x1e + (ch as u8 - b'1')),
+        '0' => plain(0x27),
+        ' ' => plain(0x2c),
+        '\n' | '\r' => plain(0x28),
+        '\t' => plain(0x2b),
+        '-' => plain(0x2d),
+        '_' => shift(0x2d),
+        '=' => plain(0x2e),
+        '+' => shift(0x2e),
+        '[' => plain(0x2f),
+        '{' => shift(0x2f),
+        ']' => plain(0x30),
+        '}' => shift(0x30),
+        '\\' => plain(0x31),
+        '|' => shift(0x31),
+        ';' => plain(0x33),
+        ':' => shift(0x33),
+        '\'' => plain(0x34),
+        '"' => shift(0x34),
+        '`' => plain(0x35),
+        '~' => shift(0x35),
+        ',' => plain(0x36),
+        '<' => shift(0x36),
+        '.' => plain(0x37),
+        '>' => shift(0x37),
+        '/' => plain(0x38),
+        '?' => shift(0x38),
+        '!' => shift(0x1e),
+        '@' => shift(0x1f),
+        '#' => shift(0x20),
+        '$' => shift(0x21),
+        '%' => shift(0x22),
+        '^' => shift(0x23),
+        '&' => shift(0x24),
+        '*' => shift(0x25),
+        '(' => shift(0x26),
+        ')' => shift(0x27),
+        _ => None,
     }
 }
 
@@ -481,5 +566,38 @@ mod live_input_tests {
 
         assert_eq!(command.reports[0].modifiers, 0x0a);
         assert_eq!(command.reports[0].keys, vec![0x04]);
+    }
+
+    #[test]
+    fn text_input_maps_ascii_to_single_keyboard_command() {
+        let command = text_keyboard_command("Az9!").unwrap();
+
+        assert_eq!(command.delay_ms, 1);
+        assert_eq!(command.reports.len(), 8);
+        assert_eq!(command.reports[0].modifiers, 0x02);
+        assert_eq!(command.reports[0].keys, vec![0x04]);
+        assert!(command.reports[1].keys.is_empty());
+        assert_eq!(command.reports[4].modifiers, 0);
+        assert_eq!(command.reports[4].keys, vec![0x26]);
+        assert_eq!(command.reports[6].modifiers, 0x02);
+        assert_eq!(command.reports[6].keys, vec![0x1e]);
+    }
+
+    #[test]
+    fn text_input_normalizes_crlf_and_skips_unsupported_characters() {
+        let command = text_keyboard_command("a\r\n\u{2603}b").unwrap();
+        let pressed = command
+            .reports
+            .iter()
+            .filter(|report| !report.keys.is_empty())
+            .map(|report| report.keys[0])
+            .collect::<Vec<_>>();
+
+        assert_eq!(pressed, vec![0x04, 0x28, 0x05]);
+    }
+
+    #[test]
+    fn text_input_rejects_empty_supported_payload() {
+        assert!(text_keyboard_command("\u{2603}").is_err());
     }
 }

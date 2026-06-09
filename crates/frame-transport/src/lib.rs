@@ -18,7 +18,11 @@ impl FrameSlot {
             .duration_since(UNIX_EPOCH)
             .context("system clock before unix epoch")?
             .as_nanos();
-        path.push(format!("ios-control-frame-slot-{}-{}.bin", std::process::id(), nonce));
+        path.push(format!(
+            "ios-control-frame-slot-{}-{}.bin",
+            std::process::id(),
+            nonce
+        ));
 
         let file = OpenOptions::new()
             .read(true)
@@ -49,6 +53,22 @@ impl FrameSlot {
         if bytes.len() != self.byte_len {
             bail!(
                 "frame size mismatch: expected {}, got {}",
+                self.byte_len,
+                bytes.len()
+            );
+        }
+        let mmap = self
+            .mmap
+            .as_mut()
+            .expect("frame slot mapping unavailable during write");
+        mmap[..bytes.len()].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    pub fn write_prefix(&mut self, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > self.byte_len {
+            bail!(
+                "frame size exceeds slot capacity: expected at most {}, got {}",
                 self.byte_len,
                 bytes.len()
             );
@@ -168,6 +188,21 @@ mod tests {
     }
 
     #[test]
+    fn write_prefix_accepts_smaller_frame_payload() {
+        let mut slot = FrameSlot::new(8).unwrap();
+        slot.write_prefix(&[1, 2, 3, 4]).unwrap();
+
+        let reader = FrameSlotReader::open(slot.path(), 4).unwrap();
+        assert_eq!(reader.read(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn write_prefix_rejects_payload_over_capacity() {
+        let mut slot = FrameSlot::new(4).unwrap();
+        assert!(slot.write_prefix(&[1, 2, 3, 4, 5]).is_err());
+    }
+
+    #[test]
     fn frame_slot_reader_reads_exact_rgba_bytes() {
         let mut slot = FrameSlot::new(8).unwrap();
         slot.write(&[255, 0, 0, 255, 0, 255, 0, 255]).unwrap();
@@ -178,6 +213,9 @@ mod tests {
 
     #[test]
     fn decode_base64_bytes_decodes_rgba_payload() {
-        assert_eq!(decode_base64_bytes("AP8A/w==").unwrap(), vec![0, 255, 0, 255]);
+        assert_eq!(
+            decode_base64_bytes("AP8A/w==").unwrap(),
+            vec![0, 255, 0, 255]
+        );
     }
 }

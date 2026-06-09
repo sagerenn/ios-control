@@ -14,6 +14,8 @@ use windows::Devices::Bluetooth::GenericAttributeProfile::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Storage::Streams::{DataWriter, IBuffer};
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const HID_SERVICE_UUID: GUID = GUID::from_u128(0x00001812_0000_1000_8000_00805f9b34fb);
@@ -476,8 +478,15 @@ impl HidMouseServer {
     }
 
     fn connected(&self) -> bool {
+        self.mouse_connected() || self.keyboard_connected()
+    }
+
+    fn mouse_connected(&self) -> bool {
         self.characteristic_connected(&self.mouse_report)
-            || self.characteristic_connected(&self.keyboard_report)
+    }
+
+    fn keyboard_connected(&self) -> bool {
+        self.characteristic_connected(&self.keyboard_report)
     }
 
     fn characteristic_connected(&self, characteristic: &GattLocalCharacteristic) -> bool {
@@ -492,10 +501,10 @@ impl HidMouseServer {
         let hid_status = self.hid_provider.AdvertisementStatus()?;
         let connected = self.connected();
         let mut notes = Vec::new();
-        if self.characteristic_connected(&self.mouse_report) {
+        if self.mouse_connected() {
             notes.push("BLE HID mouse client subscribed".to_string());
         }
-        if self.characteristic_connected(&self.keyboard_report) {
+        if self.keyboard_connected() {
             notes.push("BLE HID keyboard client subscribed".to_string());
         }
         let (phase, execute_ready, notes) = if connected {
@@ -535,7 +544,7 @@ impl HidMouseServer {
     }
 
     fn execute_pointer_demo(&self) -> Result<()> {
-        if !self.connected() {
+        if !self.mouse_connected() {
             return Err(anyhow!(
                 "BLE HID mouse has no subscribed client; pair and connect the iPhone first"
             ));
@@ -550,7 +559,7 @@ impl HidMouseServer {
     }
 
     fn execute_mouse(&self, mouse: &MouseCommand) -> Result<()> {
-        if !self.connected() {
+        if !self.mouse_connected() {
             return Err(anyhow!(
                 "BLE HID mouse has no subscribed client; pair and connect the iPhone first"
             ));
@@ -561,12 +570,7 @@ impl HidMouseServer {
 
         let delay = Duration::from_millis(mouse.delay_ms);
         for report in &mouse.reports {
-            let report_bytes = [
-                report.buttons & 0x07,
-                report.dx as u8,
-                report.dy as u8,
-                report.wheel as u8,
-            ];
+            let report_bytes = mouse_report_bytes(report);
             for _ in 0..report.repeat.max(1) {
                 let value = buffer(&report_bytes)?;
                 self.mouse_report.NotifyValueAsync(&value)?.join()?;
@@ -577,7 +581,7 @@ impl HidMouseServer {
     }
 
     fn execute_keyboard(&self, keyboard: &KeyboardCommand) -> Result<()> {
-        if !self.characteristic_connected(&self.keyboard_report) {
+        if !self.keyboard_connected() {
             return Err(anyhow!(
                 "BLE HID keyboard has no subscribed client; pair and connect the iPhone first"
             ));
@@ -588,11 +592,7 @@ impl HidMouseServer {
 
         let delay = Duration::from_millis(keyboard.delay_ms);
         for report in &keyboard.reports {
-            let mut report_bytes = [0u8; 8];
-            report_bytes[0] = report.modifiers;
-            for (index, key) in report.keys.iter().take(6).enumerate() {
-                report_bytes[index + 2] = *key;
-            }
+            let report_bytes = keyboard_report_bytes(report);
             for _ in 0..report.repeat.max(1) {
                 let value = buffer(&report_bytes)?;
                 self.keyboard_report.NotifyValueAsync(&value)?.join()?;
@@ -716,8 +716,26 @@ fn pointer_demo_reports() -> Vec<[u8; 4]> {
         reports.push([0, 0, 18, 0]);
     }
     reports.push([1, 0, 0, 0]);
-    reports.push([0, 0, 0, 0]);
+    reports.push(EMPTY_MOUSE_REPORT);
     reports
+}
+
+fn mouse_report_bytes(report: &MouseReport) -> [u8; 4] {
+    [
+        report.buttons & 0x07,
+        report.dx as u8,
+        report.dy as u8,
+        report.wheel as u8,
+    ]
+}
+
+fn keyboard_report_bytes(report: &KeyboardReport) -> [u8; 8] {
+    let mut report_bytes = [0u8; 8];
+    report_bytes[0] = report.modifiers;
+    for (index, key) in report.keys.iter().take(6).enumerate() {
+        report_bytes[index + 2] = *key;
+    }
+    report_bytes
 }
 
 fn enqueue_command(paths: &HidPaths, kind: &str, timeout: Duration) -> Result<HidAck> {
@@ -788,15 +806,42 @@ fn process_exists(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    std::process::Command::new("cmd")
-        .args([
-            "/C",
-            &format!("tasklist /FI \"PID eq {pid}\" | findstr /R \"^[^ ]* *{pid} \""),
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .is_ok_and(|status| status.success())
+    unsafe {
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_report_notification_omits_report_id() {
+        let bytes = mouse_report_bytes(&MouseReport {
+            buttons: 0x09,
+            dx: -2,
+            dy: 3,
+            wheel: -1,
+            repeat: 1,
+        });
+
+        assert_eq!(bytes, [0x01, 0xfe, 0x03, 0xff]);
+    }
+
+    #[test]
+    fn keyboard_report_notification_omits_report_id() {
+        let bytes = keyboard_report_bytes(&KeyboardReport {
+            modifiers: 0x08,
+            keys: vec![0x16, 0x04],
+            repeat: 1,
+        });
+
+        assert_eq!(bytes, [0x08, 0x00, 0x16, 0x04, 0x00, 0x00, 0x00, 0x00]);
+    }
 }

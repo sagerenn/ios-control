@@ -2,46 +2,53 @@ use anyhow::{anyhow, Context, Result};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
+use crate::airplay_mdns::{AirPlayMdnsConfig, AirPlayMdnsPublisher};
 use crate::direct_status::DirectCaptureStatus;
 use crate::rtp_audio;
 use crate::rtp_video::{self, DecodedFrame};
 use crate::runtime_bundle::{DirectRuntimeBundle, BLE_PATH_ENV, RUNTIME_ROOT_ENV};
 
-const FRAME_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
-const FRAME_WAIT_POLL: Duration = Duration::from_millis(50);
+const MIRROR_REQUEST_SIZE: &str = "1080x1920";
+const AIRPLAY_PORT_BASE: &str = "52081";
+const AIRPLAY_RTSP_PORT: u16 = 52082;
+const AIRPLAY_DEVICE_ID_ENV: &str = "IOS_CONTROL_AIRPLAY_DEVICE_ID";
+const AIRPLAY_DISPLAY_NAME_ENV: &str = "IOS_CONTROL_AIRPLAY_DISPLAY_NAME";
 
 pub struct DirectRuntimeSession {
     _session_dir: TempDir,
-    frame_dir: PathBuf,
     ble_path: PathBuf,
     video_receiver: Child,
+    video_frames: rtp_video::RawFrameReader,
     audio_receiver: Child,
     beacon: Child,
     uxplay: Child,
+    mdns: AirPlayMdnsPublisher,
+    receiver_name: String,
     last_frame_index: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AirPlayIdentity {
+    device_id: String,
+    name: String,
 }
 
 impl DirectRuntimeSession {
     pub fn start(bundle: &DirectRuntimeBundle, status: &mut DirectCaptureStatus) -> Result<Self> {
         let session_dir = tempfile::tempdir().context("failed to create direct session dir")?;
-        let frame_dir = session_dir.path().join("frames");
-        std::fs::create_dir_all(&frame_dir)?;
         let ble_path = session_dir.path().join("uxplay.ble");
         let video_port = reserve_udp_port()?;
         let audio_port = reserve_udp_port()?;
-        let frame_pattern = frame_dir.join("frame-%09d.png");
+        let frame_config = rtp_video::LiveFrameConfig::from_env();
+        let identity = airplay_identity();
 
-        let video_receiver = spawn_child(
+        let (video_receiver, video_frames) = spawn_video_receiver(
             &bundle.gst_launch_path,
-            &rtp_video::receiver_args(video_port, &frame_pattern),
+            &rtp_video::receiver_args(video_port, frame_config),
             bundle,
-            Some((
-                "IOS_CONTROL_DIRECT_FRAME_PATTERN",
-                frame_pattern.as_os_str(),
-            )),
         )
         .context("failed to launch video receiver")?;
         let audio_receiver = spawn_child(
@@ -53,42 +60,59 @@ impl DirectRuntimeSession {
         .context("failed to launch audio receiver")?;
 
         let beacon = spawn_beacon(bundle, &ble_path).context("failed to launch beacon helper")?;
-        let uxplay = spawn_uxplay(bundle, &ble_path, video_port, audio_port)
-            .context("failed to launch uxplay")?;
+        let uxplay_stdout_log_path = session_dir.path().join("uxplay.stdout.log");
+        let uxplay_stderr_log_path = session_dir.path().join("uxplay.stderr.log");
+        let uxplay = spawn_uxplay(
+            bundle,
+            &ble_path,
+            &identity,
+            video_port,
+            audio_port,
+            &uxplay_stdout_log_path,
+            &uxplay_stderr_log_path,
+        )
+        .context("failed to launch uxplay")?;
+        let mdns = AirPlayMdnsPublisher::start(AirPlayMdnsConfig {
+            receiver_name: identity.name.clone(),
+            device_id: identity.device_id.clone(),
+            rtsp_port: AIRPLAY_RTSP_PORT,
+        });
 
         status.waiting_for_runtime_frame();
+        status.detail = Some(format!(
+            "Waiting for iPhone screen mirroring to {}",
+            identity.name
+        ));
         status.audio_route = ios_control_contracts::capture::AudioRoute::LocalPlayback;
         status.audio_active = true;
         status.audio_phase = ios_control_contracts::capture::AudioStreamPhase::Waiting;
 
         Ok(Self {
             _session_dir: session_dir,
-            frame_dir,
             ble_path,
             video_receiver,
+            video_frames,
             audio_receiver,
             beacon,
             uxplay,
+            mdns,
+            receiver_name: identity.name,
             last_frame_index: 0,
         })
     }
 
     pub fn next_frame(&mut self) -> Result<Option<DecodedFrame>> {
-        let start = Instant::now();
-        while start.elapsed() < FRAME_WAIT_TIMEOUT {
-            if let Some(frame) = rtp_video::next_frame(&self.frame_dir, &mut self.last_frame_index)?
-            {
-                return Ok(Some(frame));
-            }
-            if self.uxplay.try_wait()?.is_some() {
-                return Err(anyhow!("uxplay exited before a frame was produced"));
-            }
-            if let Some(exit) = self.video_receiver.try_wait()? {
-                return Err(anyhow!(
-                    "video receiver exited with status {exit} before a frame was produced"
-                ));
-            }
-            std::thread::sleep(FRAME_WAIT_POLL);
+        if let Some(frame) = self.video_frames.take_latest_after(self.last_frame_index)? {
+            self.last_frame_index = frame.frame_index;
+            return Ok(Some(frame));
+        }
+        if self.uxplay.try_wait()?.is_some() {
+            return Err(anyhow!("uxplay exited before a frame was produced"));
+        }
+        if let Some(exit) = self.video_receiver.try_wait()? {
+            return Err(anyhow!(
+                "video receiver exited with status {exit} before a frame was produced"
+            ));
         }
         Ok(None)
     }
@@ -111,15 +135,20 @@ impl DirectRuntimeSession {
             status.detail = Some(format!("Beacon helper exited with status {exit}"));
         }
         if self.ble_path.is_file() && status.detail.is_none() {
-            status.detail = Some("Waiting for forwarded frame data".into());
+            status.detail = Some(format!(
+                "Waiting for iPhone screen mirroring to {}",
+                self.receiver_name
+            ));
         }
         Ok(())
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
+        self.mdns.shutdown();
         let _ = kill_child(&mut self.uxplay);
         let _ = kill_child(&mut self.beacon);
         let _ = kill_child(&mut self.video_receiver);
+        self.video_frames.join();
         let _ = kill_child(&mut self.audio_receiver);
         Ok(())
     }
@@ -148,33 +177,105 @@ fn spawn_beacon(bundle: &DirectRuntimeBundle, ble_path: &std::path::Path) -> Res
 fn spawn_uxplay(
     bundle: &DirectRuntimeBundle,
     ble_path: &std::path::Path,
+    identity: &AirPlayIdentity,
     video_port: u16,
     audio_port: u16,
+    stdout_log_path: &std::path::Path,
+    stderr_log_path: &std::path::Path,
 ) -> Result<Child> {
-    let video_pipeline = format!("config-interval=1 ! udpsink host=127.0.0.1 port={video_port}");
-    let audio_pipeline = format!("pt=96 ! udpsink host=127.0.0.1 port={audio_port}");
+    let video_pipeline = format!(
+        "pt=96 config-interval=1 ! udpsink host=127.0.0.1 port={video_port} sync=false async=false"
+    );
+    let audio_pipeline =
+        format!("pt=96 ! udpsink host=127.0.0.1 port={audio_port} sync=false async=false");
+    let stdout_log = std::fs::File::create(stdout_log_path)
+        .with_context(|| format!("failed to create {}", stdout_log_path.display()))?;
+    let stderr_log = std::fs::File::create(stderr_log_path)
+        .with_context(|| format!("failed to create {}", stderr_log_path.display()))?;
     let mut command = Command::new(&bundle.uxplay_path);
     command
-        .args([
-            "-n",
-            "UxPlay receiver",
-            "-nh",
-            "-vs",
-            "fakesink",
-            "-ble",
-            ble_path
-                .to_str()
-                .ok_or_else(|| anyhow!("invalid ble path"))?,
-            "-vrtp",
+        .args(uxplay_args(
+            identity,
+            ble_path,
             &video_pipeline,
-            "-artp",
             &audio_pipeline,
-        ])
+        )?)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log));
     apply_runtime_env(&mut command, bundle);
     command.spawn().context("failed to spawn uxplay")
+}
+
+fn uxplay_args(
+    identity: &AirPlayIdentity,
+    ble_path: &std::path::Path,
+    video_pipeline: &str,
+    audio_pipeline: &str,
+) -> Result<Vec<String>> {
+    Ok(vec![
+        "-n".into(),
+        identity.name.clone(),
+        "-nh".into(),
+        "-m".into(),
+        identity.device_id.clone(),
+        "-s".into(),
+        MIRROR_REQUEST_SIZE.into(),
+        "-p".into(),
+        AIRPLAY_PORT_BASE.into(),
+        "-vs".into(),
+        "fakesink".into(),
+        "-ble".into(),
+        ble_path
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid ble path"))?
+            .into(),
+        "-vrtp".into(),
+        video_pipeline.into(),
+        "-artp".into(),
+        audio_pipeline.into(),
+    ])
+}
+
+fn airplay_identity() -> AirPlayIdentity {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let seed = nanos ^ u128::from(std::process::id());
+    let bytes = [
+        0x02_u8,
+        ((seed >> 32) & 0xff) as u8,
+        ((seed >> 24) & 0xff) as u8,
+        ((seed >> 16) & 0xff) as u8,
+        ((seed >> 8) & 0xff) as u8,
+        (seed & 0xff) as u8,
+    ];
+    let generated_device_id = format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+    );
+    let device_id = non_empty_env(AIRPLAY_DEVICE_ID_ENV).unwrap_or(generated_device_id);
+    let suffix = device_id
+        .split(':')
+        .rev()
+        .take(2)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let name =
+        non_empty_env(AIRPLAY_DISPLAY_NAME_ENV).unwrap_or_else(|| format!("iOS Control {suffix}"));
+
+    AirPlayIdentity { device_id, name }
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn spawn_child(
@@ -198,6 +299,30 @@ fn spawn_child(
         .with_context(|| format!("failed to spawn {}", bundle_exe.display()))
 }
 
+fn spawn_video_receiver(
+    bundle_exe: &std::path::Path,
+    args: &[String],
+    bundle: &DirectRuntimeBundle,
+) -> Result<(Child, rtp_video::RawFrameReader)> {
+    let mut command = Command::new(bundle_exe);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    apply_runtime_env(&mut command, bundle);
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", bundle_exe.display()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("video receiver missing stdout pipe"))?;
+    let frame_config = rtp_video::LiveFrameConfig::from_env();
+    let reader = rtp_video::RawFrameReader::start(stdout, frame_config)?;
+    Ok((child, reader))
+}
+
 fn apply_runtime_env(command: &mut Command, bundle: &DirectRuntimeBundle) {
     bundle.apply_runtime_env(command);
 }
@@ -208,4 +333,46 @@ fn kill_child(child: &mut Child) -> Result<()> {
     }
     let _ = child.wait();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        uxplay_args, AirPlayIdentity, AIRPLAY_PORT_BASE, AIRPLAY_RTSP_PORT, MIRROR_REQUEST_SIZE,
+    };
+
+    #[test]
+    fn uxplay_args_keep_receiver_headless_without_aggressive_session_resets() {
+        let identity = AirPlayIdentity {
+            device_id: "02:11:22:33:44:55".into(),
+            name: "iOS Control 4455".into(),
+        };
+        let args = uxplay_args(
+            &identity,
+            std::path::Path::new("uxplay.ble"),
+            "pt=96 config-interval=1 ! udpsink host=127.0.0.1 port=50000 sync=false async=false",
+            "pt=96 ! udpsink host=127.0.0.1 port=50001 sync=false async=false",
+        )
+        .unwrap();
+
+        assert_eq!(args[0..2], ["-n", "iOS Control 4455"]);
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-m", "02:11:22:33:44:55"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-s", MIRROR_REQUEST_SIZE]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-p", AIRPLAY_PORT_BASE]));
+        assert_eq!(AIRPLAY_RTSP_PORT, 52082);
+        assert!(args.windows(2).any(|pair| pair == ["-vs", "fakesink"]));
+        assert!(args.iter().any(|arg| arg == "-vrtp"));
+        assert!(args.iter().any(|arg| arg == "-artp"));
+        assert!(!args.iter().any(|arg| arg == "-reset"));
+        assert!(!args.iter().any(|arg| arg == "-nohold"));
+        assert!(!args.iter().any(|arg| arg == "-nofreeze"));
+        assert!(!args.iter().any(|arg| arg == "-FPSdata"));
+        assert!(!args.windows(2).any(|pair| pair == ["-d", "1"]));
+    }
 }

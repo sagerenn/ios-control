@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 pub const DIRECT_RUNTIME_ROOT_ENV: &str = "IOS_CONTROL_DIRECT_RUNTIME_ROOT";
 pub const RUNTIME_ROOT_ENV: &str = DIRECT_RUNTIME_ROOT_ENV;
@@ -111,18 +111,13 @@ impl DirectRuntimeBundle {
     }
 
     pub fn probe(&self) -> Result<()> {
-        let mut command = Command::new(&self.uxplay_path);
-        command
-            .arg("--help")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        self.apply_runtime_env(&mut command);
-        let status = command.status()?;
-        if status.success() {
+        if self.uxplay_path.is_file()
+            && self.gst_launch_path.is_file()
+            && self.beacon_helper_path.is_file()
+        {
             Ok(())
         } else {
-            Err(anyhow!("uxplay probe failed with status {status}"))
+            Err(anyhow!("direct runtime bundle is incomplete"))
         }
     }
 
@@ -135,7 +130,7 @@ impl DirectRuntimeBundle {
             if gst_bin.is_dir() {
                 path_entries.push(gst_bin);
             }
-            let path = std::env::var_os("PATH").unwrap_or_default();
+            let path = sanitized_windows_path(std::env::var_os("PATH").unwrap_or_default());
             let mut composed = std::ffi::OsString::new();
             for (index, entry) in path_entries.into_iter().enumerate() {
                 if index > 0 {
@@ -174,4 +169,15 @@ impl DirectRuntimeBundle {
             }
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn sanitized_windows_path(path: std::ffi::OsString) -> std::ffi::OsString {
+    let entries = std::env::split_paths(&path)
+        .filter(|entry| {
+            let lowered = entry.to_string_lossy().to_ascii_lowercase();
+            !lowered.contains(r"program files\multipass\bin")
+        })
+        .collect::<Vec<_>>();
+    std::env::join_paths(entries).unwrap_or(path)
 }

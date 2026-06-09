@@ -5,7 +5,10 @@ use std::error::Error;
 use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
-use plugin_capture_direct::backend::{allocate_mock_slot, mock_frame, DIRECT_HEIGHT, DIRECT_WIDTH};
+use plugin_capture_direct::backend::{
+    allocate_mock_slot, mock_frame, mock_frame_bytes, DIRECT_HEIGHT, DIRECT_SLOT_BYTES,
+    DIRECT_WIDTH,
+};
 use plugin_capture_direct::direct_status::DirectCaptureStatus;
 use plugin_capture_direct::helper_launcher::{
     capture_capability, find_helper, read_next_frame_event, run_probe,
@@ -15,7 +18,7 @@ use plugin_capture_direct::uxplay_launcher::DirectRuntimeSession;
 
 const PROTOCOL_VERSION: u32 = 3;
 const SOURCE_ID: &str = "direct-1";
-const SLOT_BYTES: u32 = DIRECT_WIDTH * DIRECT_HEIGHT * 4;
+const SLOT_BYTES: u32 = DIRECT_SLOT_BYTES;
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 struct StreamState {
@@ -257,18 +260,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 continue;
                             }
                         };
-                        if bytes.len() != state.slot.byte_len() {
+                        let expected_bytes = match frame_byte_len(event.width, event.height) {
+                            Some(byte_len) => byte_len,
+                            None => {
+                                let reply = PluginToHost::Error {
+                                    message: "helper frame dimensions overflow byte length".into(),
+                                };
+                                write_reply(&mut stdout, &reply)?;
+                                continue;
+                            }
+                        };
+                        if bytes.len() != expected_bytes {
                             let reply = PluginToHost::Error {
                                 message: format!(
                                     "helper frame payload size mismatch: expected {}, got {}",
-                                    state.slot.byte_len(),
+                                    expected_bytes,
                                     bytes.len()
                                 ),
                             };
                             write_reply(&mut stdout, &reply)?;
                             continue;
                         }
-                        if let Err(err) = state.slot.write(&bytes) {
+                        if let Err(err) = state.slot.write_prefix(&bytes) {
                             let reply = PluginToHost::Error {
                                 message: format!("failed to write frame slot: {}", err),
                             };
@@ -295,7 +308,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             Ok(Some(frame)) => frame,
                             Ok(None) => {
                                 let reply = PluginToHost::Error {
-                                    message: "direct runtime frame wait timed out".into(),
+                                    message: "direct runtime frame not ready".into(),
                                 };
                                 write_reply(&mut stdout, &reply)?;
                                 continue;
@@ -308,14 +321,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 continue;
                             }
                         };
-                        if let Err(err) = state.slot.write(&decoded.rgba) {
+                        if let Err(err) = state.slot.write_prefix(&decoded.rgba) {
                             let reply = PluginToHost::Error {
                                 message: format!("failed to write runtime frame slot: {}", err),
                             };
                             write_reply(&mut stdout, &reply)?;
                             continue;
                         }
-                        let frame = mock_frame(&state.source_id, decoded.frame_index);
+                        append_direct_debug_line(&format!(
+                            "runtime slot write frame {}",
+                            decoded.frame_index
+                        ));
+                        let mut frame = mock_frame(&state.source_id, decoded.frame_index);
+                        frame.width = decoded.width;
+                        frame.height = decoded.height;
                         direct_status.streaming(frame.health);
                         frame
                     }
@@ -375,11 +394,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                 };
-                if bytes.len() != SLOT_BYTES as usize {
+                let expected_bytes = match frame_byte_len(event.width, event.height) {
+                    Some(byte_len) => byte_len,
+                    None => {
+                        let reply = PluginToHost::Error {
+                            message: "helper frame dimensions overflow byte length".into(),
+                        };
+                        write_reply(&mut stdout, &reply)?;
+                        continue;
+                    }
+                };
+                if bytes.len() != expected_bytes {
                     let reply = PluginToHost::Error {
                         message: format!(
                             "helper frame payload size mismatch: expected {}, got {}",
-                            SLOT_BYTES,
+                            expected_bytes,
                             bytes.len()
                         ),
                     };
@@ -432,7 +461,7 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
             let _ = args.next();
             let _ = args.next();
             maybe_delay_first_stream_once()?;
-            let rgba = encode_base64_bytes(&vec![64_u8; SLOT_BYTES as usize]);
+            let rgba = encode_base64_bytes(&mock_frame_bytes());
             let payload = serde_json::json!({
                 "frame_index": 1_u64,
                 "width": DIRECT_WIDTH,
@@ -445,6 +474,29 @@ fn run_helper_mode() -> Result<bool, Box<dyn Error>> {
             Ok(true)
         }
         _ => Ok(false),
+    }
+}
+
+fn frame_byte_len(width: u32, height: u32) -> Option<usize> {
+    (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+}
+
+fn append_direct_debug_line(line: &str) {
+    if std::env::var_os("IOS_CONTROL_DIRECT_DEBUG_LOG").is_none() {
+        return;
+    }
+    let path = std::env::temp_dir().join(format!(
+        "ios-control-capture-direct-{}.log",
+        std::process::id()
+    ));
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{line}");
     }
 }
 

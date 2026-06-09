@@ -1,3 +1,4 @@
+use ios_control_contracts::control::ControlSessionPhase;
 use ios_control_contracts::plugin::PluginHealth;
 use ios_control_contracts::session::SessionPhase;
 use ios_control_session_orchestrator::{
@@ -297,10 +298,15 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
     let root = workspace_root();
     build_plugins(&root);
     let direct_plugin = plugin_path(&root, "plugin-capture-direct");
-    let _env = EnvVarGuards::new(vec![EnvVarGuard::set(
-        "IOS_CONTROL_DIRECT_RECEIVER_HELPER",
-        &direct_plugin,
-    )]);
+    let helper = write_ble_helper(
+        r#"{"supported":true,"supports_prepare":true,"supports_execute":true,"supports_status":true,"supports_stop":true,"supports_forget_bond":true}"#,
+        r#"{"phase":"Advertising","checklist":["Enable Bluetooth"],"notes":["Waiting for iPhone"]}"#,
+        r#"{"phase":"Succeeded","summary":"input applied","observed_change":true}"#,
+    );
+    let _env = EnvVarGuards::new(vec![
+        EnvVarGuard::set("IOS_CONTROL_DIRECT_RECEIVER_HELPER", &direct_plugin),
+        EnvVarGuard::set("IOS_CONTROL_BLE_HELPER", &helper),
+    ]);
 
     let mut orchestrator = SessionOrchestrator::default();
     let state = orchestrator
@@ -327,10 +333,19 @@ async fn start_session_with_direct_backend_uses_capture_direct_plugin() {
     );
     assert_eq!(state.selected_source_id.as_deref(), Some("direct-1"));
     assert_eq!(
+        state.diagnostics.control_phase,
+        ControlSessionPhase::Advertising
+    );
+    assert!(state
+        .control_checklist
+        .items
+        .iter()
+        .any(|item| item == "Enable Bluetooth"));
+    assert_eq!(
         state
-            .latest_frame
+            .capture_stream
             .as_ref()
-            .map(|frame| frame.source_id.as_str()),
+            .map(|stream| stream.source_id.as_str()),
         Some("direct-1")
     );
 

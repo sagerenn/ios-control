@@ -13,7 +13,11 @@ pub fn command_for_plan(source_id: &str, plan: &GroundingPlan) -> Result<WindowB
 
     let args = match plan.kind {
         PlanKind::Pointer => vec!["--source".into(), source_id.into(), "--pointer-plan".into()],
-        PlanKind::Keyboard => vec!["--source".into(), source_id.into(), "--keyboard-plan".into()],
+        PlanKind::Keyboard => vec![
+            "--source".into(),
+            source_id.into(),
+            "--keyboard-plan".into(),
+        ],
         PlanKind::Hybrid => vec!["--source".into(), source_id.into(), "--hybrid-plan".into()],
     };
 

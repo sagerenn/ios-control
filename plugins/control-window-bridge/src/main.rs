@@ -6,8 +6,7 @@ use ios_control_plugin_protocol::{HostToPlugin, PluginDescriptor, PluginKind, Pl
 use plugin_control_window_bridge::backend::command_for_plan;
 use plugin_control_window_bridge::helper_launcher::{
     find_helper, helper_available, helper_is_executable, launch_helper_json,
-    run_embedded_helper_mode,
-    should_run_embedded_helper_mode,
+    run_embedded_helper_mode, should_run_embedded_helper_mode,
 };
 use std::error::Error;
 use std::io::{self, BufRead, Write};
@@ -131,20 +130,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             HostToPlugin::ExecutePlan { plan } => {
                 let summary = match (find_helper(), command_for_plan("window-helper-1", &plan)) {
-                    (Some(helper), Ok(command)) => match launch_helper_json(helper, &command.args) {
-                        Ok(execution) => ExecutionSummary {
-                            summary: execution.summary,
-                            phase: map_execution_phase(&execution.phase),
-                            observed_change: execution.observed_change,
-                            failure_reason: execution.failure_reason,
-                        },
-                        Err(err) => ExecutionSummary {
-                            summary: "window bridge execution failed".into(),
-                            phase: ExecutionPhase::Failed,
-                            observed_change: None,
-                            failure_reason: Some(err.to_string()),
-                        },
-                    },
+                    (Some(helper), Ok(command)) => {
+                        match launch_helper_json(helper, &command.args) {
+                            Ok(execution) => ExecutionSummary {
+                                summary: execution.summary,
+                                phase: map_execution_phase(&execution.phase),
+                                observed_change: execution.observed_change,
+                                failure_reason: execution.failure_reason,
+                            },
+                            Err(err) => ExecutionSummary {
+                                summary: "window bridge execution failed".into(),
+                                phase: ExecutionPhase::Failed,
+                                observed_change: None,
+                                failure_reason: Some(err.to_string()),
+                            },
+                        }
+                    }
                     (_, Err(err)) => ExecutionSummary {
                         summary: "window bridge execution failed".into(),
                         phase: ExecutionPhase::Failed,

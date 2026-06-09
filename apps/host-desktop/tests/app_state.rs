@@ -519,7 +519,7 @@ fn host_app_opens_blocked_session_window_for_not_startable_launcher_device() {
 }
 
 #[test]
-fn host_app_defers_startable_session_window_until_direct_frame_is_live() {
+fn host_app_opens_startable_session_window_while_waiting_for_direct_frame() {
     let mut fixture = host_app_with_runtime_and_waiting_direct_helper();
     fixture
         .app
@@ -532,7 +532,7 @@ fn host_app_defers_startable_session_window_until_direct_frame_is_live() {
         fixture.app.session.ui_state,
         SessionUiState::WaitingForMirror
     ));
-    assert!(!fixture.app.session_window_is_visible());
+    assert!(fixture.app.session_window_is_visible());
 
     fixture
         .app

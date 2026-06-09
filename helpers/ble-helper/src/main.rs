@@ -85,6 +85,24 @@ fn main() -> Result<()> {
         }
         #[cfg(not(target_os = "windows"))]
         "open-safari" => return Err(anyhow!("open-safari command is supported only on Windows")),
+        #[cfg(target_os = "windows")]
+        "safari-search" => {
+            let keyboard = parse_safari_search_command(args)?;
+            execute_keyboard_command(keyboard)?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        "safari-search" => {
+            return Err(anyhow!(
+                "safari-search command is supported only on Windows"
+            ))
+        }
+        #[cfg(target_os = "windows")]
+        "type-text" => {
+            let keyboard = parse_type_text_command(args)?;
+            execute_keyboard_command(keyboard)?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        "type-text" => return Err(anyhow!("type-text command is supported only on Windows")),
         "execute" => {
             let plan_kind = parse_plan_kind(args)?;
             let state = derive_runtime_state(load_state()?, false);
@@ -437,6 +455,118 @@ fn open_safari_keyboard_command() -> ble_helper::windows_hid::KeyboardCommand {
 }
 
 #[cfg(target_os = "windows")]
+fn parse_type_text_command(
+    mut args: impl Iterator<Item = String>,
+) -> Result<ble_helper::windows_hid::KeyboardCommand> {
+    let mut text_parts = Vec::new();
+    let mut enter = false;
+    let mut delay_ms = 35_u64;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--enter" => enter = true,
+            "--delay-ms" => delay_ms = parse_delay_arg(args.next())?,
+            _ => text_parts.push(arg),
+        }
+    }
+
+    if text_parts.is_empty() {
+        return Err(anyhow!("type-text requires text"));
+    }
+
+    text_keyboard_command(&text_parts.join(" "), enter, delay_ms)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_safari_search_command(
+    args: impl Iterator<Item = String>,
+) -> Result<ble_helper::windows_hid::KeyboardCommand> {
+    let query = args.collect::<Vec<_>>().join(" ");
+    if query.is_empty() {
+        return Err(anyhow!("safari-search requires a query"));
+    }
+    safari_search_keyboard_command(&query)
+}
+
+#[cfg(target_os = "windows")]
+fn safari_search_keyboard_command(query: &str) -> Result<ble_helper::windows_hid::KeyboardCommand> {
+    const MOD_CMD: u8 = 0x08;
+    const KEY_L: u8 = 0x0f;
+
+    let mut command = text_keyboard_command(query, true, 45)?;
+    let mut reports = Vec::new();
+    push_key(&mut reports, MOD_CMD, KEY_L);
+    push_pause(&mut reports, 5);
+    reports.append(&mut command.reports);
+    command.reports = reports;
+    Ok(command)
+}
+
+#[cfg(target_os = "windows")]
+fn text_keyboard_command(
+    text: &str,
+    enter: bool,
+    delay_ms: u64,
+) -> Result<ble_helper::windows_hid::KeyboardCommand> {
+    let mut reports = Vec::new();
+    for ch in text.chars() {
+        let (modifiers, key) = hid_key_for_ascii(ch)
+            .ok_or_else(|| anyhow!("unsupported type-text character: {ch:?}"))?;
+        push_key(&mut reports, modifiers, key);
+    }
+    if enter {
+        push_key(&mut reports, 0, 0x28);
+    }
+
+    Ok(ble_helper::windows_hid::KeyboardCommand { reports, delay_ms })
+}
+
+#[cfg(target_os = "windows")]
+fn hid_key_for_ascii(ch: char) -> Option<(u8, u8)> {
+    const MOD_SHIFT: u8 = 0x02;
+    match ch {
+        'a'..='z' => Some((0, 0x04 + (ch as u8 - b'a'))),
+        'A'..='Z' => Some((MOD_SHIFT, 0x04 + (ch as u8 - b'A'))),
+        '1'..='9' => Some((0, 0x1e + (ch as u8 - b'1'))),
+        '0' => Some((0, 0x27)),
+        ' ' => Some((0, 0x2c)),
+        '-' => Some((0, 0x2d)),
+        '_' => Some((MOD_SHIFT, 0x2d)),
+        '=' => Some((0, 0x2e)),
+        '+' => Some((MOD_SHIFT, 0x2e)),
+        '[' => Some((0, 0x2f)),
+        '{' => Some((MOD_SHIFT, 0x2f)),
+        ']' => Some((0, 0x30)),
+        '}' => Some((MOD_SHIFT, 0x30)),
+        '\\' => Some((0, 0x31)),
+        '|' => Some((MOD_SHIFT, 0x31)),
+        ';' => Some((0, 0x33)),
+        ':' => Some((MOD_SHIFT, 0x33)),
+        '\'' => Some((0, 0x34)),
+        '"' => Some((MOD_SHIFT, 0x34)),
+        '`' => Some((0, 0x35)),
+        '~' => Some((MOD_SHIFT, 0x35)),
+        ',' => Some((0, 0x36)),
+        '<' => Some((MOD_SHIFT, 0x36)),
+        '.' => Some((0, 0x37)),
+        '>' => Some((MOD_SHIFT, 0x37)),
+        '/' => Some((0, 0x38)),
+        '?' => Some((MOD_SHIFT, 0x38)),
+        '!' => Some((MOD_SHIFT, 0x1e)),
+        '@' => Some((MOD_SHIFT, 0x1f)),
+        '#' => Some((MOD_SHIFT, 0x20)),
+        '$' => Some((MOD_SHIFT, 0x21)),
+        '%' => Some((MOD_SHIFT, 0x22)),
+        '^' => Some((MOD_SHIFT, 0x23)),
+        '&' => Some((MOD_SHIFT, 0x24)),
+        '*' => Some((MOD_SHIFT, 0x25)),
+        '(' => Some((MOD_SHIFT, 0x26)),
+        ')' => Some((MOD_SHIFT, 0x27)),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn push_key(reports: &mut Vec<ble_helper::windows_hid::KeyboardReport>, modifiers: u8, key: u8) {
     reports.push(ble_helper::windows_hid::KeyboardReport {
         modifiers,
@@ -444,6 +574,47 @@ fn push_key(reports: &mut Vec<ble_helper::windows_hid::KeyboardReport>, modifier
         repeat: 1,
     });
     push_pause(reports, 1);
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_keyboard_command_maps_earthquake_and_enter() {
+        let command = text_keyboard_command("earthquake", true, 35).unwrap();
+        let pressed = command
+            .reports
+            .iter()
+            .filter(|report| !report.keys.is_empty())
+            .map(|report| report.keys[0])
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            pressed,
+            vec![0x08, 0x04, 0x15, 0x17, 0x0b, 0x14, 0x18, 0x04, 0x0e, 0x08, 0x28]
+        );
+        assert_eq!(command.delay_ms, 35);
+    }
+
+    #[test]
+    fn type_text_rejects_unsupported_characters() {
+        assert!(text_keyboard_command("snowman \u{2603}", false, 35).is_err());
+    }
+
+    #[test]
+    fn safari_search_focuses_address_field_then_types_query() {
+        let command = safari_search_keyboard_command("earthquake").unwrap();
+        let pressed = command
+            .reports
+            .iter()
+            .filter(|report| !report.keys.is_empty())
+            .map(|report| (report.modifiers, report.keys[0]))
+            .collect::<Vec<_>>();
+
+        assert_eq!(pressed[0], (0x08, 0x0f));
+        assert_eq!(pressed.last().copied(), Some((0, 0x28)));
+    }
 }
 
 #[cfg(target_os = "windows")]

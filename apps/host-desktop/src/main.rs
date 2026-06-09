@@ -30,13 +30,8 @@ fn main() -> eframe::Result<()> {
             };
             app.apply_startup_view(startup.clone());
 
-            let mut should_start_on_launch = false;
             if let Ok(device_id) = std::env::var("IOS_CONTROL_PENDING_START_DEVICE") {
-                app.select_device(&device_id);
-                should_start_on_launch = true;
-            }
-            if should_start_on_launch {
-                app.start_runtime_session_on_launch();
+                app.set_pending_start_device(device_id);
             }
             Ok(Box::new(app))
         }),

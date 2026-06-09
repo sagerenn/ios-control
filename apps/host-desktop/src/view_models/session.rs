@@ -16,6 +16,7 @@ pub struct SessionViewModel {
     pub ui_state: SessionUiState,
     pub selected_source: Option<CaptureSourceOption>,
     pub latest_frame: Option<VideoFrameDescriptor>,
+    pub status_detail: Option<String>,
     pub start_enabled: bool,
 }
 
@@ -25,6 +26,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Idle,
             selected_source: None,
             latest_frame: None,
+            status_detail: None,
             start_enabled: false,
         }
     }
@@ -34,6 +36,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Idle,
             selected_source,
             latest_frame: None,
+            status_detail: None,
             start_enabled: true,
         }
     }
@@ -43,6 +46,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Starting,
             selected_source: None,
             latest_frame: None,
+            status_detail: None,
             start_enabled: false,
         }
     }
@@ -52,6 +56,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::WaitingForMirror,
             selected_source,
             latest_frame: None,
+            status_detail: None,
             start_enabled: false,
         }
     }
@@ -64,6 +69,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Streaming,
             selected_source: Some(selected_source),
             latest_frame: Some(latest_frame),
+            status_detail: None,
             start_enabled: false,
         }
     }
@@ -73,6 +79,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Streaming,
             selected_source: Some(selected_source),
             latest_frame: None,
+            status_detail: None,
             start_enabled: false,
         }
     }
@@ -82,6 +89,7 @@ impl SessionViewModel {
             ui_state: SessionUiState::Error(message.into()),
             selected_source: None,
             latest_frame: None,
+            status_detail: None,
             start_enabled: true,
         }
     }
@@ -95,8 +103,14 @@ impl SessionViewModel {
             ui_state: SessionUiState::Blocked(message.into()),
             selected_source,
             latest_frame: None,
+            status_detail: None,
             start_enabled,
         }
+    }
+
+    pub fn with_status_detail(mut self, detail: Option<String>) -> Self {
+        self.status_detail = detail;
+        self
     }
 
     pub fn can_start(&self) -> bool {

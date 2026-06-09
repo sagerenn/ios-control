@@ -1,15 +1,22 @@
-use ios_control_contracts::grounding::{GroundingPlan, PlanKind};
 use ios_control_contracts::control::ControlSessionPhase;
+use ios_control_contracts::grounding::{GroundingPlan, PlanKind};
 use ios_control_plugin_protocol::{HostToPlugin, PluginToHost};
 use plugin_control_window_bridge::backend::command_for_plan;
-use plugin_control_window_bridge::helper_launcher::{helper_available, launch_helper, launch_helper_json};
+use plugin_control_window_bridge::helper_launcher::{
+    helper_available, launch_helper, launch_helper_json,
+};
 use std::env;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 #[cfg(unix)]
-use std::{fs, io::ErrorKind, os::unix::fs::PermissionsExt, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    io::ErrorKind,
+    os::unix::fs::PermissionsExt,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -119,7 +126,11 @@ fn window_bridge_launch_times_out_for_hung_helper() {
 fn window_bridge_binary_helper_mode_runs_action_path() {
     let _guard = ENV_LOCK.lock().unwrap();
     let helper = resolve_plugin_binary();
-    assert!(helper.is_file(), "expected plugin binary at {}", helper.display());
+    assert!(
+        helper.is_file(),
+        "expected plugin binary at {}",
+        helper.display()
+    );
     let log_path = env::temp_dir().join(format!(
         "ios-control-window-helper-action-{}-{}.log",
         std::process::id(),
@@ -162,7 +173,11 @@ printf '%s\n' '{"phase":"Succeeded","summary":"window click applied","observed_c
 
     let execution = launch_helper_json(
         helper.clone(),
-        &["--source".into(), "window-helper-1".into(), "--pointer-plan".into()],
+        &[
+            "--source".into(),
+            "window-helper-1".into(),
+            "--pointer-plan".into(),
+        ],
     )
     .unwrap();
     assert_eq!(execution.summary, "window click applied");
@@ -210,7 +225,10 @@ fn window_bridge_protocol_reports_unavailable_for_non_executable_helper() {
         .lines()
         .map(|line| serde_json::from_str::<PluginToHost>(line).unwrap())
         .collect::<Vec<_>>();
-    assert!(matches!(responses.first(), Some(PluginToHost::HandshakeAck { .. })));
+    assert!(matches!(
+        responses.first(),
+        Some(PluginToHost::HandshakeAck { .. })
+    ));
     match responses.get(1) {
         Some(PluginToHost::ControlCapability { capability }) => {
             assert!(!capability.supported);
@@ -224,12 +242,10 @@ fn window_bridge_protocol_reports_unavailable_for_non_executable_helper() {
     match responses.get(2) {
         Some(PluginToHost::ControlSession { phase, checklist }) => {
             assert_eq!(*phase, ControlSessionPhase::Unavailable);
-            assert!(
-                checklist
-                    .items
-                    .iter()
-                    .any(|item| item.contains("not executable"))
-            );
+            assert!(checklist
+                .items
+                .iter()
+                .any(|item| item.contains("not executable")));
         }
         other => panic!("unexpected PrepareControl response: {other:?}"),
     }
