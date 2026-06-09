@@ -76,6 +76,7 @@ impl BeaconBundle {
 
     fn run(&self, ble_path: &Path) -> Result<ExitStatus> {
         let mut command = python_command(&self.python_command);
+        hide_child_console(&mut command);
         command
             .arg(&self.script_path)
             .arg("--path")
@@ -88,7 +89,9 @@ impl BeaconBundle {
 
 fn resolve_python_command() -> Option<String> {
     for candidate in python_candidates() {
-        if python_command(candidate)
+        let mut command = python_command(candidate);
+        hide_child_console(&mut command);
+        if command
             .arg("--version")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -117,4 +120,12 @@ fn python_command(command: &str) -> Command {
         return cmd;
     }
     Command::new(command)
+}
+
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
 }

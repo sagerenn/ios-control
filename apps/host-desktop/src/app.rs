@@ -52,6 +52,7 @@ pub struct HostDesktopApp {
     session_window_deferred_until_streaming: bool,
     session_window_focus_requested: bool,
     session_window_device_id: Option<String>,
+    session_window_auto_sized_frame: Option<(u32, u32, u16)>,
     pub dashboard: DashboardViewModel,
     pub device_detail: DeviceDetailViewModel,
     pub session: SessionViewModel,
@@ -93,6 +94,7 @@ impl HostDesktopApp {
             session_window_deferred_until_streaming: false,
             session_window_focus_requested: false,
             session_window_device_id: None,
+            session_window_auto_sized_frame: None,
             dashboard: DashboardViewModel {
                 total_devices: 0,
                 degraded_devices: 0,
@@ -156,6 +158,8 @@ impl HostDesktopApp {
             });
         app.selected_device_id = preferences.selected_device_id.clone();
         app.preferences = preferences;
+        app.preview_input_bridge
+            .set_pointer_long_axis_units(app.preferences.ble_pointer_long_axis_units);
         app.restored_source_preference = restored_source_preference;
         app.install_log_writer_from_preferences_path(store.path());
         app.settings = SettingsViewModel::from_preferences_path(Some(store.path()));
@@ -234,6 +238,20 @@ impl HostDesktopApp {
             self.diagnostics
                 .record_host_log_line(format!("host log append failed: {error}"));
         }
+    }
+
+    fn set_ble_pointer_long_axis_units(&mut self, units: Option<u32>) {
+        self.preview_input_bridge.set_pointer_long_axis_units(units);
+        self.preferences.ble_pointer_long_axis_units =
+            self.preview_input_bridge.pointer_long_axis_units();
+        self.persist_preferences();
+
+        let value = self
+            .preferences
+            .ble_pointer_long_axis_units
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "auto".into());
+        self.append_host_log_line(&format!("BLE pointer scale set to {value}"));
     }
 
     fn record_startup_view(&mut self, startup: &StartupViewModel) {
@@ -343,10 +361,12 @@ impl HostDesktopApp {
             self.session_window_deferred_until_streaming = false;
             self.session_window_focus_requested = true;
             self.session_window_device_id = None;
+            self.session_window_auto_sized_frame = None;
             return;
         };
 
         self.session_window_device_id = Some(device_id.clone());
+        self.session_window_auto_sized_frame = None;
 
         let launcher = FleetViewModel::for_launcher(
             &self.inventory_snapshot.devices,
@@ -363,6 +383,7 @@ impl HostDesktopApp {
             self.session_window_open = true;
             self.session_window_deferred_until_streaming = false;
             self.session_window_focus_requested = true;
+            self.session_window_auto_sized_frame = None;
             self.request_start_direct_session_for_device(&device_id);
             self.reconcile_session_window_state();
             return;
@@ -371,6 +392,7 @@ impl HostDesktopApp {
         self.session_window_open = true;
         self.session_window_deferred_until_streaming = false;
         self.session_window_focus_requested = true;
+        self.session_window_auto_sized_frame = None;
         if let Some(device) = self
             .inventory_snapshot
             .devices
@@ -461,6 +483,7 @@ impl HostDesktopApp {
             .and_then(|device| device.stable_id.clone());
         self.selected_device_id = Some(device_id.clone());
         self.session = SessionViewModel::starting();
+        self.session_window_auto_sized_frame = None;
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control bootstrapping".into();
         self.diagnostics.grounding_summary = "grounding bootstrapping".into();
@@ -549,6 +572,7 @@ impl HostDesktopApp {
         }
 
         self.session = SessionViewModel::starting();
+        self.session_window_auto_sized_frame = None;
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control bootstrapping".into();
         self.diagnostics.grounding_summary = "grounding bootstrapping".into();
@@ -626,6 +650,7 @@ impl HostDesktopApp {
         }
 
         self.session = SessionViewModel::starting();
+        self.session_window_auto_sized_frame = None;
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control bootstrapping".into();
         self.diagnostics.grounding_summary = "grounding bootstrapping".into();
@@ -681,6 +706,7 @@ impl HostDesktopApp {
         self.session_window_deferred_until_streaming = false;
         self.session_window_focus_requested = false;
         self.session_window_device_id = None;
+        self.session_window_auto_sized_frame = None;
         self.session = SessionViewModel::idle();
         self.diagnostics.host_error = None;
         self.diagnostics.control_summary = "control not started".into();
@@ -815,6 +841,7 @@ impl HostDesktopApp {
                 self.session_window_open = true;
                 self.session_window_deferred_until_streaming = false;
                 self.session_window_focus_requested = true;
+                self.session_window_auto_sized_frame = None;
                 self.request_start_direct_receiver();
             }
             return;
@@ -1000,6 +1027,7 @@ impl HostDesktopApp {
                 self.session_window_open = true;
                 self.session_window_deferred_until_streaming = false;
                 self.session_window_focus_requested = true;
+                self.session_window_auto_sized_frame = None;
             }
             crate::view_models::session::SessionUiState::Idle => {
                 self.session_window_deferred_until_streaming = false;
@@ -1138,6 +1166,24 @@ impl HostDesktopApp {
             self.preview_texture =
                 Some(ctx.load_texture("session-preview", image, egui::TextureOptions::LINEAR));
         }
+    }
+
+    fn auto_size_session_window_to_frame(&mut self, ctx: &egui::Context) {
+        let Some(frame) = self.session.latest_frame.as_ref() else {
+            return;
+        };
+        let frame_key = (frame.width, frame.height, frame.rotation_degrees);
+        if self.session_window_auto_sized_frame == Some(frame_key) {
+            return;
+        }
+
+        let monitor_size = ctx
+            .input(|input| input.viewport().monitor_size)
+            .unwrap_or_else(|| egui::vec2(900.0, 700.0));
+        let inner_size =
+            session_view::auto_session_inner_size(frame, monitor_size, ctx.pixels_per_point());
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner_size));
+        self.session_window_auto_sized_frame = Some(frame_key);
     }
 
     fn selected_runtime_refresh_target(&self) -> Option<(&str, Duration)> {
@@ -1290,6 +1336,7 @@ impl eframe::App for HostDesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut pending_action = SessionAction::None;
         let mut launcher_action = LauncherAction::None;
+        let mut settings_action = settings::SettingsAction::None;
 
         if let Some((_, interval)) = self.selected_runtime_refresh_target() {
             ctx.request_repaint_after(interval);
@@ -1309,7 +1356,16 @@ impl eframe::App for HostDesktopApp {
             launcher_action =
                 launcher::render(ui, &launcher_rows, self.selected_device_id.as_deref());
             ui.separator();
-            settings::render_rows(ui, &self.settings.rows);
+            settings_action = settings::render_rows(
+                ui,
+                &self.settings.rows,
+                self.preview_input_bridge.pointer_long_axis_units(),
+            );
+            ui.separator();
+            let control_host_session_action = session_view::render_controls_menu(ui, &self.session);
+            if !matches!(control_host_session_action, SessionAction::None) {
+                pending_action = control_host_session_action;
+            }
         });
 
         if self.session_window_open {
@@ -1324,6 +1380,8 @@ impl eframe::App for HostDesktopApp {
                 egui::ViewportBuilder::default()
                     .with_title(title)
                     .with_inner_size([900.0, 700.0])
+                    .with_clamp_size_to_monitor_size(true)
+                    .with_decorations(true)
                     .with_active(true),
                 |ctx, _class| {
                     if ctx.input(|input| input.viewport().close_requested()) {
@@ -1331,21 +1389,28 @@ impl eframe::App for HostDesktopApp {
                         self.session_window_deferred_until_streaming = false;
                         self.session_window_focus_requested = false;
                         self.session_window_device_id = None;
+                        self.session_window_auto_sized_frame = None;
                         return;
                     }
                     if self.session_window_focus_requested {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                         self.session_window_focus_requested = false;
                     }
+                    self.auto_size_session_window_to_frame(ctx);
 
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        pending_action = session_view::render(
-                            ui,
-                            &self.session,
-                            self.preview_texture.as_ref(),
-                            &mut self.preview_input_bridge,
-                        );
-                    });
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::default().inner_margin(0.0))
+                        .show(ctx, |ui| {
+                            let session_window_action = session_view::render(
+                                ui,
+                                &self.session,
+                                self.preview_texture.as_ref(),
+                                &mut self.preview_input_bridge,
+                            );
+                            if !matches!(session_window_action, SessionAction::None) {
+                                pending_action = session_window_action;
+                            }
+                        });
                 },
             );
         }
@@ -1359,6 +1424,14 @@ impl eframe::App for HostDesktopApp {
             LauncherAction::OpenDevice(device_id) => {
                 self.select_device(&device_id);
                 self.request_open_selected_device_session();
+                ctx.request_repaint();
+            }
+        }
+
+        match settings_action {
+            settings::SettingsAction::None => {}
+            settings::SettingsAction::SetBlePointerLongAxisUnits(units) => {
+                self.set_ble_pointer_long_axis_units(units);
                 ctx.request_repaint();
             }
         }
@@ -1391,9 +1464,34 @@ fn preview_input_event_summary(
                 "mouse buttons={} dx={} dy={} wheel={}",
                 mouse.buttons, mouse.dx, mouse.dy, mouse.wheel
             ),
+            ios_control_contracts::control::ControlInputEvent::MouseSequence(reports) => {
+                let preview = reports
+                    .iter()
+                    .take(6)
+                    .map(|mouse| {
+                        format!(
+                            "buttons={} dx={} dy={} wheel={}",
+                            mouse.buttons, mouse.dx, mouse.dy, mouse.wheel
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let suffix = if reports.len() > 6 { ", ..." } else { "" };
+                format!(
+                    "mouse-sequence reports={} [{}{}]",
+                    reports.len(),
+                    preview,
+                    suffix
+                )
+            }
             ios_control_contracts::control::ControlInputEvent::Keyboard(keyboard) => format!(
-                "keyboard usage={} pressed={}",
-                keyboard.usage_id, keyboard.pressed
+                "keyboard usage={} pressed={} shift={} alt={} ctrl={} meta={}",
+                keyboard.usage_id,
+                keyboard.pressed,
+                keyboard.modifiers.shift,
+                keyboard.modifiers.alt,
+                keyboard.modifiers.ctrl,
+                keyboard.modifiers.meta
             ),
             ios_control_contracts::control::ControlInputEvent::Text(text) => {
                 format!("text chars={}", text.chars().count())

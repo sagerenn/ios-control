@@ -32,6 +32,7 @@ pub struct KeyboardInputReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlInputEvent {
     Mouse(MouseInputReport),
+    MouseSequence(Vec<MouseInputReport>),
     Keyboard(KeyboardInputReport),
     Text(String),
 }

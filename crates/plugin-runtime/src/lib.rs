@@ -32,6 +32,7 @@ impl RunningPlugin {
         I: IntoIterator<Item = (K, V)>,
     {
         let mut command = Command::new(plugin_path);
+        hide_child_console(&mut command);
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -114,7 +115,9 @@ impl PluginRuntime {
     }
 
     pub async fn handshake(&self, plugin_path: &Path) -> Result<PluginDescriptor> {
-        let mut child = Command::new(plugin_path)
+        let mut command = Command::new(plugin_path);
+        hide_child_console(&mut command);
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .kill_on_drop(true)
@@ -152,5 +155,12 @@ impl PluginRuntime {
             }
             other => Err(anyhow!("unexpected handshake response: {other:?}")),
         }
+    }
+}
+
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x08000000);
     }
 }

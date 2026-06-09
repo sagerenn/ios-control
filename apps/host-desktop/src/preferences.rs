@@ -19,6 +19,8 @@ pub struct HostPreferences {
     pub selected_device_id: Option<String>,
     pub selected_source_id: Option<String>,
     #[serde(default)]
+    pub ble_pointer_long_axis_units: Option<u32>,
+    #[serde(default)]
     pub known_devices: Vec<KnownDevicePreference>,
 }
 
@@ -170,6 +172,7 @@ mod tests {
         let prefs = HostPreferences {
             selected_device_id: Some("device-1".into()),
             selected_source_id: Some("window-helper-1".into()),
+            ble_pointer_long_axis_units: Some(120),
             known_devices: Vec::new(),
         };
 
@@ -243,6 +246,7 @@ mod tests {
             let prefs = HostPreferences {
                 selected_device_id: Some("device-1".into()),
                 selected_source_id: Some("window-helper-1".into()),
+                ble_pointer_long_axis_units: None,
                 known_devices: Vec::new(),
             };
             store.save(&prefs)?;

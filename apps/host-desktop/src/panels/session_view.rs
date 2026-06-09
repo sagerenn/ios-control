@@ -1,4 +1,4 @@
-use egui::{vec2, TextureHandle, Ui, Vec2};
+use egui::{vec2, Align, Layout, TextureHandle, Ui, Vec2};
 use ios_control_contracts::capture::VideoFrameDescriptor;
 use ios_control_contracts::control::ControlInputEvent;
 
@@ -25,16 +25,20 @@ pub fn render(
         input_bridge.reset();
     }
 
-    ui.columns(2, |columns| {
-        let (left, right) = columns.split_at_mut(1);
-        render_session_controls(&mut left[0], view_model, &mut action);
+    let events = render_preview(ui, view_model, texture, input_bridge);
+    if !events.is_empty() {
+        action = SessionAction::ControlInput(events);
+    }
 
-        let events = render_preview(&mut right[0], view_model, texture, input_bridge);
-        if !events.is_empty() {
-            action = SessionAction::ControlInput(events);
-        }
+    action
+}
+
+pub fn render_controls_menu(ui: &mut Ui, view_model: &SessionViewModel) -> SessionAction {
+    let mut action = SessionAction::None;
+    ui.menu_button("Session Menu", |ui| {
+        ui.set_min_width(280.0);
+        render_session_controls(ui, view_model, &mut action);
     });
-
     action
 }
 
@@ -51,12 +55,14 @@ fn render_session_controls(ui: &mut Ui, view_model: &SessionViewModel, action: &
             .clicked()
         {
             *action = SessionAction::Start;
+            ui.close_menu();
         }
         if ui
             .add_enabled(view_model.can_stop(), egui::Button::new("Stop Session"))
             .clicked()
         {
             *action = SessionAction::Stop;
+            ui.close_menu();
         }
     });
 
@@ -92,30 +98,33 @@ fn render_preview(
         view_model.latest_frame.as_ref(),
     ) else {
         input_bridge.reset();
+        ui.allocate_space(preview_available_size(ui));
         return Vec::new();
     };
 
-    let preview_size = fitted_preview_size(
-        frame,
-        preview_available_size(ui),
-        ui.ctx().pixels_per_point().max(1.0),
-    );
-    let response = ui.add(
-        egui::Image::new(texture)
-            .fit_to_exact_size(preview_size)
-            .sense(egui::Sense::click_and_drag()),
-    );
-    if response.clicked() || response.drag_started() {
-        response.request_focus();
-    }
-    if input_bridge.is_armed() && !response.hovered() {
-        return input_bridge.release_control();
-    }
-    input_bridge.collect(
-        ui.ctx(),
-        &response,
-        [frame.width.max(1), frame.height.max(1)],
-    )
+    let available = preview_available_size(ui);
+    let preview_size = fitted_preview_size(frame, available, ui.ctx().pixels_per_point().max(1.0));
+    let top_padding = ((available.y - preview_size.y) / 2.0).max(0.0);
+    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+        ui.add_space(top_padding);
+        let response = ui.add(
+            egui::Image::new(texture)
+                .fit_to_exact_size(preview_size)
+                .sense(egui::Sense::click_and_drag()),
+        );
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        if input_bridge.is_armed() && !response.hovered() {
+            return input_bridge.release_control();
+        }
+        input_bridge.collect(
+            ui.ctx(),
+            &response,
+            [frame.width.max(1), frame.height.max(1)],
+        )
+    })
+    .inner
 }
 
 fn render_frame_summary(ui: &mut Ui, frame: &VideoFrameDescriptor) {
@@ -146,6 +155,24 @@ fn fitted_preview_size(
     )
 }
 
+pub fn auto_session_inner_size(
+    frame: &VideoFrameDescriptor,
+    monitor_size: Vec2,
+    pixels_per_point: f32,
+) -> Vec2 {
+    let pixels_per_point = pixels_per_point.max(1.0);
+    let monitor_size = vec2(
+        (monitor_size.x / pixels_per_point).max(360.0),
+        (monitor_size.y / pixels_per_point).max(520.0),
+    );
+    let max_preview = vec2(
+        (monitor_size.x - 80.0).max(240.0),
+        (monitor_size.y - 80.0).max(320.0),
+    );
+    let preview_size = fitted_preview_size(frame, max_preview, pixels_per_point);
+    vec2(preview_size.x, preview_size.y)
+}
+
 fn preview_available_size(ui: &Ui) -> Vec2 {
     let max_rect = ui.max_rect();
     let cursor_top = ui.cursor().top();
@@ -163,7 +190,7 @@ mod tests {
     use ios_control_contracts::capture::{FrameHealth, SourceKind};
 
     #[test]
-    fn session_view_keeps_frame_metadata_visible_even_with_preview_texture() {
+    fn session_view_renders_mirror_only_without_control_menu() {
         let frame = VideoFrameDescriptor {
             source_id: "window-helper-1".into(),
             source_kind: SourceKind::Window,
@@ -199,11 +226,12 @@ mod tests {
         for clipped in &output.shapes {
             collect_text(&clipped.shape, &mut texts);
         }
-        assert!(texts.iter().any(|text| text.contains(expected)));
+        assert!(!texts.iter().any(|text| text.contains("Session Menu")));
+        assert!(!texts.iter().any(|text| text.contains(expected)));
     }
 
     #[test]
-    fn session_view_shows_waiting_detail_for_direct_receiver_target() {
+    fn control_host_session_menu_button_lives_outside_session_window() {
         let view_model = SessionViewModel::waiting_for_mirror(Some(CaptureSourceOption::new(
             "direct-1",
             "Direct Receiver",
@@ -214,7 +242,7 @@ mod tests {
         let ctx = egui::Context::default();
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                render(ui, &view_model, None, &mut PreviewInputBridge::default());
+                render_controls_menu(ui, &view_model);
             });
         });
 
@@ -222,7 +250,8 @@ mod tests {
         for clipped in &output.shapes {
             collect_text(&clipped.shape, &mut texts);
         }
-        assert!(texts.iter().any(|text| text.contains("iOS Control 0424")));
+        assert!(texts.iter().any(|text| text.contains("Session Menu")));
+        assert!(!texts.iter().any(|text| text.contains("iOS Control 0424")));
     }
 
     #[test]
@@ -278,6 +307,43 @@ mod tests {
         let size = fitted_preview_size(&frame, egui::vec2(900.0, 900.0), 1.5);
 
         assert_eq!(size, egui::vec2(608.0 / 1.5, 1080.0 / 1.5));
+    }
+
+    #[test]
+    fn session_window_auto_size_matches_phone_aspect_without_side_gutters() {
+        let frame = VideoFrameDescriptor {
+            source_id: "direct-1".into(),
+            source_kind: SourceKind::DirectReceiver,
+            width: 1080,
+            height: 1920,
+            rotation_degrees: 0,
+            frame_index: 8,
+            health: FrameHealth::Healthy,
+        };
+
+        let size = auto_session_inner_size(&frame, egui::vec2(1536.0, 864.0), 1.0);
+
+        assert!(size.x <= 1536.0);
+        assert!(size.y <= 864.0);
+        assert!((size.x / size.y - 1080.0 / 1920.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn session_window_auto_size_converts_physical_monitor_pixels_to_points() {
+        let frame = VideoFrameDescriptor {
+            source_id: "direct-1".into(),
+            source_kind: SourceKind::DirectReceiver,
+            width: 1080,
+            height: 1920,
+            rotation_degrees: 0,
+            frame_index: 8,
+            health: FrameHealth::Healthy,
+        };
+
+        let size = auto_session_inner_size(&frame, egui::vec2(1536.0, 864.0), 1.25);
+
+        assert!(size.y <= 864.0 / 1.25);
+        assert!((size.x / size.y - 1080.0 / 1920.0).abs() < 0.001);
     }
 
     fn collect_text(shape: &egui::epaint::Shape, out: &mut Vec<String>) {

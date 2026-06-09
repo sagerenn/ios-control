@@ -43,11 +43,22 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 fn helper_command(helper: &Path) -> Command {
     if helper.extension().and_then(|ext| ext.to_str()) == Some("sh") {
         let mut command = Command::new("/bin/sh");
+        hide_child_console(&mut command);
         command.arg(helper);
         return command;
     }
 
-    Command::new(helper)
+    let mut command = Command::new(helper);
+    hide_child_console(&mut command);
+    command
+}
+
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
 }
 
 pub fn run_probe(helper: &Path) -> Result<HelperProbe> {

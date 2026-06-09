@@ -106,7 +106,9 @@ fn wait_for_completion(child: &mut Child, timeout: Duration) -> io::Result<ExitS
 }
 
 pub fn launch_helper(helper: PathBuf, args: &[String]) -> std::io::Result<ExitStatus> {
-    let mut child = Command::new(helper)
+    let mut command = Command::new(helper);
+    hide_child_console(&mut command);
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -124,7 +126,9 @@ pub struct WindowHelperExecution {
 }
 
 pub fn launch_helper_json(helper: PathBuf, args: &[String]) -> io::Result<WindowHelperExecution> {
-    let mut child = Command::new(helper)
+    let mut command = Command::new(helper);
+    hide_child_console(&mut command);
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -158,6 +162,14 @@ pub fn launch_helper_json(helper: PathBuf, args: &[String]) -> io::Result<Window
         stdout,
         stderr: Vec::new(),
     })
+}
+
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
 }
 
 pub fn should_run_embedded_helper_mode(args: &[String]) -> bool {

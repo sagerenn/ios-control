@@ -132,15 +132,30 @@ struct HidPaths {
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 const POLL_INTERVAL_MS: u64 = 10;
 const LIVE_INPUT_TIMEOUT_MS: u64 = 750;
+const LIVE_MOUSE_SEQUENCE_DELAY_MS: u64 = 4;
+const LIVE_MOUSE_REPORT_DELAY_MS: u64 = 3;
+const LIVE_MOUSE_REPORT_MAX_DELTA: i16 = 32;
+const MOUSE_REPORT_MAX_DELTA_ENV: &str = "IOS_CONTROL_BLE_MOUSE_REPORT_MAX_DELTA";
 
 fn helper_command(helper: &Path) -> Command {
     if helper.extension().and_then(|ext| ext.to_str()) == Some("sh") {
         let mut command = Command::new("sh");
+        hide_child_console(&mut command);
         command.arg(helper);
         return command;
     }
 
-    Command::new(helper)
+    let mut command = Command::new(helper);
+    hide_child_console(&mut command);
+    command
+}
+
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
 }
 
 fn helper_timeout() -> Duration {
@@ -269,6 +284,12 @@ pub fn run_control_input(_helper: &Path, event: ControlInputEvent) -> Result<Exe
             mouse: Some(mouse_command(mouse)),
             keyboard: None,
         },
+        ControlInputEvent::MouseSequence(reports) => HidCommand {
+            id: String::new(),
+            kind: "mouse".into(),
+            mouse: Some(mouse_sequence_command(reports)),
+            keyboard: None,
+        },
         ControlInputEvent::Keyboard(keyboard) => HidCommand {
             id: String::new(),
             kind: "keyboard".into(),
@@ -300,19 +321,47 @@ pub fn run_control_input(_helper: &Path, event: ControlInputEvent) -> Result<Exe
 fn mouse_command(mouse: MouseInputReport) -> MouseCommand {
     MouseCommand {
         reports: split_mouse_reports(mouse),
-        delay_ms: 0,
+        delay_ms: live_mouse_report_delay_ms(),
     }
 }
 
+fn mouse_sequence_command(sequence: Vec<MouseInputReport>) -> MouseCommand {
+    MouseCommand {
+        reports: sequence.into_iter().flat_map(split_mouse_reports).collect(),
+        delay_ms: live_mouse_sequence_delay_ms(),
+    }
+}
+
+fn live_mouse_sequence_delay_ms() -> u64 {
+    env::var("IOS_CONTROL_BLE_MOUSE_SEQUENCE_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value <= 50)
+        .unwrap_or(LIVE_MOUSE_SEQUENCE_DELAY_MS)
+}
+
+fn live_mouse_report_delay_ms() -> u64 {
+    env::var("IOS_CONTROL_BLE_MOUSE_REPORT_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value <= 50)
+        .unwrap_or(LIVE_MOUSE_REPORT_DELAY_MS)
+}
+
 fn split_mouse_reports(mouse: MouseInputReport) -> Vec<MouseReport> {
+    split_mouse_reports_with_max_delta(mouse, live_mouse_report_max_delta())
+}
+
+fn split_mouse_reports_with_max_delta(mouse: MouseInputReport, max_delta: i16) -> Vec<MouseReport> {
     let mut reports = Vec::new();
     let mut dx = mouse.dx;
     let mut dy = mouse.dy;
     let mut wheel = mouse.wheel;
+    let max_delta = max_delta.clamp(1, i16::from(i8::MAX));
 
     loop {
-        let step_dx = clamp_hid_delta(dx);
-        let step_dy = clamp_hid_delta(dy);
+        let step_dx = clamp_hid_delta(dx, max_delta);
+        let step_dy = clamp_hid_delta(dy, max_delta);
         let step_wheel = wheel;
         wheel = 0;
         reports.push(MouseReport {
@@ -333,8 +382,16 @@ fn split_mouse_reports(mouse: MouseInputReport) -> Vec<MouseReport> {
     reports
 }
 
-fn clamp_hid_delta(value: i16) -> i8 {
-    value.clamp(-127, 127) as i8
+fn live_mouse_report_max_delta() -> i16 {
+    env::var(MOUSE_REPORT_MAX_DELTA_ENV)
+        .ok()
+        .and_then(|value| value.parse::<i16>().ok())
+        .map(|value| value.clamp(1, i16::from(i8::MAX)))
+        .unwrap_or(LIVE_MOUSE_REPORT_MAX_DELTA)
+}
+
+fn clamp_hid_delta(value: i16, max_delta: i16) -> i8 {
+    value.clamp(-max_delta, max_delta) as i8
 }
 
 fn keyboard_command(keyboard: KeyboardInputReport) -> KeyboardCommand {
@@ -355,6 +412,7 @@ fn keyboard_command(keyboard: KeyboardInputReport) -> KeyboardCommand {
 
 fn text_keyboard_command(text: &str) -> Result<KeyboardCommand> {
     let mut reports = Vec::new();
+    let mut unsupported = Vec::new();
     let mut previous_was_cr = false;
     for ch in text.chars() {
         if previous_was_cr && ch == '\n' {
@@ -374,7 +432,15 @@ fn text_keyboard_command(text: &str) -> Result<KeyboardCommand> {
                 keys: Vec::new(),
                 repeat: 1,
             });
+        } else {
+            unsupported.push(ch);
         }
+    }
+    if !unsupported.is_empty() {
+        let preview = unsupported.iter().take(8).collect::<String>();
+        return Err(anyhow!(
+            "text input contains unsupported BLE keyboard characters: {preview}"
+        ));
     }
     if reports.is_empty() {
         return Err(anyhow!(
@@ -543,13 +609,68 @@ mod live_input_tests {
             wheel: 1,
         });
 
+        assert_eq!(reports.len(), 10);
+        assert_eq!(reports[0].dx, LIVE_MOUSE_REPORT_MAX_DELTA as i8);
+        assert_eq!(reports[0].dy, -(LIVE_MOUSE_REPORT_MAX_DELTA as i8));
+        assert_eq!(reports[0].wheel, 1);
+        assert_eq!(reports[9].dx, 12);
+        assert_eq!(reports[9].dy, -12);
+        assert_eq!(reports[9].buttons, 1);
+    }
+
+    #[test]
+    fn mouse_input_splitter_can_still_use_hid_protocol_max() {
+        let reports = split_mouse_reports_with_max_delta(
+            MouseInputReport {
+                buttons: 1,
+                dx: 300,
+                dy: -300,
+                wheel: 1,
+            },
+            i16::from(i8::MAX),
+        );
+
         assert_eq!(reports.len(), 3);
         assert_eq!(reports[0].dx, 127);
         assert_eq!(reports[0].dy, -127);
-        assert_eq!(reports[0].wheel, 1);
         assert_eq!(reports[2].dx, 46);
         assert_eq!(reports[2].dy, -46);
-        assert_eq!(reports[2].buttons, 1);
+    }
+
+    #[test]
+    fn mouse_input_command_uses_live_report_delay() {
+        let command = mouse_command(MouseInputReport {
+            buttons: 0,
+            dx: 1,
+            dy: 0,
+            wheel: 0,
+        });
+
+        assert_eq!(command.delay_ms, LIVE_MOUSE_REPORT_DELAY_MS);
+    }
+
+    #[test]
+    fn mouse_sequence_flattens_reports_with_live_delay() {
+        let command = mouse_sequence_command(vec![
+            MouseInputReport {
+                buttons: 0,
+                dx: 300,
+                dy: 0,
+                wheel: 0,
+            },
+            MouseInputReport {
+                buttons: 1,
+                dx: 0,
+                dy: 0,
+                wheel: 0,
+            },
+        ]);
+
+        assert_eq!(command.delay_ms, LIVE_MOUSE_SEQUENCE_DELAY_MS);
+        assert_eq!(command.reports.len(), 11);
+        assert_eq!(command.reports[0].dx, LIVE_MOUSE_REPORT_MAX_DELTA as i8);
+        assert_eq!(command.reports[9].dx, 12);
+        assert_eq!(command.reports[10].buttons, 1);
     }
 
     #[test]
@@ -584,8 +705,8 @@ mod live_input_tests {
     }
 
     #[test]
-    fn text_input_normalizes_crlf_and_skips_unsupported_characters() {
-        let command = text_keyboard_command("a\r\n\u{2603}b").unwrap();
+    fn text_input_normalizes_crlf() {
+        let command = text_keyboard_command("a\r\nb").unwrap();
         let pressed = command
             .reports
             .iter()
@@ -594,6 +715,15 @@ mod live_input_tests {
             .collect::<Vec<_>>();
 
         assert_eq!(pressed, vec![0x04, 0x28, 0x05]);
+    }
+
+    #[test]
+    fn text_input_rejects_unsupported_characters() {
+        let err = text_keyboard_command("a\u{2603}b").unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("unsupported BLE keyboard characters"));
     }
 
     #[test]

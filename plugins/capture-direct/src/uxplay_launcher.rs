@@ -2,7 +2,6 @@ use anyhow::{anyhow, Context, Result};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 use crate::airplay_mdns::{AirPlayMdnsConfig, AirPlayMdnsPublisher};
@@ -16,6 +15,8 @@ const AIRPLAY_PORT_BASE: &str = "52081";
 const AIRPLAY_RTSP_PORT: u16 = 52082;
 const AIRPLAY_DEVICE_ID_ENV: &str = "IOS_CONTROL_AIRPLAY_DEVICE_ID";
 const AIRPLAY_DISPLAY_NAME_ENV: &str = "IOS_CONTROL_AIRPLAY_DISPLAY_NAME";
+const DEFAULT_AIRPLAY_DEVICE_ID: &str = "02:49:4F:53:43:54";
+const DEFAULT_AIRPLAY_DISPLAY_NAME: &str = "iOS Control";
 
 pub struct DirectRuntimeSession {
     _session_dir: TempDir,
@@ -161,6 +162,7 @@ fn reserve_udp_port() -> Result<u16> {
 
 fn spawn_beacon(bundle: &DirectRuntimeBundle, ble_path: &std::path::Path) -> Result<Child> {
     let mut command = Command::new(&bundle.beacon_helper_path);
+    hide_child_console(&mut command);
     command
         .arg("serve")
         .env(RUNTIME_ROOT_ENV, &bundle.root)
@@ -193,6 +195,7 @@ fn spawn_uxplay(
     let stderr_log = std::fs::File::create(stderr_log_path)
         .with_context(|| format!("failed to create {}", stderr_log_path.display()))?;
     let mut command = Command::new(&bundle.uxplay_path);
+    hide_child_console(&mut command);
     command
         .args(uxplay_args(
             identity,
@@ -238,35 +241,18 @@ fn uxplay_args(
 }
 
 fn airplay_identity() -> AirPlayIdentity {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let seed = nanos ^ u128::from(std::process::id());
-    let bytes = [
-        0x02_u8,
-        ((seed >> 32) & 0xff) as u8,
-        ((seed >> 24) & 0xff) as u8,
-        ((seed >> 16) & 0xff) as u8,
-        ((seed >> 8) & 0xff) as u8,
-        (seed & 0xff) as u8,
-    ];
-    let generated_device_id = format!(
-        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
-    );
-    let device_id = non_empty_env(AIRPLAY_DEVICE_ID_ENV).unwrap_or(generated_device_id);
-    let suffix = device_id
-        .split(':')
-        .rev()
-        .take(2)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>()
-        .to_ascii_uppercase();
-    let name =
-        non_empty_env(AIRPLAY_DISPLAY_NAME_ENV).unwrap_or_else(|| format!("iOS Control {suffix}"));
+    airplay_identity_from_values(
+        non_empty_env(AIRPLAY_DEVICE_ID_ENV),
+        non_empty_env(AIRPLAY_DISPLAY_NAME_ENV),
+    )
+}
+
+fn airplay_identity_from_values(
+    device_id: Option<String>,
+    name: Option<String>,
+) -> AirPlayIdentity {
+    let device_id = device_id.unwrap_or_else(|| DEFAULT_AIRPLAY_DEVICE_ID.into());
+    let name = name.unwrap_or_else(|| DEFAULT_AIRPLAY_DISPLAY_NAME.into());
 
     AirPlayIdentity { device_id, name }
 }
@@ -285,6 +271,7 @@ fn spawn_child(
     extra_env: Option<(&str, &std::ffi::OsStr)>,
 ) -> Result<Child> {
     let mut command = Command::new(bundle_exe);
+    hide_child_console(&mut command);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -305,6 +292,7 @@ fn spawn_video_receiver(
     bundle: &DirectRuntimeBundle,
 ) -> Result<(Child, rtp_video::RawFrameReader)> {
     let mut command = Command::new(bundle_exe);
+    hide_child_console(&mut command);
     command
         .args(args)
         .stdin(Stdio::null())
@@ -327,6 +315,14 @@ fn apply_runtime_env(command: &mut Command, bundle: &DirectRuntimeBundle) {
     bundle.apply_runtime_env(command);
 }
 
+fn hide_child_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+}
+
 fn kill_child(child: &mut Child) -> Result<()> {
     if child.try_wait()?.is_none() {
         let _ = child.kill();
@@ -338,7 +334,9 @@ fn kill_child(child: &mut Child) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        uxplay_args, AirPlayIdentity, AIRPLAY_PORT_BASE, AIRPLAY_RTSP_PORT, MIRROR_REQUEST_SIZE,
+        airplay_identity_from_values, uxplay_args, AirPlayIdentity, AIRPLAY_PORT_BASE,
+        AIRPLAY_RTSP_PORT, DEFAULT_AIRPLAY_DEVICE_ID, DEFAULT_AIRPLAY_DISPLAY_NAME,
+        MIRROR_REQUEST_SIZE,
     };
 
     #[test]
@@ -374,5 +372,13 @@ mod tests {
         assert!(!args.iter().any(|arg| arg == "-nofreeze"));
         assert!(!args.iter().any(|arg| arg == "-FPSdata"));
         assert!(!args.windows(2).any(|pair| pair == ["-d", "1"]));
+    }
+
+    #[test]
+    fn airplay_identity_is_stable_by_default() {
+        let identity = airplay_identity_from_values(None, None);
+
+        assert_eq!(identity.device_id, DEFAULT_AIRPLAY_DEVICE_ID);
+        assert_eq!(identity.name, DEFAULT_AIRPLAY_DISPLAY_NAME);
     }
 }

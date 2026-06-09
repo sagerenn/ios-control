@@ -8,7 +8,14 @@ use ios_control_contracts::control::{
 };
 use ios_control_frame_transport::FrameSlotReader;
 
-const POINTER_WAKE_DELTA: i16 = 1;
+const POINTER_EDGE_SETTLE_REPORTS: usize = 3;
+const POINTER_TARGET_SETTLE_REPORTS: usize = 3;
+pub const DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS: u32 = 120;
+pub const DEFAULT_TABLET_POINTER_LONG_AXIS_UNITS: u32 = 160;
+const POINTER_LONG_AXIS_UNITS_ENV: &str = "IOS_CONTROL_BLE_POINTER_LONG_AXIS_UNITS";
+pub const MIN_POINTER_LONG_AXIS_UNITS: u32 = 60;
+pub const MAX_POINTER_LONG_AXIS_UNITS: u32 = 1600;
+const TABLET_ASPECT_RATIO_X1000: u32 = 1500;
 
 pub fn color_image_from_slot(
     stream: &CaptureStreamDescriptor,
@@ -31,7 +38,9 @@ pub fn color_image_from_slot(
 pub struct PreviewInputBridge {
     armed: bool,
     last_pointer_pos: Option<Pos2>,
+    device_pointer: Option<DevicePointerState>,
     buttons: u8,
+    pointer_long_axis_units: Option<u32>,
 }
 
 impl PreviewInputBridge {
@@ -42,7 +51,18 @@ impl PreviewInputBridge {
     pub fn reset(&mut self) {
         self.armed = false;
         self.last_pointer_pos = None;
+        self.device_pointer = None;
         self.buttons = 0;
+    }
+
+    pub fn pointer_long_axis_units(&self) -> Option<u32> {
+        self.pointer_long_axis_units
+    }
+
+    pub fn set_pointer_long_axis_units(&mut self, units: Option<u32>) {
+        self.pointer_long_axis_units = units
+            .map(|value| value.clamp(MIN_POINTER_LONG_AXIS_UNITS, MAX_POINTER_LONG_AXIS_UNITS));
+        self.device_pointer = None;
     }
 
     pub fn release_control(&mut self) -> Vec<ControlInputEvent> {
@@ -81,7 +101,7 @@ impl PreviewInputBridge {
                     pressed,
                     ..
                 } => {
-                    self.handle_pointer_button(pos, button, pressed, rect, &mut events);
+                    self.handle_pointer_button(pos, button, pressed, rect, frame_size, &mut events);
                 }
                 Event::PointerGone => {
                     self.release(&mut events);
@@ -120,6 +140,11 @@ impl PreviewInputBridge {
                         self.handle_paste_text(&text, &mut events);
                     }
                 }
+                Event::Text(text) => {
+                    if self.armed && !text.is_empty() {
+                        self.handle_text_event(&text, &mut events);
+                    }
+                }
                 _ => {}
             }
         }
@@ -134,31 +159,20 @@ impl PreviewInputBridge {
         frame_size: [u32; 2],
         events: &mut Vec<ControlInputEvent>,
     ) {
+        let geometry = MirrorGeometry::new(rect, frame_size, self.pointer_long_axis_units);
         if !self.armed {
-            if rect.contains(pos) {
+            if geometry.contains(pos) {
                 self.last_pointer_pos = Some(pos);
             }
             return;
         }
 
-        if !rect.contains(pos) {
+        if !geometry.contains(pos) {
             self.release(events);
             return;
         }
 
-        if let Some(previous) = self.last_pointer_pos {
-            let delta = pos - previous;
-            let dx = scaled_delta(delta.x, frame_size[0], rect.width());
-            let dy = scaled_delta(delta.y, frame_size[1], rect.height());
-            if dx != 0 || dy != 0 {
-                events.push(ControlInputEvent::Mouse(MouseInputReport {
-                    buttons: self.buttons,
-                    dx,
-                    dy,
-                    wheel: 0,
-                }));
-            }
-        }
+        self.move_pointer_by_preview_delta(pos, geometry, events);
         self.last_pointer_pos = Some(pos);
     }
 
@@ -168,10 +182,12 @@ impl PreviewInputBridge {
         button: PointerButton,
         pressed: bool,
         rect: Rect,
+        frame_size: [u32; 2],
         events: &mut Vec<ControlInputEvent>,
     ) {
-        let inside = rect.contains(pos);
-        let newly_armed = pressed && inside && !self.armed;
+        let geometry = MirrorGeometry::new(rect, frame_size, self.pointer_long_axis_units);
+        let inside = geometry.contains(pos);
+        let starts_new_gesture = pressed && inside && self.buttons == 0;
         if pressed && inside {
             self.armed = true;
             self.last_pointer_pos = Some(pos);
@@ -185,19 +201,11 @@ impl PreviewInputBridge {
             return;
         }
 
-        if newly_armed {
-            events.push(ControlInputEvent::Mouse(MouseInputReport {
-                buttons: self.buttons,
-                dx: POINTER_WAKE_DELTA,
-                dy: 0,
-                wheel: 0,
-            }));
-            events.push(ControlInputEvent::Mouse(MouseInputReport {
-                buttons: self.buttons,
-                dx: -POINTER_WAKE_DELTA,
-                dy: 0,
-                wheel: 0,
-            }));
+        let mut reports = Vec::new();
+        if starts_new_gesture {
+            self.queue_pointer_to_preview_position(pos, geometry, &mut reports);
+        } else if !pressed && self.buttons != 0 {
+            self.queue_pointer_by_preview_delta(pos, geometry, &mut reports);
         }
 
         let mask = button_mask(button);
@@ -206,12 +214,14 @@ impl PreviewInputBridge {
         } else {
             self.buttons &= !mask;
         }
-        events.push(ControlInputEvent::Mouse(MouseInputReport {
+        reports.push(MouseInputReport {
             buttons: self.buttons,
             dx: 0,
             dy: 0,
             wheel: 0,
-        }));
+        });
+        push_mouse_reports(events, reports);
+        self.last_pointer_pos = Some(pos);
     }
 
     fn release(&mut self, events: &mut Vec<ControlInputEvent>) {
@@ -221,11 +231,230 @@ impl PreviewInputBridge {
         self.buttons = 0;
         self.armed = false;
         self.last_pointer_pos = None;
+        self.device_pointer = None;
     }
 
     fn handle_paste_text(&self, text: &str, events: &mut Vec<ControlInputEvent>) {
         events.push(ControlInputEvent::Text(text.to_string()));
     }
+
+    fn handle_text_event(&self, text: &str, events: &mut Vec<ControlInputEvent>) {
+        if text == " " {
+            events.push(ControlInputEvent::Text(text.to_string()));
+        }
+    }
+
+    fn queue_pointer_to_preview_position(
+        &mut self,
+        pos: Pos2,
+        geometry: MirrorGeometry,
+        reports: &mut Vec<MouseInputReport>,
+    ) {
+        let target = geometry.pointer_position(pos);
+        if self.device_pointer.map(|pointer| pointer.frame_size) != Some(geometry.frame_size) {
+            reports.push(MouseInputReport {
+                buttons: self.buttons,
+                dx: -overshoot_delta(geometry.pointer_size[0]),
+                dy: -overshoot_delta(geometry.pointer_size[1]),
+                wheel: 0,
+            });
+            push_settle_reports(reports, self.buttons, POINTER_EDGE_SETTLE_REPORTS);
+            self.device_pointer = Some(DevicePointerState {
+                frame_size: geometry.frame_size,
+                position: [0, 0],
+            });
+        }
+        self.queue_device_pointer_to(target, geometry, reports);
+        push_settle_reports(reports, self.buttons, POINTER_TARGET_SETTLE_REPORTS);
+    }
+
+    fn move_pointer_by_preview_delta(
+        &mut self,
+        pos: Pos2,
+        geometry: MirrorGeometry,
+        events: &mut Vec<ControlInputEvent>,
+    ) {
+        let mut reports = Vec::new();
+        self.queue_pointer_by_preview_delta(pos, geometry, &mut reports);
+        push_mouse_reports(events, reports);
+    }
+
+    fn queue_pointer_by_preview_delta(
+        &mut self,
+        pos: Pos2,
+        geometry: MirrorGeometry,
+        reports: &mut Vec<MouseInputReport>,
+    ) {
+        if self
+            .device_pointer
+            .is_some_and(|pointer| pointer.frame_size == geometry.frame_size)
+        {
+            let target = geometry.pointer_position(pos);
+            self.queue_device_pointer_to(target, geometry, reports);
+            return;
+        }
+
+        let Some(previous) = self.last_pointer_pos else {
+            return;
+        };
+        let [dx, dy] = geometry.pointer_delta(previous, pos);
+        if dx != 0 || dy != 0 {
+            reports.push(MouseInputReport {
+                buttons: self.buttons,
+                dx,
+                dy,
+                wheel: 0,
+            });
+        }
+    }
+
+    fn queue_device_pointer_to(
+        &mut self,
+        target: [i32; 2],
+        geometry: MirrorGeometry,
+        reports: &mut Vec<MouseInputReport>,
+    ) {
+        if self.device_pointer.map(|pointer| pointer.frame_size) != Some(geometry.frame_size) {
+            self.device_pointer = Some(DevicePointerState {
+                frame_size: geometry.frame_size,
+                position: target,
+            });
+            return;
+        }
+
+        let pointer = self
+            .device_pointer
+            .as_mut()
+            .expect("device pointer initialized above");
+        let dx = clamp_mouse_axis(target[0] - pointer.position[0]);
+        let dy = clamp_mouse_axis(target[1] - pointer.position[1]);
+        if dx != 0 || dy != 0 {
+            reports.push(MouseInputReport {
+                buttons: self.buttons,
+                dx,
+                dy,
+                wheel: 0,
+            });
+        }
+        pointer.position = target;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DevicePointerState {
+    frame_size: [u32; 2],
+    position: [i32; 2],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MirrorGeometry {
+    rect: Rect,
+    frame_size: [u32; 2],
+    pointer_size: [u32; 2],
+}
+
+impl MirrorGeometry {
+    fn new(rect: Rect, frame_size: [u32; 2], pointer_long_axis_units: Option<u32>) -> Self {
+        let frame_size = [frame_size[0].max(1), frame_size[1].max(1)];
+        Self {
+            rect,
+            frame_size,
+            pointer_size: pointer_size_for_frame(frame_size, pointer_long_axis_units),
+        }
+    }
+
+    fn contains(&self, pos: Pos2) -> bool {
+        self.rect.contains(pos)
+    }
+
+    fn pointer_delta(&self, previous: Pos2, current: Pos2) -> [i16; 2] {
+        let delta = current - previous;
+        [
+            scaled_delta(delta.x, self.pointer_size[0], self.rect.width()),
+            scaled_delta(delta.y, self.pointer_size[1], self.rect.height()),
+        ]
+    }
+
+    fn pointer_position(&self, pos: Pos2) -> [i32; 2] {
+        [
+            scaled_absolute_axis(
+                pos.x - self.rect.left(),
+                self.pointer_size[0],
+                self.rect.width(),
+            ),
+            scaled_absolute_axis(
+                pos.y - self.rect.top(),
+                self.pointer_size[1],
+                self.rect.height(),
+            ),
+        ]
+    }
+}
+
+fn pointer_size_for_frame(frame_size: [u32; 2], override_units: Option<u32>) -> [u32; 2] {
+    let long_axis = pointer_long_axis_units_for_frame(frame_size, override_units);
+    pointer_size_for_frame_with_long_axis(frame_size, long_axis)
+}
+
+fn pointer_size_for_frame_with_long_axis(frame_size: [u32; 2], long_axis: u32) -> [u32; 2] {
+    let frame_long_axis = frame_size[0].max(frame_size[1]).max(1);
+    [
+        scaled_pointer_axis(frame_size[0], frame_long_axis, long_axis),
+        scaled_pointer_axis(frame_size[1], frame_long_axis, long_axis),
+    ]
+}
+
+fn pointer_long_axis_units_for_frame(frame_size: [u32; 2], override_units: Option<u32>) -> u32 {
+    override_units
+        .map(|value| value.clamp(MIN_POINTER_LONG_AXIS_UNITS, MAX_POINTER_LONG_AXIS_UNITS))
+        .or_else(|| {
+            std::env::var(POINTER_LONG_AXIS_UNITS_ENV)
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+                .map(|value| value.clamp(MIN_POINTER_LONG_AXIS_UNITS, MAX_POINTER_LONG_AXIS_UNITS))
+        })
+        .unwrap_or_else(|| default_pointer_long_axis_units_for_frame(frame_size))
+}
+
+pub fn pointer_long_axis_units_from_env() -> Option<u32> {
+    std::env::var(POINTER_LONG_AXIS_UNITS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .map(|value| value.clamp(MIN_POINTER_LONG_AXIS_UNITS, MAX_POINTER_LONG_AXIS_UNITS))
+}
+
+fn default_pointer_long_axis_units_for_frame(frame_size: [u32; 2]) -> u32 {
+    let short_axis = frame_size[0].min(frame_size[1]).max(1);
+    let long_axis = frame_size[0].max(frame_size[1]).max(1);
+    let aspect_x1000 = (u64::from(long_axis) * 1000 / u64::from(short_axis)) as u32;
+    if aspect_x1000 <= TABLET_ASPECT_RATIO_X1000 {
+        DEFAULT_TABLET_POINTER_LONG_AXIS_UNITS
+    } else {
+        DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS
+    }
+}
+
+fn scaled_pointer_axis(frame_axis: u32, frame_long_axis: u32, pointer_long_axis: u32) -> u32 {
+    ((u64::from(frame_axis) * u64::from(pointer_long_axis) + u64::from(frame_long_axis / 2))
+        / u64::from(frame_long_axis))
+    .clamp(1, u64::from(i16::MAX as u16)) as u32
+}
+
+fn push_mouse_reports(events: &mut Vec<ControlInputEvent>, reports: Vec<MouseInputReport>) {
+    match reports.len() {
+        0 => {}
+        1 => events.push(ControlInputEvent::Mouse(reports[0])),
+        _ => events.push(ControlInputEvent::MouseSequence(reports)),
+    }
+}
+
+fn push_settle_reports(reports: &mut Vec<MouseInputReport>, buttons: u8, count: usize) {
+    reports.extend((0..count).map(|_| MouseInputReport {
+        buttons,
+        dx: 0,
+        dy: 0,
+        wheel: 0,
+    }));
 }
 
 fn scaled_delta(delta: f32, frame_axis: u32, preview_axis: f32) -> i16 {
@@ -235,6 +464,24 @@ fn scaled_delta(delta: f32, frame_axis: u32, preview_axis: f32) -> i16 {
     (delta * frame_axis as f32 / preview_axis)
         .round()
         .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+fn scaled_absolute_axis(value: f32, frame_axis: u32, preview_axis: f32) -> i32 {
+    if preview_axis <= 0.0 {
+        return 0;
+    }
+    let value = value.clamp(0.0, preview_axis);
+    (value * frame_axis as f32 / preview_axis)
+        .round()
+        .clamp(0.0, i32::MAX as f32) as i32
+}
+
+fn overshoot_delta(frame_axis: u32) -> i16 {
+    frame_axis.saturating_mul(2).min(i16::MAX as u32) as i16
+}
+
+fn clamp_mouse_axis(value: i32) -> i16 {
+    value.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
 fn button_mask(button: PointerButton) -> u8 {
@@ -276,7 +523,7 @@ fn key_modifiers(modifiers: Modifiers) -> KeyModifiers {
         shift: modifiers.shift,
         alt: modifiers.alt,
         ctrl: false,
-        meta: modifiers.command || modifiers.mac_cmd,
+        meta: modifiers.command || modifiers.ctrl || modifiers.mac_cmd,
     }
 }
 
@@ -374,6 +621,23 @@ mod input_tests {
     }
 
     #[test]
+    fn key_mapper_maps_windows_ctrl_only_to_ios_meta() {
+        let report = keyboard_report(
+            Key::L,
+            true,
+            Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
+        )
+        .expect("key should map");
+
+        assert_eq!(report.usage_id, 0x0f);
+        assert!(report.modifiers.meta);
+        assert!(!report.modifiers.ctrl);
+    }
+
+    #[test]
     fn shifted_punctuation_forces_shift_modifier() {
         let report =
             keyboard_report(Key::Questionmark, true, Modifiers::NONE).expect("key should map");
@@ -390,6 +654,17 @@ mod input_tests {
         bridge.handle_paste_text("Az9!", &mut events);
 
         assert_eq!(events, vec![ControlInputEvent::Text("Az9!".into())]);
+    }
+
+    #[test]
+    fn text_event_space_forwards_for_ime_candidate_selection() {
+        let bridge = PreviewInputBridge::default();
+        let mut events = Vec::new();
+
+        bridge.handle_text_event(" ", &mut events);
+        bridge.handle_text_event("a", &mut events);
+
+        assert_eq!(events, vec![ControlInputEvent::Text(" ".into())]);
     }
 
     #[test]
@@ -411,6 +686,50 @@ mod input_tests {
     }
 
     #[test]
+    fn pointer_size_uses_ios_logical_scale_not_video_pixels() {
+        assert_eq!(
+            default_pointer_long_axis_units_for_frame([1080, 1920]),
+            DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS
+        );
+        assert_eq!(
+            default_pointer_long_axis_units_for_frame([2048, 2732]),
+            DEFAULT_TABLET_POINTER_LONG_AXIS_UNITS
+        );
+        assert_eq!(
+            pointer_size_for_frame_with_long_axis(
+                [1080, 1920],
+                DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS,
+            ),
+            [68, 120]
+        );
+    }
+
+    #[test]
+    fn pointer_size_can_use_live_bridge_override() {
+        let mut bridge = PreviewInputBridge::default();
+
+        bridge.set_pointer_long_axis_units(Some(60));
+
+        assert_eq!(bridge.pointer_long_axis_units(), Some(60));
+        assert_eq!(
+            pointer_size_for_frame([1000, 2000], bridge.pointer_long_axis_units()),
+            [30, 60]
+        );
+    }
+
+    #[test]
+    fn pointer_size_override_is_clamped() {
+        let mut bridge = PreviewInputBridge::default();
+
+        bridge.set_pointer_long_axis_units(Some(1));
+
+        assert_eq!(
+            bridge.pointer_long_axis_units(),
+            Some(MIN_POINTER_LONG_AXIS_UNITS)
+        );
+    }
+
+    #[test]
     fn preview_click_inside_arms_ble_mouse_forwarding() {
         let mut bridge = PreviewInputBridge::default();
         let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
@@ -425,32 +744,24 @@ mod input_tests {
             PointerButton::Primary,
             true,
             rect,
+            [1000, 2000],
             &mut events,
         );
 
         assert!(bridge.is_armed());
         assert_eq!(
             events,
-            vec![
-                ControlInputEvent::Mouse(MouseInputReport {
-                    buttons: 0,
-                    dx: POINTER_WAKE_DELTA,
-                    dy: 0,
-                    wheel: 0,
-                }),
-                ControlInputEvent::Mouse(MouseInputReport {
-                    buttons: 0,
-                    dx: -POINTER_WAKE_DELTA,
-                    dy: 0,
-                    wheel: 0,
-                }),
-                ControlInputEvent::Mouse(MouseInputReport {
-                    buttons: 0x01,
-                    dx: 0,
-                    dy: 0,
-                    wheel: 0,
-                })
-            ]
+            vec![ControlInputEvent::MouseSequence(vec![
+                mouse(0, -120, -240),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0, 6, 6),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0x01, 0, 0),
+            ])]
         );
     }
 
@@ -465,6 +776,7 @@ mod input_tests {
             PointerButton::Primary,
             true,
             rect,
+            [1000, 2000],
             &mut events,
         );
         events.clear();
@@ -475,10 +787,89 @@ mod input_tests {
             events,
             vec![ControlInputEvent::Mouse(MouseInputReport {
                 buttons: 0x01,
-                dx: 50,
-                dy: 100,
+                dx: 3,
+                dy: 6,
                 wheel: 0,
             })]
+        );
+    }
+
+    #[test]
+    fn preview_repositions_fresh_clicks_from_tracked_device_pointer() {
+        let mut bridge = PreviewInputBridge::default();
+        let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
+        let mut events = Vec::new();
+
+        bridge.handle_pointer_button(
+            Pos2::new(20.0, 20.0),
+            PointerButton::Primary,
+            true,
+            rect,
+            [1000, 2000],
+            &mut events,
+        );
+        bridge.handle_pointer_button(
+            Pos2::new(20.0, 20.0),
+            PointerButton::Primary,
+            false,
+            rect,
+            [1000, 2000],
+            &mut events,
+        );
+        events.clear();
+
+        bridge.handle_pointer_button(
+            Pos2::new(60.0, 110.0),
+            PointerButton::Primary,
+            true,
+            rect,
+            [1000, 2000],
+            &mut events,
+        );
+
+        assert_eq!(
+            events,
+            vec![ControlInputEvent::MouseSequence(vec![
+                mouse(0, 24, 54),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0, 0, 0),
+                mouse(0x01, 0, 0),
+            ])]
+        );
+    }
+
+    #[test]
+    fn preview_release_uses_release_position_for_drag_without_move_event() {
+        let mut bridge = PreviewInputBridge::default();
+        let rect = Rect::from_min_size(Pos2::new(10.0, 10.0), egui::vec2(100.0, 200.0));
+        let mut events = Vec::new();
+
+        bridge.handle_pointer_button(
+            Pos2::new(20.0, 20.0),
+            PointerButton::Primary,
+            true,
+            rect,
+            [1000, 2000],
+            &mut events,
+        );
+        events.clear();
+
+        bridge.handle_pointer_button(
+            Pos2::new(30.0, 50.0),
+            PointerButton::Primary,
+            false,
+            rect,
+            [1000, 2000],
+            &mut events,
+        );
+
+        assert_eq!(
+            events,
+            vec![ControlInputEvent::MouseSequence(vec![
+                mouse(0x01, 6, 18),
+                mouse(0, 0, 0),
+            ])]
         );
     }
 
@@ -493,6 +884,7 @@ mod input_tests {
             PointerButton::Primary,
             true,
             rect,
+            [1000, 2000],
             &mut events,
         );
         events.clear();
@@ -517,6 +909,7 @@ mod input_tests {
             PointerButton::Primary,
             true,
             rect,
+            [1000, 2000],
             &mut events,
         );
         bridge.handle_pointer_button(
@@ -524,6 +917,7 @@ mod input_tests {
             PointerButton::Primary,
             false,
             rect,
+            [1000, 2000],
             &mut events,
         );
         events.clear();
@@ -535,5 +929,14 @@ mod input_tests {
             events,
             vec![ControlInputEvent::Mouse(MouseInputReport::default())]
         );
+    }
+
+    fn mouse(buttons: u8, dx: i16, dy: i16) -> MouseInputReport {
+        MouseInputReport {
+            buttons,
+            dx,
+            dy,
+            wheel: 0,
+        }
     }
 }
