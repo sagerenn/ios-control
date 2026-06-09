@@ -4,6 +4,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const DEFAULT_DIRECT_PREVIEW_FPS: u32 = 20;
+pub const MIN_DIRECT_PREVIEW_FPS: u32 = 5;
+pub const MAX_DIRECT_PREVIEW_FPS: u32 = 60;
+pub const DEFAULT_DIRECT_PREVIEW_HEIGHT: u32 = 1280;
+pub const MIN_DIRECT_PREVIEW_HEIGHT: u32 = 540;
+pub const MAX_DIRECT_PREVIEW_HEIGHT: u32 = 1920;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnownDevicePreference {
     pub known_device_id: String,
@@ -21,7 +28,33 @@ pub struct HostPreferences {
     #[serde(default)]
     pub ble_pointer_long_axis_units: Option<u32>,
     #[serde(default)]
+    pub direct_preview_fps: Option<u32>,
+    #[serde(default)]
+    pub direct_preview_height: Option<u32>,
+    #[serde(default)]
     pub known_devices: Vec<KnownDevicePreference>,
+}
+
+impl HostPreferences {
+    pub fn direct_preview_fps(&self) -> u32 {
+        self.direct_preview_fps
+            .unwrap_or(DEFAULT_DIRECT_PREVIEW_FPS)
+            .clamp(MIN_DIRECT_PREVIEW_FPS, MAX_DIRECT_PREVIEW_FPS)
+    }
+
+    pub fn direct_preview_height(&self) -> u32 {
+        self.direct_preview_height
+            .unwrap_or(DEFAULT_DIRECT_PREVIEW_HEIGHT)
+            .clamp(MIN_DIRECT_PREVIEW_HEIGHT, MAX_DIRECT_PREVIEW_HEIGHT)
+    }
+
+    pub fn direct_preview_width(&self) -> u32 {
+        direct_preview_width_for_height(self.direct_preview_height())
+    }
+}
+
+pub fn direct_preview_width_for_height(height: u32) -> u32 {
+    ((u64::from(height) * 9 + 8) / 16).max(1) as u32
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +206,8 @@ mod tests {
             selected_device_id: Some("device-1".into()),
             selected_source_id: Some("window-helper-1".into()),
             ble_pointer_long_axis_units: Some(120),
+            direct_preview_fps: Some(20),
+            direct_preview_height: Some(1280),
             known_devices: Vec::new(),
         };
 
@@ -247,6 +282,8 @@ mod tests {
                 selected_device_id: Some("device-1".into()),
                 selected_source_id: Some("window-helper-1".into()),
                 ble_pointer_long_axis_units: None,
+                direct_preview_fps: None,
+                direct_preview_height: None,
                 known_devices: Vec::new(),
             };
             store.save(&prefs)?;

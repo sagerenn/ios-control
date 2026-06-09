@@ -6,6 +6,9 @@ fn host_preferences_roundtrip_json() {
     let prefs = HostPreferences {
         selected_device_id: Some("device-1".into()),
         selected_source_id: Some("window-helper-1".into()),
+        ble_pointer_long_axis_units: Some(300),
+        direct_preview_fps: Some(20),
+        direct_preview_height: Some(1280),
         known_devices: vec![KnownDevicePreference {
             known_device_id: "device-1".into(),
             display_name: "Alice iPhone".into(),

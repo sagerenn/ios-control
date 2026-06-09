@@ -11,9 +11,14 @@ use crate::panels::device_detail::{CaptureSourceOption, ControlSetupChecklist};
 use crate::panels::launcher::LauncherAction;
 use crate::panels::session_view::SessionAction;
 use crate::panels::{launcher, session_view, settings};
-use crate::preferences::{HostPreferences, HostPreferencesStore, KnownDevicePreference};
+use crate::preferences::{
+    HostPreferences, HostPreferencesStore, KnownDevicePreference, MAX_DIRECT_PREVIEW_FPS,
+    MAX_DIRECT_PREVIEW_HEIGHT, MIN_DIRECT_PREVIEW_FPS, MIN_DIRECT_PREVIEW_HEIGHT,
+};
 use crate::preview::{color_image_from_slot, PreviewInputBridge};
-use crate::runtime::{HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState};
+use crate::runtime::{
+    DirectPreviewConfig, HostRuntime, HostRuntimeConfig, HostRuntimeSnapshot, RuntimeWorkspaceState,
+};
 use crate::view_models::dashboard::DashboardViewModel;
 use crate::view_models::device_detail::DeviceDetailViewModel;
 use crate::view_models::diagnostics::DiagnosticsViewModel;
@@ -160,6 +165,7 @@ impl HostDesktopApp {
         app.preferences = preferences;
         app.preview_input_bridge
             .set_pointer_long_axis_units(app.preferences.ble_pointer_long_axis_units);
+        app.sync_direct_preview_config_to_runtime();
         app.restored_source_preference = restored_source_preference;
         app.install_log_writer_from_preferences_path(store.path());
         app.settings = SettingsViewModel::from_preferences_path(Some(store.path()));
@@ -252,6 +258,38 @@ impl HostDesktopApp {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "auto".into());
         self.append_host_log_line(&format!("BLE pointer scale set to {value}"));
+    }
+
+    fn sync_direct_preview_config_to_runtime(&mut self) {
+        let config = DirectPreviewConfig::new(
+            self.preferences.direct_preview_height(),
+            self.preferences.direct_preview_fps(),
+        );
+        if let Some(runtime) = self.host_runtime.as_mut() {
+            runtime.set_direct_preview_config(config);
+        }
+    }
+
+    fn set_direct_preview_fps(&mut self, fps: Option<u32>) {
+        self.preferences.direct_preview_fps =
+            fps.map(|value| value.clamp(MIN_DIRECT_PREVIEW_FPS, MAX_DIRECT_PREVIEW_FPS));
+        self.sync_direct_preview_config_to_runtime();
+        self.persist_preferences();
+        self.append_host_log_line(&format!(
+            "Direct preview FPS set to {}",
+            self.preferences.direct_preview_fps()
+        ));
+    }
+
+    fn set_direct_preview_height(&mut self, height: Option<u32>) {
+        self.preferences.direct_preview_height =
+            height.map(|value| value.clamp(MIN_DIRECT_PREVIEW_HEIGHT, MAX_DIRECT_PREVIEW_HEIGHT));
+        self.sync_direct_preview_config_to_runtime();
+        self.persist_preferences();
+        self.append_host_log_line(&format!(
+            "Direct preview height set to {}",
+            self.preferences.direct_preview_height()
+        ));
     }
 
     fn record_startup_view(&mut self, startup: &StartupViewModel) {
@@ -1352,20 +1390,32 @@ impl eframe::App for HostDesktopApp {
             self.startup.direct_receiver.available,
             &self.runtime_statuses,
         );
+        let session_menu_device_id = self
+            .runtime_workspace
+            .as_ref()
+            .map(|workspace| workspace.device_id.clone())
+            .or_else(|| self.session_window_device_id.clone())
+            .or_else(|| self.selected_device_id.clone());
         egui::CentralPanel::default().show(ctx, |ui| {
-            launcher_action =
-                launcher::render(ui, &launcher_rows, self.selected_device_id.as_deref());
+            let (device_action, control_host_session_action) = launcher::render_with_session_menu(
+                ui,
+                &launcher_rows,
+                self.selected_device_id.as_deref(),
+                session_menu_device_id.as_deref(),
+                &self.session,
+            );
+            launcher_action = device_action;
+            if !matches!(control_host_session_action, SessionAction::None) {
+                pending_action = control_host_session_action;
+            }
             ui.separator();
             settings_action = settings::render_rows(
                 ui,
                 &self.settings.rows,
                 self.preview_input_bridge.pointer_long_axis_units(),
+                self.preferences.direct_preview_fps,
+                self.preferences.direct_preview_height,
             );
-            ui.separator();
-            let control_host_session_action = session_view::render_controls_menu(ui, &self.session);
-            if !matches!(control_host_session_action, SessionAction::None) {
-                pending_action = control_host_session_action;
-            }
         });
 
         if self.session_window_open {
@@ -1432,6 +1482,14 @@ impl eframe::App for HostDesktopApp {
             settings::SettingsAction::None => {}
             settings::SettingsAction::SetBlePointerLongAxisUnits(units) => {
                 self.set_ble_pointer_long_axis_units(units);
+                ctx.request_repaint();
+            }
+            settings::SettingsAction::SetDirectPreviewFps(fps) => {
+                self.set_direct_preview_fps(fps);
+                ctx.request_repaint();
+            }
+            settings::SettingsAction::SetDirectPreviewHeight(height) => {
+                self.set_direct_preview_height(height);
                 ctx.request_repaint();
             }
         }

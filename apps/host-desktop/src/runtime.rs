@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use std::ffi::OsString;
+
 use ios_control_contracts::capture::{
     CaptureStatus, CaptureStreamDescriptor, VideoFrameDescriptor, VideoSource,
 };
@@ -10,9 +12,40 @@ use ios_control_session_orchestrator::{
     CaptureBackend, PluginPaths, SessionDiagnostics, SessionSupervisor, StartSessionRequest,
 };
 
+use crate::preferences::{
+    direct_preview_width_for_height, DEFAULT_DIRECT_PREVIEW_FPS, DEFAULT_DIRECT_PREVIEW_HEIGHT,
+    MAX_DIRECT_PREVIEW_FPS, MAX_DIRECT_PREVIEW_HEIGHT, MIN_DIRECT_PREVIEW_FPS,
+    MIN_DIRECT_PREVIEW_HEIGHT,
+};
+
 #[derive(Debug, Clone)]
 pub struct HostRuntimeConfig {
     pub plugin_paths: PluginPaths,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectPreviewConfig {
+    pub height: u32,
+    pub fps: u32,
+}
+
+impl DirectPreviewConfig {
+    pub fn new(height: u32, fps: u32) -> Self {
+        Self {
+            height: height.clamp(MIN_DIRECT_PREVIEW_HEIGHT, MAX_DIRECT_PREVIEW_HEIGHT),
+            fps: fps.clamp(MIN_DIRECT_PREVIEW_FPS, MAX_DIRECT_PREVIEW_FPS),
+        }
+    }
+
+    pub fn width(self) -> u32 {
+        direct_preview_width_for_height(self.height)
+    }
+}
+
+impl Default for DirectPreviewConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_DIRECT_PREVIEW_HEIGHT, DEFAULT_DIRECT_PREVIEW_FPS)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +73,7 @@ pub struct HostRuntime {
     tokio: tokio::runtime::Runtime,
     supervisor: SessionSupervisor,
     config: HostRuntimeConfig,
+    direct_preview: DirectPreviewConfig,
 }
 
 impl HostRuntime {
@@ -50,7 +84,12 @@ impl HostRuntime {
                 .build()?,
             supervisor: SessionSupervisor::default(),
             config,
+            direct_preview: DirectPreviewConfig::default(),
         })
+    }
+
+    pub fn set_direct_preview_config(&mut self, config: DirectPreviewConfig) {
+        self.direct_preview = config;
     }
 
     pub fn start_session(
@@ -60,6 +99,12 @@ impl HostRuntime {
         selected_source_id: Option<String>,
         capture_backend: CaptureBackend,
     ) -> Result<HostRuntimeSnapshot> {
+        let _env = if capture_backend == CaptureBackend::Direct {
+            Some(DirectPreviewEnv::apply(self.direct_preview))
+        } else {
+            None
+        };
+
         self.tokio.block_on(
             self.supervisor
                 .start_or_replace_session(StartSessionRequest {
@@ -130,5 +175,44 @@ impl HostRuntime {
     ) -> Result<ExecutionSummary> {
         self.tokio
             .block_on(self.supervisor.forward_control_input(device_id, event))
+    }
+}
+
+struct EnvOverride {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvOverride {
+    fn set(key: &'static str, value: impl ToString) -> Self {
+        let original = std::env::var_os(key);
+        std::env::set_var(key, value.to_string());
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvOverride {
+    fn drop(&mut self) {
+        if let Some(value) = self.original.take() {
+            std::env::set_var(self.key, value);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+struct DirectPreviewEnv {
+    _guards: [EnvOverride; 3],
+}
+
+impl DirectPreviewEnv {
+    fn apply(config: DirectPreviewConfig) -> Self {
+        Self {
+            _guards: [
+                EnvOverride::set("IOS_CONTROL_DIRECT_PREVIEW_WIDTH", config.width()),
+                EnvOverride::set("IOS_CONTROL_DIRECT_PREVIEW_HEIGHT", config.height),
+                EnvOverride::set("IOS_CONTROL_DIRECT_PREVIEW_FPS", config.fps),
+            ],
+        }
     }
 }

@@ -10,8 +10,8 @@ use ios_control_frame_transport::FrameSlotReader;
 
 const POINTER_EDGE_SETTLE_REPORTS: usize = 3;
 const POINTER_TARGET_SETTLE_REPORTS: usize = 3;
-pub const DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS: u32 = 120;
-pub const DEFAULT_TABLET_POINTER_LONG_AXIS_UNITS: u32 = 160;
+pub const DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS: u32 = 300;
+pub const DEFAULT_TABLET_POINTER_LONG_AXIS_UNITS: u32 = 300;
 const POINTER_LONG_AXIS_UNITS_ENV: &str = "IOS_CONTROL_BLE_POINTER_LONG_AXIS_UNITS";
 pub const MIN_POINTER_LONG_AXIS_UNITS: u32 = 60;
 pub const MAX_POINTER_LONG_AXIS_UNITS: u32 = 1600;
@@ -700,7 +700,7 @@ mod input_tests {
                 [1080, 1920],
                 DEFAULT_PHONE_POINTER_LONG_AXIS_UNITS,
             ),
-            [68, 120]
+            [169, 300]
         );
     }
 
@@ -752,11 +752,11 @@ mod input_tests {
         assert_eq!(
             events,
             vec![ControlInputEvent::MouseSequence(vec![
-                mouse(0, -120, -240),
+                mouse(0, -300, -600),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
-                mouse(0, 6, 6),
+                mouse(0, 15, 15),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
@@ -787,8 +787,8 @@ mod input_tests {
             events,
             vec![ControlInputEvent::Mouse(MouseInputReport {
                 buttons: 0x01,
-                dx: 3,
-                dy: 6,
+                dx: 8,
+                dy: 15,
                 wheel: 0,
             })]
         );
@@ -830,7 +830,7 @@ mod input_tests {
         assert_eq!(
             events,
             vec![ControlInputEvent::MouseSequence(vec![
-                mouse(0, 24, 54),
+                mouse(0, 60, 135),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
                 mouse(0, 0, 0),
@@ -867,7 +867,7 @@ mod input_tests {
         assert_eq!(
             events,
             vec![ControlInputEvent::MouseSequence(vec![
-                mouse(0x01, 6, 18),
+                mouse(0x01, 15, 45),
                 mouse(0, 0, 0),
             ])]
         );
