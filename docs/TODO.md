@@ -2,6 +2,27 @@
 
 Code-verified gap list for the current branch as of 2026-04-05.
 
+## Bug review (2026-07-01)
+
+Deep horizontal + vertical code review. Verified findings are recorded in
+`docs/bug-review.md` (10 bugs: 4 High, 2 Medium, 4 Low). Tracker:
+
+- [x] Review core crates (orchestrator, frame-transport, hid-report-engine, plugin-runtime, contracts)
+- [x] Review plugins (capture-direct, capture-window, control-ble, control-window-bridge, grounding-core, mock-device)
+- [x] Review helpers (ble-helper, direct-beacon)
+- [x] Review apps/host-desktop
+- [x] Verify and document findings into docs/bug-review.md
+- [ ] Fix BUG-001 (session-replace ordering) — shut down previous session before starting the new one
+- [ ] Fix BUG-002 (ble-helper execute kind-collapse) — handle tap/swipe/scroll plan kinds instead of falling back to the demo wiggle
+- [ ] Fix BUG-003 (command deleted before execution + ack-write kills server)
+- [ ] Fix BUG-004 (WinRT GATT handler blocking .join() inside the STA callback)
+- [ ] Fix BUG-005 (HID command timeout vs. long macro -> orphaned ack files)
+- [ ] Fix BUG-006 (Windows atomic preferences save data loss)
+- [ ] Fix BUG-007 (control.ble run_for_output JoinHandle leak on timeout)
+- [ ] Fix BUG-008 (session window close does not stop the runtime session)
+- [ ] Fix BUG-009 (Recovering session cannot be stopped from the UI)
+- [ ] Fix BUG-010 (process_exists trusts recycled PIDs)
+
 This document is meant to be a living checklist. It reflects the current codebase, not the aspirational design docs under `docs/superpowers/`.
 
 ## Current Reality
